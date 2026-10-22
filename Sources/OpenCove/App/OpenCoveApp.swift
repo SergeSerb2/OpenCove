@@ -48,9 +48,13 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         lockWidgets = LockScreenController(store: store)
         lockWidgets?.start()
         let arguments = ProcessInfo.processInfo.arguments
-        if let index = arguments.firstIndex(of: "--control-port"), arguments.indices.contains(index + 1), let port = UInt16(arguments[index + 1]) {
+        if let index = arguments.firstIndex(of: "--control-port") {
+            let valueIndex = index + 1
+            let port = arguments.indices.contains(valueIndex) ? UInt16(arguments[valueIndex]) ?? 0 : 0
             control = DevelopmentServer(store: store, port: port)
-            do { try control?.start() } catch { store.lastError = "Development controls could not start: \(error.localizedDescription)" }
+            do { try control?.start() } catch {
+                control?.reportFailure(error)
+            }
         }
         // AppKit may deliver an initial URL event before finish-launch. Services
         // and their callbacks must exist before either cold or warm URLs run.

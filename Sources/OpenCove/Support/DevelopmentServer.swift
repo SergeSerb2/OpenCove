@@ -63,12 +63,10 @@ final class DevelopmentServer {
                 case .ready:
                     do { try self.publishDescriptor() }
                     catch {
-                        self.store.lastError = "Development controls: \(error.localizedDescription)"
-                        self.stop()
+                        self.reportFailure(error)
                     }
                 case .failed(let error):
-                    self.store.lastError = "Development controls: \(error.localizedDescription)"
-                    self.stop()
+                    self.reportFailure(error)
                 default: break
                 }
             }
@@ -81,6 +79,16 @@ final class DevelopmentServer {
         let descriptor: [String: Any] = ["port": port, "token": token, "pid": ProcessInfo.processInfo.processIdentifier]
         let data = try JSONSerialization.data(withJSONObject: descriptor, options: .prettyPrinted)
         try CovePaths.writePrivateControlDescriptor(data, to: descriptorURL)
+    }
+
+    func reportFailure(_ error: Error) {
+        // NWError's NSError bridge can lose its POSIX detail. Report the typed
+        // network reason, never the descriptor, token or authenticated URL.
+        let detail = (error as? NWError).map { String(describing: $0) } ?? error.localizedDescription
+        let message = "Development controls are unavailable: \(detail)\nCheck --control-port and the private data directory, then restart OpenCove."
+        store.lastError = message
+        fputs("OpenCove: \(message)\n", stderr)
+        stop()
     }
 
     func stop() {

@@ -53,7 +53,7 @@ After building a separate bundle as above, the safe default integration command 
 python3 -B script/smoke.py --app "$OPENCOVE_BUILD_ROOT/bundle/OpenCove.app"
 ```
 
-This runs real file, timer, and preference flows. It restores its temporary state and stops only its own process. It does not build, replace, or install an app. Protected integrations, network features, login registration, and haptics start disabled. Add `--slow` for connection deadline checks or `--render` for offscreen native renders. Hardware changes require the separate explicit `--hardware-volume` opt-in and a supported real output; they never run by default.
+This checks real occupied/invalid control ports and a blocked descriptor write, then runs real file, timer, and preference flows. It restores its temporary state and stops only its own processes. It does not build, replace, or install an app. Protected integrations, network features, login registration, and haptics start disabled. Add `--slow` for connection deadline checks or `--render` for offscreen native renders. Hardware changes require the separate explicit `--hardware-volume` opt-in and a supported real output; they never run by default.
 
 To inspect an existing app with controls already enabled:
 
@@ -72,6 +72,8 @@ python3 -B script/verify_control.py "$OPENCOVE_DATA_DIR" 1 \
 ```
 
 Replace `1` with the expected `CFBundleVersion` from `version.json`. The check compares the responding bundle path, identifier, version/build, and source-tree hash. A same-build app from another path or source tree fails readiness.
+
+If the explicitly enabled control listener or its descriptor cannot start, the app keeps running and reports the reason in Settings and on standard error. No descriptor is published for a failed listener. Check the requested port and the private data directory, then restart. The diagnostic excludes the control token and authenticated URL. A normal launch still has no control listener.
 
 `opencovectl command` sends real app actions. `opencovectl render --surface notch --output NEW.png` creates an offscreen native capture at a new path. `opencovectl url` prints a token-bearing browser URL; keep it private. An offscreen capture does not prove desktop placement, native menu interaction, or secure-screen visibility. See [quality](quality.md) for the complete workflow and manual gates.
 
