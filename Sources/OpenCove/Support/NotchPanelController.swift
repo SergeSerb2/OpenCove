@@ -149,12 +149,15 @@ final class NotchPanelController: NSObject {
         let preferencesChanged = lastPreferences != preferences
         lastPreferences = preferences
 
+        let selection = CoveDisplays.resolve(preferences)
+        store.updateDisplaySelection(selection.state)
+
         guard !screensAsleep, sessionActive, currentSessionIsActive(), !store.system.state.isLocked else {
             hideForSessionBoundary()
             return
         }
 
-        let screens = selectedScreens(preferences: preferences)
+        let screens = selection.screens
         let geometries = screens.map { (id: $0.id, screen: $0.screen, geometry: CovePanelGeometry(screen: $0.screen, preferences: preferences)) }
         let physicalWidth = Double(geometries.map(\.geometry.physicalNotchWidth).max() ?? 0)
         let physicalHeight = Double(geometries.map(\.geometry.physicalNotchHeight).max() ?? 0)
@@ -254,24 +257,10 @@ final class NotchPanelController: NSObject {
         surface.panel.close()
     }
 
-    private func selectedScreens(preferences: CovePreferences) -> [(id: CGDirectDisplayID, screen: NSScreen)] {
-        let screens: [(id: CGDirectDisplayID, screen: NSScreen)] = NSScreen.screens.compactMap { screen in
-            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
-            let id = number.uint32Value
-            // A closed-lid built-in display must not win over a connected display.
-            guard CGDisplayIsOnline(id) != 0, CGDisplayIsActive(id) != 0, CGDisplayIsAsleep(id) == 0 else { return nil }
-            return (id, screen)
-        }
-        if preferences.showOnAllDisplays { return screens }
-        if preferences.preferBuiltInDisplay, let builtIn = screens.first(where: { CGDisplayIsBuiltin($0.id) != 0 }) { return [builtIn] }
-        if let main = NSScreen.main, let match = screens.first(where: { $0.screen == main }) { return [match] }
-        return Array(screens.prefix(1))
-    }
-
     /// Public window metadata gives a conservative fullscreen heuristic without
     /// AX or screen capture. A borderless display-sized window is indistinguishable
     /// from fullscreen here; Split View and private space types are not inferred.
-    private func fullscreenSizedDisplays(_ screens: [(id: CGDirectDisplayID, screen: NSScreen)]) -> Set<CGDirectDisplayID> {
+    private func fullscreenSizedDisplays(_ screens: [CoveDisplays.Entry]) -> Set<CGDirectDisplayID> {
         guard let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier,
               frontmostPID != ProcessInfo.processInfo.processIdentifier,
               let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [] }

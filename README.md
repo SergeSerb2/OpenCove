@@ -35,6 +35,8 @@ cd OpenCove
 
 Quit a running copy before rebuilding its bundle, or select an isolated output directory. The menu bar icon opens the notch, Settings, or Quit. Hover expands the notch; Escape closes it. The expanded panel’s ellipsis menu selects sections and opens Settings. Right-click and swipe navigation are also available.
 
+Settings → General → Displays chooses Built-in, Main, All, or an individual connected display. Individual choices use the display's saved system identity. If it is unavailable, the app keeps that choice and uses the main available display temporarily. All overrides the saved choice; choosing Built-in or Main clears it. The same choice applies to optional lock widgets. Mixed-display and secure-screen behavior still need the checks in [compatibility](docs/compatibility.md).
+
 For an optimized local app, run `./script/build_and_run.sh --release`, then copy `dist/release/OpenCove.app` to your Applications folder with Finder. These builds are **ad-hoc signed**, not Developer ID signed or notarized; macOS may block a downloaded copy. Do not treat ad-hoc archives as trusted distribution builds. Future approved downloads belong on [GitHub Releases](https://github.com/SergeSerb2/OpenCove/releases), with checksums and a stated signing status.
 
 [Build instructions](docs/building.md) cover source ZIPs without Git, architecture selection, isolated paths, and real app controls. [Quality checks](docs/quality.md) define the real integration workflow and manual gates. [Release instructions](docs/releasing.md) cover manual packaging and the opt-in Developer ID/notarization path.

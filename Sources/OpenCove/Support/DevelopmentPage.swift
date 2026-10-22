@@ -12,13 +12,13 @@ enum DevelopmentPage {
 <div class="grid">
 <section class="card"><h2>Live state</h2><div class="facts"><div>Media<strong id="media-title">—</strong></div><div>Audio output<strong id="output">—</strong></div><div>Battery<strong id="battery">—</strong></div><div>Calendar access<strong id="calendar">—</strong></div></div><div class="toolbar"><button data-action="media.refresh">Refresh media</button><button data-action="system.refresh">Refresh system</button><button data-action="calendar.refresh">Refresh calendar</button></div><p id="service-errors" class="muted"></p></section>
 <section class="card"><h2>Timer</h2><p id="timer-state">No timer running</p><div class="row"><label for="seconds">Seconds</label><input id="seconds" type="number" min="1" max="86400" value="30"><button class="primary" id="start-timer">Start timer</button></div><div class="toolbar"><button data-action="timer.pause">Pause timer</button><button data-action="timer.resume">Resume timer</button><button data-action="timer.cancel">Cancel timer</button></div></section>
-<section class="card"><h2>Appearance</h2><label><input id="hideWhenIdle" type="checkbox">Hide when idle</label><label><input id="expandOnHover" type="checkbox">Expand on hover</label><label><input id="reduceMotion" type="checkbox">Reduce motion</label><label>Notch width <input id="notchWidth" type="number" min="120" max="400" step="10"></label><button id="save-appearance">Save appearance</button><p class="muted">Changes use the same persisted preferences as native settings.</p></section>
+<section class="card"><h2>Appearance</h2><label for="display-choice">Show on display</label><div class="row"><select id="display-choice" aria-label="Show on display"></select><button id="save-display">Save display</button></div><p id="display-status" class="muted"></p><label><input id="hideWhenIdle" type="checkbox">Hide when idle</label><label><input id="expandOnHover" type="checkbox">Expand on hover</label><label><input id="reduceMotion" type="checkbox">Reduce motion</label><label>Notch width <input id="notchWidth" type="number" min="120" max="400" step="10"></label><button id="save-appearance">Save appearance</button><p class="muted">Changes use the same persisted preferences as native settings.</p></section>
 <section class="card"><h2>File tray</h2><p class="muted">Add an existing local file. Removing it from the tray keeps the source file.</p><div class="row"><input id="file-path" type="text" aria-label="File path" placeholder="/absolute/path/to/file"><button id="add-file">Add file</button></div><ul class="files" id="files"></ul><button class="danger" data-action="files.clear">Clear tray</button></section>
 <section class="card"><h2>Notification</h2><p class="muted">Post an OpenCove activity through the app’s notification interface.</p><div class="row"><input id="notification-title" type="text" aria-label="Notification title" value="OpenCove is ready"></div><div class="row"><input id="notification-body" type="text" aria-label="Notification message" value="Your activity is in the notch."></div><div class="row"><button id="post-notification">Show notification</button></div></section>
 <section class="card"><h2>Verification session</h2><p>This page controls the app that explicitly enabled its local control server. No screen input is automated.</p><p id="window-state" class="muted"></p><button id="reconnect">Reconnect</button><button id="complete-onboarding">Complete first run</button><p class="muted">Permission prompts stay explicit in the native app.</p></section>
 </div><details><summary>App state</summary><pre id="state"></pre></details>
 <script>
-let state=null,lastImage=null,poll=null,serial=Promise.resolve(),epoch=0,controller=new AbortController(),unauthorized=false,closed=false,lastRender=0,transportError=false;
+let state=null,lastImage=null,poll=null,serial=Promise.resolve(),epoch=0,controller=new AbortController(),unauthorized=false,closed=false,lastRender=0,transportError=false,displayDraft=null,displaySignature='';
 const appearanceKeys=['hideWhenIdle','expandOnHover','reduceMotion','notchWidth'],drafts=new Map();
 const readToken=()=>new URLSearchParams(location.hash.slice(1)).get('token')||'';
 let token=readToken();
@@ -27,13 +27,26 @@ const connectionChanged=()=>new DOMException('Connection changed','AbortError');
 function enqueue(operation){const generation=epoch,next=serial.then(()=>{if(generation!==epoch||closed)throw connectionChanged();return operation()});serial=next.catch(()=>{});return next}
 function clearImage(){const image=document.getElementById('native-image');image.onload=null;image.onerror=null;image.removeAttribute('src');image.style.removeProperty('width');if(lastImage)URL.revokeObjectURL(lastImage);lastImage=null}
 function clearFiles(){const files=document.getElementById('files');for(const button of files.querySelectorAll('button'))button.onclick=null;files.replaceChildren()}
-function setActionsEnabled(enabled){for(const button of document.querySelectorAll('button'))if(button.id!=='reconnect')button.disabled=!enabled;for(const key of appearanceKeys)document.getElementById(key).disabled=!enabled}
+function setActionsEnabled(enabled){for(const button of document.querySelectorAll('button'))if(button.id!=='reconnect')button.disabled=!enabled;for(const key of appearanceKeys)document.getElementById(key).disabled=!enabled;for(const id of ['display-choice','save-display'])document.getElementById(id).disabled=!enabled||!state?.displaySelection}
 function paintAppearance(){for(const key of appearanceKeys){const input=document.getElementById(key),value=drafts.has(key)?drafts.get(key):state?.preferences[key];if(input.type==='checkbox')input.checked=value??false;else input.value=value??''}}
+function paintDisplays(){
+ const selection=state?.displaySelection,select=document.getElementById('display-choice');
+ document.getElementById('display-status').textContent=selection?.status||'Display choices are unavailable for this build.';
+ if(!selection){select.replaceChildren();displaySignature='';return}
+ const current=selection.mode==='selected'?selection.requestedUUID:selection.mode;
+ const options=[['builtIn','Built-in display',false],['main','Main display',false],['all','All displays',false]];
+ for(const [index,display] of selection.available.entries())if(display.canSelect&&typeof display.uuid==='string'){const duplicate=selection.available.some(other=>other.id!==display.id&&other.name===display.name);options.push([display.uuid,duplicate?`${display.name} (${index+1})`:display.name,false])}
+ for(const value of [current,displayDraft])if(value&&!options.some(row=>row[0]===value))options.push([value,'Saved display (unavailable)',true]);
+ const signature=JSON.stringify(options);
+ if(signature!==displaySignature){select.replaceChildren(...options.map(([value,label,disabled])=>{const option=document.createElement('option');option.value=value;option.textContent=label;option.disabled=disabled;return option}));displaySignature=signature}
+ select.value=displayDraft??current;
+}
 // Only explicit user edits enter drafts. App-derived fields, rows, closures and
 // images are cleared together whenever the authenticated connection is retired.
 function resetConnection(label='Disconnected',message=''){
  epoch++;controller.abort();controller=new AbortController();clearTimeout(poll);poll=null;state=null;transportError=false;lastRender=0;
  clearImage();clearFiles();setActionsEnabled(false);paintAppearance();
+ displayDraft=null;displaySignature='';document.getElementById('display-choice').replaceChildren();document.getElementById('display-status').textContent='';
  for(const id of ['media-title','output','battery','calendar'])document.getElementById(id).textContent='—';
  document.getElementById('screen-state').textContent='Native view';document.getElementById('timer-state').textContent='No authenticated state';
  for(const id of ['service-errors','window-state','state'])document.getElementById(id).textContent='';
@@ -87,7 +100,7 @@ function paint(){
  document.getElementById('connection').textContent='Connected';document.getElementById('screen-state').textContent=(state.expanded?'Expanded':'Compact')+' · '+state.tab;
  document.getElementById('media-title').textContent=state.media.available?state.media.title||'Media available':'Nothing playing';document.getElementById('output').textContent=state.system.outputDevice||'Unavailable';document.getElementById('battery').textContent=state.system.hasBattery?state.system.batteryPercent+'%'+(state.system.isCharging?' · Charging':''):'No battery';document.getElementById('calendar').textContent=state.calendarAuthorization;
  document.getElementById('timer-state').textContent=state.timer.remaining>0?Math.ceil(state.timer.remaining)+' seconds · '+(state.timer.running?'Running':'Paused'):'No timer running';document.getElementById('service-errors').textContent=(state.errors||[]).join(' · ');document.getElementById('window-state').textContent=state.nativeWindows.map(w=>w.title+' '+Math.round(w.width)+'×'+Math.round(w.height)).join(' · ');
- paintAppearance();clearFiles();const generation=epoch;document.getElementById('files').replaceChildren(...state.files.map(file=>{const li=document.createElement('li'),text=document.createElement('span'),remove=document.createElement('button');text.textContent=file.name;remove.textContent='Remove';remove.onclick=()=>{if(generation===epoch&&!closed)command('files.remove',{id:file.id}).catch(()=>{})};li.append(text,remove);return li}));document.getElementById('state').textContent=JSON.stringify(state,null,2);setActionsEnabled(true);
+ paintAppearance();paintDisplays();clearFiles();const generation=epoch;document.getElementById('files').replaceChildren(...state.files.map(file=>{const li=document.createElement('li'),text=document.createElement('span'),remove=document.createElement('button');text.textContent=file.name;remove.textContent='Remove';remove.onclick=()=>{if(generation===epoch&&!closed)command('files.remove',{id:file.id}).catch(()=>{})};li.append(text,remove);return li}));document.getElementById('state').textContent=JSON.stringify(state,null,2);setActionsEnabled(true);
 }
 function schedule(){clearTimeout(poll);if(!closed&&!document.hidden&&!unauthorized&&token)poll=setTimeout(refresh,2500)}
 async function refresh(){
@@ -107,6 +120,8 @@ for(const button of document.querySelectorAll('[data-tab]'))button.onclick=()=>c
 document.getElementById('start-timer').onclick=()=>command('timer.start',{seconds:Number(document.getElementById('seconds').value)}).catch(()=>{});
 document.getElementById('add-file').onclick=()=>command('files.add',{paths:[document.getElementById('file-path').value]}).catch(()=>{});
 document.getElementById('save-appearance').onclick=()=>command('preferences',{values:{hideWhenIdle:document.getElementById('hideWhenIdle').checked,expandOnHover:document.getElementById('expandOnHover').checked,reduceMotion:document.getElementById('reduceMotion').checked,notchWidth:Number(document.getElementById('notchWidth').value)}}).catch(()=>{});
+document.getElementById('display-choice').oninput=event=>{displayDraft=event.target.value};
+document.getElementById('save-display').onclick=()=>{const choice=document.getElementById('display-choice').value;command('display.select',{choice}).then(()=>{if(displayDraft===choice)displayDraft=null;paintDisplays()}).catch(()=>{})};
 document.getElementById('post-notification').onclick=()=>command('notification.post',{title:document.getElementById('notification-title').value,body:document.getElementById('notification-body').value}).catch(()=>{});
 document.getElementById('complete-onboarding').onclick=()=>command('onboarding.complete').catch(()=>{});
 reconnect();

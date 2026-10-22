@@ -16,6 +16,7 @@ final class CoveStore: ObservableObject {
     @Published var loginItemStatus = "Disabled"
     @Published var physicalNotchWidth = 0.0
     @Published var physicalNotchHeight = 0.0
+    @Published private(set) var displaySelection = CoveDisplaySelection()
     let media = MediaController()
     let system = SystemController()
     let activities = ActivityController()
@@ -26,6 +27,36 @@ final class CoveStore: ObservableObject {
     lazy var hardwareKeys = HardwareKeyController(system: system)
     var onOpenSettings: (() -> Void)?
     var onPreferencesChange: (() -> Void)?
+    func updateDisplaySelection(_ value: CoveDisplaySelection) {
+        if displaySelection != value { displaySelection = value }
+    }
+    @discardableResult func chooseDisplay(_ choice: String) -> Result<Void, CoveDisplayError> {
+        var value = preferences
+        switch choice {
+        case "all": value.showOnAllDisplays = true
+        case "builtIn", "main":
+            value.showOnAllDisplays = false
+            value.selectedDisplayUUID = ""
+            value.preferBuiltInDisplay = choice == "builtIn"
+        default:
+            guard let uuid = UUID(uuidString: choice)?.uuidString else {
+                let error = CoveDisplayError.invalidChoice
+                lastError = error.localizedDescription
+                return .failure(error)
+            }
+            let current = CoveDisplays.resolve(preferences).state
+            updateDisplaySelection(current)
+            guard current.available.contains(where: { $0.canSelect && $0.uuid == uuid }) else {
+                let error = CoveDisplayError.unavailable
+                lastError = error.localizedDescription
+                return .failure(error)
+            }
+            value.showOnAllDisplays = false
+            value.selectedDisplayUUID = uuid
+        }
+        preferences = value
+        return savePreferences() ? .success(()) : .failure(.saveFailed(lastError ?? "Display settings could not be saved."))
+    }
     private var hudDismiss: Task<Void, Never>?
     private var appliedPreferences: CovePreferences
     private var subscriptions = Set<AnyCancellable>()
