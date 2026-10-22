@@ -428,6 +428,11 @@ final class MediaController: ObservableObject {
             let value = (field("kMRMediaRemoteNowPlayingInfo" + suffix) as? NSNumber)?.doubleValue ?? 0
             return value.isFinite ? value : 0
         }
+        func flag(_ suffix: String) -> Bool? {
+            guard let value = field("kMRMediaRemoteNowPlayingInfo" + suffix) as? NSNumber,
+                  value.doubleValue == 0 || value.doubleValue == 1 else { return nil }
+            return value.boolValue
+        }
         let duration = max(0, number("Duration"))
         let title = text("Title"), artist = text("Artist"), album = text("Album")
         guard !title.isEmpty || !artist.isEmpty || !album.isEmpty || duration > 0 else { return nil }
@@ -467,8 +472,10 @@ final class MediaController: ObservableObject {
             && !result.supportedPlaybackSpeeds.isEmpty
             && (result.adapter ? adapterURL?.pathExtension == "js" : remote?.sendCommand != nil)
         value.supportedPlaybackSpeeds = value.supportsPlaybackSpeed ? result.supportedPlaybackSpeeds : []
-        value.isExplicit = (field("kMRMediaRemoteNowPlayingInfoIsExplicitTrack") as? NSNumber)?.boolValue
-        value.isLive = (field("kMRMediaRemoteNowPlayingInfoIsLiveStream") as? NSNumber)?.boolValue
+        value.isExplicit = flag("IsExplicitTrack")
+        // MediaPlayer's public live-stream property arrives under IsAlwaysLive
+        // on current macOS. Keep the older source field as a fallback.
+        value.isLive = flag("IsAlwaysLive") ?? flag("IsLiveStream")
         value.audioFormat = field("kMRMediaRemoteNowPlayingInfoAudioFormat") as? String
         let link = Self.mediaLink(text("ExternalContentIdentifier"))
         value.link = link?.absoluteString

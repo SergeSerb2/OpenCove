@@ -3,6 +3,12 @@ import AppKit
 import UniformTypeIdentifiers
 
 enum CoveNotchStyle {
+    static func metadataLabel(_ text: String, limit: Int = 32) -> String {
+        let limit = min(160, max(0, limit))
+        let units = Array(text.utf16.prefix(limit + 1))
+        let prefix = String(decoding: units.prefix(limit), as: UTF16.self)
+        return units.count > limit ? prefix + "…" : prefix
+    }
     private static let secondaryTone = 0.52
     static let secondary = Color.white.opacity(secondaryTone)
     static let secondaryNative = NSColor(srgbRed: secondaryTone, green: secondaryTone,
@@ -389,17 +395,26 @@ struct CoveMediaSurface: View {
                                                color: media.lastError != nil ? .systemOrange : CoveNotchStyle.secondaryNative,
                                                reduceMotion: reduceMotion || systemReduceMotion || media.lastError != nil,
                                                helpText: media.lastError)
-                        if let format = media.state.audioFormat, !format.isEmpty {
-                            Text(format).font(.system(size: 8, weight: .semibold)).foregroundStyle(CoveNotchStyle.secondary)
-                        }
-                        if media.state.isLive == true {
-                            Label("LIVE", systemImage: "dot.radiowaves.left.and.right")
-                                .font(.system(size: 8, weight: .bold)).foregroundStyle(.red)
-                        }
-                        if let speed = media.state.playbackSpeed, media.state.supportsPlaybackSpeed {
-                            Text("\(speed.formatted(.number.precision(.fractionLength(0...2))))×")
-                                .font(.system(size: 9, weight: .semibold)).foregroundStyle(CoveNotchStyle.secondary)
-                                .accessibilityLabel("Playback speed \(speed.formatted()) times")
+                        HStack(spacing: 6) {
+                            if let format = media.state.audioFormat, !format.isEmpty {
+                                Text(CoveNotchStyle.metadataLabel(format))
+                                    .font(.system(size: 8, weight: .semibold)).foregroundStyle(CoveNotchStyle.secondary)
+                                    .lineLimit(1).truncationMode(.tail)
+                                    .help(CoveNotchStyle.metadataLabel(format, limit: 160))
+                            }
+                            if media.state.isLive == true {
+                                Label("LIVE", systemImage: "dot.radiowaves.left.and.right")
+                                    .font(.system(size: 8, weight: .bold)).foregroundStyle(.red)
+                                    .fixedSize()
+                                    .accessibilityLabel("Live stream")
+                                    .help("Live-stream status supplied by the player")
+                            }
+                            if let speed = media.state.playbackSpeed, media.state.supportsPlaybackSpeed {
+                                Text("\(speed.formatted(.number.precision(.fractionLength(0...2))))×")
+                                    .font(.system(size: 9, weight: .semibold)).foregroundStyle(CoveNotchStyle.secondary)
+                                    .fixedSize()
+                                    .accessibilityLabel("Playback speed \(speed.formatted()) times")
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -478,44 +493,54 @@ struct CoveMediaSurface: View {
         }
     }
 
-    private var progress: some View {
-        CovePlaybackTimeline(clock: media.playback) { elapsed in
-            let displayedPosition = scrubbing && scrubIdentity == identity
-                ? min(duration, max(0, scrubTime)) : min(duration, max(0, elapsed))
-            VStack(spacing: 1) {
-                Slider(value: Binding(get: { displayedPosition }, set: { value in
-                    guard acceptsSliderChanges, canSeek, value.isFinite,
-                          !scrubbing || scrubIdentity == identity else { return }
-                    scrubTime = min(duration, max(0, value))
-                    if !scrubbing { media.seek(to: scrubTime) }
-                }),
-                       in: 0...max(1, duration), onEditingChanged: { editing in
-                    if editing {
-                        guard acceptsSliderChanges, canSeek else { return }
-                        scrubTime = min(duration, max(0, media.playback.elapsed))
-                        scrubIdentity = identity
-                        scrubbing = true
-                    } else {
-                        let shouldSeek = acceptsSliderChanges && scrubbing && canSeek && scrubIdentity == identity
-                        scrubbing = false
-                        scrubIdentity = nil
-                        if shouldSeek { media.seek(to: min(duration, max(0, scrubTime))) }
-                    }
-                })
-                .controlSize(.mini)
-                .disabled(!canSeek)
-                .accessibilityLabel("Playback position")
-                .accessibilityValue(duration > 0 ? "\(CoveNotchStyle.duration(displayedPosition)) of \(CoveNotchStyle.duration(duration))" : "Position unavailable")
-                HStack {
-                    Text(duration > 0 ? CoveNotchStyle.duration(displayedPosition) : "—")
-                    Spacer()
-                    Text(duration > 0 ? "−\(CoveNotchStyle.duration(duration - displayedPosition))" : media.state.source)
-                        .lineLimit(1)
-                }
-                .font(.system(size: 9, weight: .medium, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(CoveNotchStyle.tertiary)
+    @ViewBuilder private var progress: some View {
+        if duration > 0 {
+            CovePlaybackTimeline(clock: media.playback) { elapsed in
+                progressControls(elapsed: elapsed)
             }
+        } else {
+            // No position or remaining time is displayed. Do not mount an
+            // observing clock/timeline for this static, unavailable state.
+            progressControls(elapsed: 0)
+        }
+    }
+
+    private func progressControls(elapsed: Double) -> some View {
+        let displayedPosition = scrubbing && scrubIdentity == identity
+            ? min(duration, max(0, scrubTime)) : min(duration, max(0, elapsed))
+        return VStack(spacing: 1) {
+            Slider(value: Binding(get: { displayedPosition }, set: { value in
+                guard acceptsSliderChanges, canSeek, value.isFinite,
+                      !scrubbing || scrubIdentity == identity else { return }
+                scrubTime = min(duration, max(0, value))
+                if !scrubbing { media.seek(to: scrubTime) }
+            }),
+                   in: 0...max(1, duration), onEditingChanged: { editing in
+                if editing {
+                    guard acceptsSliderChanges, canSeek else { return }
+                    scrubTime = min(duration, max(0, media.playback.elapsed))
+                    scrubIdentity = identity
+                    scrubbing = true
+                } else {
+                    let shouldSeek = acceptsSliderChanges && scrubbing && canSeek && scrubIdentity == identity
+                    scrubbing = false
+                    scrubIdentity = nil
+                    if shouldSeek { media.seek(to: min(duration, max(0, scrubTime))) }
+                }
+            })
+            .controlSize(.mini)
+            .disabled(!canSeek)
+            .accessibilityLabel("Playback position")
+            .accessibilityValue(duration > 0 ? "\(CoveNotchStyle.duration(displayedPosition)) of \(CoveNotchStyle.duration(duration))" : "Position unavailable")
+            HStack {
+                Text(duration > 0 ? CoveNotchStyle.duration(displayedPosition) : "—")
+                Spacer()
+                Text(duration > 0 ? "−\(CoveNotchStyle.duration(duration - displayedPosition))" : media.state.source)
+                    .lineLimit(1)
+            }
+            .font(.system(size: 9, weight: .medium, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(CoveNotchStyle.tertiary)
         }
     }
 
