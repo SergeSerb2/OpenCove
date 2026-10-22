@@ -14,7 +14,7 @@ An independent, MIT-licensed macOS notch app, written in SwiftUI and AppKit.
 - Shows calendar events, meeting links, and event countdowns.
 - Shows volume, brightness, battery, Bluetooth, and shared Focus status when available.
 - Offers optional conditions, sun and precipitation weather views with a 24-hour and 7-day forecast, time-to-leave alerts, system audio levels, notification-banner mirroring, lock widgets, a file tray, and a persistent timer.
-- Uses a floating pill on notchless displays, native windows, multiple-display policies, reduced motion, and configurable hover behavior. No web wrapper, account, or paid subscription is required.
+- Uses native or simulated notch presentation, a floating pill on notchless displays, native windows, multiple-display policies, reduced motion, and configurable hover behavior. No web wrapper, account, or paid subscription is required.
 
 ## Requirements
 
@@ -38,6 +38,8 @@ Quit a running copy before rebuilding its bundle, or select an isolated output d
 Settings → General → Displays chooses Built-in, Main, All, or an individual connected display. Individual choices use the display's saved system identity. If it is unavailable, the app keeps that choice and uses the main available display temporarily. All overrides the saved choice; choosing Built-in or Main clears it. The same choice applies to optional lock widgets. Mixed-display and secure-screen behavior still need the checks in [compatibility](docs/compatibility.md).
 
 The expanded layout sets the startup section and the combined Media & Calendar presentation. A manual section choice stays selected across collapse/reopen and previews. Changing the layout applies its default once. Disabling the selected section falls back to the configured default or the first enabled section. If every section is off, the panel shows a Settings action.
+
+Appearance → Simulate a notch uses an attached panel with center clearance from Width and Height. The real camera housing always sets the minimum; simulation does not change reported hardware geometry. With simulation off, a display without a notch uses the floating pill. Hide when idle still applies to the simulated panel.
 
 For an optimized local app, run `./script/build_and_run.sh --release`, then copy `dist/release/OpenCove.app` to your Applications folder with Finder. These builds are **ad-hoc signed**, not Developer ID signed or notarized; macOS may block a downloaded copy. Do not treat ad-hoc archives as trusted distribution builds. Future approved downloads belong on [GitHub Releases](https://github.com/SergeSerb2/OpenCove/releases), with checksums and a stated signing status.
 

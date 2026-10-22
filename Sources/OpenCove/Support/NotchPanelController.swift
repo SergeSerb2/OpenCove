@@ -186,6 +186,7 @@ final class NotchPanelController: NSObject {
             let surface = surfaces[id] ?? makeSurface(id: id)
             surfaces[id] = surface
             let cutout = CGSize(width: geometry.physicalNotchWidth, height: geometry.physicalNotchHeight)
+            let clearance = CoveNotchCutout.resolve(physical: cutout, preferences: preferences)
             surface.content.updateCutout(cutout, store: store)
             let desiredSize = NotchView.desiredSize(store: store, cutout: cutout)
             let width = max(desiredSize.width, geometry.notchWidth)
@@ -196,7 +197,7 @@ final class NotchPanelController: NSObject {
             // Restore before growing. Retire only after shrinking finishes so
             // content and geometry share the same interruptible transition.
             if !idleHidden { surface.content.hosting.isHidden = false }
-            surface.gestureStripHeight = max(32, geometry.physicalNotchHeight + 40)
+            surface.gestureStripHeight = max(32, clearance.height + 40)
             let frame = geometry.frame(width: width, height: height)
             let animate = surface.hasLayout && surface.panel.isVisible
                 && surface.screenFrame == screen.frame && surface.scale == geometry.scale
@@ -639,6 +640,7 @@ private struct CovePanelGeometry {
     let notchHeight: CGFloat
     let physicalNotchWidth: CGFloat
     let physicalNotchHeight: CGFloat
+    let isAttached: Bool
     let centerX: CGFloat
 
     init(screen: NSScreen, preferences: CovePreferences) {
@@ -655,6 +657,7 @@ private struct CovePanelGeometry {
         notchHeight = top > 0 ? top : fallbackHeight
         physicalNotchWidth = hasCutout ? gap : 0
         physicalNotchHeight = hasCutout ? top : 0
+        isAttached = hasCutout || preferences.simulateNotch
         // Auxiliary area widths are in points, just like NSScreen.frame. Add the
         // screen origin explicitly; secondary screens may have negative origins.
         centerX = hasCutout ? screen.frame.minX + left.width + gap / 2 : screen.frame.midX
@@ -665,9 +668,9 @@ private struct CovePanelGeometry {
         let height = min(screenFrame.height, ceil((height.isFinite ? max(1, height) : notchHeight) * scale) / scale)
         let x = ((centerX - width / 2) * scale).rounded() / scale
         let alignedX = min(screenFrame.maxX - width, max(screenFrame.minX, x))
-        // Notchless displays use a floating pill; attached shoulders are reserved
-        // for a physical camera housing. Keep the gap in screen-point geometry.
-        let top = ((screenFrame.maxY - (physicalNotchHeight == 0 ? 6 : 0)) * scale).rounded() / scale
+        // Automatic notchless presentation floats; simulation attaches at the
+        // display edge. This never changes reported physical camera dimensions.
+        let top = ((screenFrame.maxY - (isAttached ? 0 : 6)) * scale).rounded() / scale
         return NSRect(x: alignedX, y: top - height, width: width, height: height)
     }
 }

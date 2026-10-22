@@ -23,8 +23,9 @@ struct NotchView: View {
     /// The window owner can use the same dimensions as the rendered surface.
     static func desiredSize(store: CoveStore, cutout: CGSize? = nil) -> CGSize {
         let width = max(160, store.preferences.notchWidth)
-        let cutoutWidth = max(0, cutout.map { Double($0.width) } ?? store.physicalNotchWidth)
-        let cutoutHeight = max(0, cutout.map { Double($0.height) } ?? store.physicalNotchHeight)
+        let clearance = presentationCutout(store: store, physical: cutout)
+        let cutoutWidth = Double(clearance.width)
+        let cutoutHeight = Double(clearance.height)
         let height = max(32, store.preferences.notchHeight, cutoutHeight)
         if store.isExpanded {
             let active = store.visibleTab
@@ -64,8 +65,13 @@ struct NotchView: View {
             && store.preferences.enableMedia && store.preferences.enableCalendar
     }
 
-    private var cutoutHeight: Double { max(0, cutout.map { Double($0.height) } ?? store.physicalNotchHeight) }
-    private var compactGap: Double { max(0, cutout.map { Double($0.width) } ?? store.physicalNotchWidth) }
+    private static func presentationCutout(store: CoveStore, physical: CGSize?) -> CGSize {
+        CoveNotchCutout.resolve(physical: physical ?? CGSize(width: store.physicalNotchWidth,
+            height: store.physicalNotchHeight), preferences: store.preferences)
+    }
+
+    private var cutoutHeight: Double { Double(Self.presentationCutout(store: store, physical: cutout).height) }
+    private var compactGap: Double { Double(Self.presentationCutout(store: store, physical: cutout).width) }
     private var surfaceShape: CoveNotchShape {
         CoveNotchShape(radius: store.isExpanded ? max(24, store.preferences.cornerRadius) : store.preferences.cornerRadius,
                        floating: cutoutHeight == 0)
