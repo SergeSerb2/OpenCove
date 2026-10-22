@@ -376,8 +376,20 @@ final class DevelopmentServer {
         case "media.seek":
             let seconds = try number("seconds")
             guard store.media.state.available, store.media.state.supportsSeek else { throw ControlError.rejected("No seekable media source is available.") }
+            let target: String?
+            if let supplied = values["target"] {
+                guard let value = supplied as? String, !value.isEmpty, value.utf8.count <= 128 else {
+                    throw ControlError.invalid("Use the seek target from the current media state.")
+                }
+                guard value == store.media.state.seekTarget else {
+                    throw ControlError.rejected("The media item changed. Read fresh state before seeking.")
+                }
+                target = value
+            } else { target = nil }
             guard seconds >= 0, seconds <= store.media.state.duration else { throw ControlError.invalid("Seek time is outside the current track.") }
-            store.media.seek(to: seconds)
+            guard store.media.seek(to: seconds, target: target) else {
+                throw ControlError.rejected(store.media.lastError ?? "The seek could not be submitted.")
+            }
         case "system.refresh": store.system.refresh()
         case "system.volume":
             let value = try number("value")
@@ -486,6 +498,7 @@ final class DevelopmentServer {
         result["compactMediaVisible"] = store.compactMediaVisible
         result["compactActivity"] = store.compactActivity.rawValue
         result["mediaPeekVisible"] = store.showsMediaPeek
+        result["mediaPeekRemaining"] = store.mediaPeekRemaining.map { $0 as Any } ?? NSNull()
         result["playbackClock"] = ["receivedSamples": store.media.playback.receivedSamples,
                                    "changeNotifications": store.media.playback.changeNotifications]
         result["artworkAvailable"] = store.media.state.artworkData != nil
