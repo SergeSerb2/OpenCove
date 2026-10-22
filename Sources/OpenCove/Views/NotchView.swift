@@ -100,7 +100,41 @@ struct NotchView: View {
     }
 
     var body: some View {
+        surface
+            .environment(\.colorScheme, .dark)
+            .animation(motion, value: store.isExpanded)
+            .animation(motion, value: store.hud?.kind)
+            .animation(motion, value: Self.desiredSize(store: store, cutout: cutout))
+            .onAppear(perform: applyInitialLayout)
+            .onChange(of: store.preferences.expandedLayout) { _, _ in applyExpandedLayout() }
+            .onExitCommand(perform: store.collapse)
+    }
+
+    private func applyExpandedLayout() {
+        store.selectedTab = store.preferences.expandedLayout == "calendar" ? .calendar : .media
+    }
+
+    private func applyInitialLayout() {
+        if store.selectedTab == .media && store.preferences.expandedLayout == "calendar" {
+            store.selectedTab = .calendar
+        }
+    }
+
+    private var surface: some View {
         let size = Self.desiredSize(store: store, cutout: cutout)
+        return content
+            .frame(maxWidth: size.width, maxHeight: size.height)
+            .background(Color.black, in: surfaceShape)
+            .clipShape(surfaceShape)
+            .overlay {
+                surfaceShape.stroke(Color.white.opacity(store.isExpanded ? 0.085 : 0.035), lineWidth: 0.6)
+                    .allowsHitTesting(false)
+            }
+            .foregroundStyle(Color.white)
+            .tint(CoveNotchStyle.accent(store.preferences.accent))
+    }
+
+    @ViewBuilder private var content: some View {
         Group {
             if store.isExpanded {
                 expanded
@@ -117,29 +151,6 @@ struct NotchView: View {
                 .transition(.opacity)
             }
         }
-        .frame(maxWidth: size.width, maxHeight: size.height)
-        .background(.black, in: surfaceShape)
-        .clipShape(surfaceShape)
-        .overlay {
-            surfaceShape
-                .stroke(Color.white.opacity(store.isExpanded ? 0.085 : 0.035), lineWidth: 0.6)
-                .allowsHitTesting(false)
-        }
-        .foregroundStyle(.white)
-        .tint(CoveNotchStyle.accent(store.preferences.accent))
-        .environment(\.colorScheme, .dark)
-        .animation(motion, value: store.isExpanded)
-        .animation(motion, value: store.hud?.kind)
-        .animation(motion, value: size)
-        .onAppear {
-            if store.selectedTab == .media && store.preferences.expandedLayout == "calendar" {
-                store.selectedTab = .calendar
-            }
-        }
-        .onChange(of: store.preferences.expandedLayout) { _, layout in
-            store.selectedTab = layout == "calendar" ? .calendar : .media
-        }
-        .onExitCommand(perform: store.collapse)
     }
 
     @ViewBuilder private var compact: some View {

@@ -39,7 +39,7 @@ function resetConnection(label='Disconnected',message=''){
  for(const id of ['service-errors','window-state','state'])document.getElementById(id).textContent='';
  document.getElementById('connection').textContent=label;errorBox.textContent=message;
 }
-function disconnected(message){document.getElementById('connection').textContent='Disconnected';errorBox.textContent=message}
+function disconnected(message){resetConnection('Disconnected',message);transportError=true}
 async function request(path,options={}){
  if(closed)throw connectionChanged();
  if(unauthorized)throw Error('The local token expired. Reopen the URL from opencovectl url.');
@@ -51,7 +51,7 @@ async function request(path,options={}){
  if(!response.ok){
   let detail;try{detail=await response.json()}catch{detail={}}
   if(generation!==epoch||closed)throw connectionChanged();
-  throw Error(detail.error||('HTTP '+response.status));
+  const error=Error(detail.error||('HTTP '+response.status));error.status=response.status;throw error;
  }
  return response;
 }
@@ -63,13 +63,22 @@ async function render(force=false){
  image.onload=()=>{if(generation===epoch&&!closed)image.style.width=image.naturalWidth+'px'};image.src=next;
  if(lastImage)URL.revokeObjectURL(lastImage);lastImage=next;lastRender=Date.now();
 }
-async function readState(force=false){const generation=epoch,response=await request('/state'),next=await response.json();if(generation!==epoch||closed)return;state=next;if(transportError){errorBox.textContent='';transportError=false}paint();await render(force)}
+async function renderPreview(force=false){
+ const generation=epoch;
+ try{await render(force)}catch(error){
+  // A busy/failed preview is separate from a fresh authenticated state. A
+  // transport failure still retires the complete connection below.
+  if(generation===epoch&&!closed&&(error.status===409||error.status===500)){clearImage();errorBox.textContent='Native preview: '+error.message;return}
+  throw error;
+ }
+}
+async function readState(force=false){const generation=epoch,response=await request('/state'),next=await response.json();if(generation!==epoch||closed)return;state=next;if(transportError){errorBox.textContent='';transportError=false}paint();await renderPreview(force)}
 async function command(action,values={}){
  const generation=epoch;
  return enqueue(async()=>{
   if(!state||unauthorized||!token)throw Error('Wait for a fresh authenticated app state before sending a command.');
-  try{errorBox.textContent='';const response=await request('/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...values,action})});const next=await response.json();if(generation!==epoch||closed)throw connectionChanged();if(action==='preferences')for(const [key,value] of drafts)if(Object.hasOwn(values.values||{},key)&&(key==='notchWidth'?Number(value):value)===values.values[key])drafts.delete(key);state=next;paint();await render(true)}
-  catch(error){if(generation===epoch&&!closed&&error.name!=='AbortError'){errorBox.textContent=error.message;if(!unauthorized){try{await readState()}catch{}}}throw error}
+  try{errorBox.textContent='';const response=await request('/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...values,action})});const next=await response.json();if(generation!==epoch||closed)throw connectionChanged();if(action==='preferences')for(const [key,value] of drafts)if(Object.hasOwn(values.values||{},key)&&(key==='notchWidth'?Number(value):value)===values.values[key])drafts.delete(key);state=next;paint();await renderPreview(true)}
+  catch(error){if(generation===epoch&&!closed&&error.name!=='AbortError'){errorBox.textContent=error.message;if(!unauthorized){try{await readState()}catch(readError){if(generation===epoch&&!closed&&readError.name!=='AbortError')disconnected(readError.message)}}}throw error}
  });
 }
 window.opencove={command,getState:()=>state};
