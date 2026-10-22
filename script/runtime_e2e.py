@@ -491,10 +491,30 @@ class Runtime:
                          "Original fixture artwork did not reach the actual app.", 20)
                 client.command("selectTab", tab="media")
                 write_private(directory / "media-artwork.png", client.request("/render?surface=notch"))
+                client.command("collapse")
+                before = selected()["elapsed"]
+                time.sleep(1.25)
+                after = selected()["elapsed"]
+                require(0.5 < after - before < 3.5,
+                        "Actual API playback position stopped advancing with the compact panel.")
+                client.command("selectTab", tab="media")
                 client.command("media.playPause")
                 wait_for(fixture, lambda s: not s["playing"], "Actual fixture pause was not delivered.")
                 wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID and
                          not s["media"].get("isPlaying"), "The actual app kept stale playing state after pause.")
+                paused = selected()["elapsed"]
+                time.sleep(0.75)
+                require(abs(selected()["elapsed"] - paused) < 0.25,
+                        "Actual paused API playback position kept advancing.")
+                client.command("media.seek", seconds=9)
+                wait_for(fixture, lambda s: not s["playing"] and abs(s["elapsed"] - 9) < 0.25,
+                         "Actual paused seek did not reach the fixture.")
+                wait_for(client.request, lambda s: not s["media"].get("isPlaying") and
+                         abs(s["media"].get("elapsed", -1) - 9) < 0.25,
+                         "The actual app did not publish the new paused playback position.")
+                for surface in ("notch", "lock"):
+                    write_private(directory / ("paused-" + surface + ".png"),
+                                  client.request("/render?surface=" + surface))
                 selected()
                 client.command("media.playPause")
                 wait_for(fixture, lambda s: s["playing"], "Actual fixture play was not delivered.")
@@ -537,7 +557,8 @@ class Runtime:
                 code, _ = read_adapter("--seek", "60", "--source", FIXTURE_ID, "--item", old_item)
                 require(code != 0 and fixture()["elapsed"] < 30, "Stale native item seek was not rejected.")
                 self.record("media: owned real fixture readback, pause/play, normal app seek, next, stale adapter item rejection",
-                            metadataBackend=state["media"]["metadataBackend"], originalArtwork=True)
+                            metadataBackend=state["media"]["metadataBackend"], originalArtwork=True,
+                            compactPlaybackClock=True, pausedSeek=True)
         finally:
             stop(child)
 

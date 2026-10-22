@@ -8,7 +8,7 @@ struct NotchView: View {
     @ObservedObject private var media: MediaController
     @ObservedObject private var system: SystemController
     @ObservedObject private var activities: ActivityController
-    @ObservedObject private var waveform: AudioWaveformController
+    private let waveform: AudioWaveformController
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
     init(store: CoveStore, cutout: CGSize? = nil) {
@@ -17,7 +17,7 @@ struct NotchView: View {
         _media = ObservedObject(wrappedValue: store.media)
         _system = ObservedObject(wrappedValue: store.system)
         _activities = ObservedObject(wrappedValue: store.activities)
-        _waveform = ObservedObject(wrappedValue: store.waveform)
+        waveform = store.waveform
     }
 
     /// The window owner can use the same dimensions as the rendered surface.

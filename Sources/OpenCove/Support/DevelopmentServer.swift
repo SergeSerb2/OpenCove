@@ -426,6 +426,7 @@ final class DevelopmentServer {
         var result: [String: Any] = ["app": "OpenCove", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unbundled", "expanded": store.isExpanded, "tab": store.selectedTab.rawValue, "settingsVisible": store.settingsVisible, "dataDirectory": CovePaths.dataDirectory.path, "nativeWindows": NSApp.windows.filter { $0.isVisible && ($0.title == "OpenCove" || $0.identifier != nil) }.map { ["title": $0.title, "width": $0.frame.width, "height": $0.frame.height, "x": $0.frame.origin.x, "y": $0.frame.origin.y] }]
         result["preferences"] = try encoded(store.preferences)
         var media = store.media.state
+        media.elapsed = store.media.playback.elapsed
         media.artworkData = nil
         result["media"] = try encoded(media)
         result["artworkAvailable"] = store.media.state.artworkData != nil
@@ -480,7 +481,11 @@ final class DevelopmentServer {
         defer { rendererBusy = false }
         // An unordered window supplies native AppKit rendering context. It never
         // becomes visible/key, reads the desktop, or receives user input.
-        let hosting = NSHostingView(rootView: content.frame(width: size.width, height: size.height))
+        let hosting = NSHostingView(rootView: content.frame(width: size.width, height: size.height)
+            .transaction { transaction in
+                transaction.disablesAnimations = true
+                transaction.animation = nil
+            })
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
@@ -495,8 +500,9 @@ final class DevelopmentServer {
         try await Task.sleep(for: .milliseconds(80))
         try Task.checkCancellation()
         hosting.layoutSubtreeIfNeeded()
+        hosting.needsDisplay = true
         window.displayIfNeeded()
-        hosting.displayIfNeeded()
+        hosting.display()
         guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
             throw ControlError.failed("Native rendering failed.")
         }
