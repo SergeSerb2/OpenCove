@@ -324,9 +324,6 @@ final class NotchPanelController: NSObject {
                        preferences: CovePreferences) {
         let duration = animated ? CoveMotion.duration(preferences: preferences, hud: store.hud != nil) : 0
         let wasAnimating = surface.frameAnimationInFlight
-        // Install the current display geometry before replacing an animator,
-        // including zero-duration cancellation after a screen or scale change.
-        surface.panel.frameAnchor = CovePanelFrameAnchor(target: frame, screen: surface.screenFrame, scale: surface.scale)
         // Reduce Motion can change without changing the destination. Settle the
         // running animator too; comparing target frames alone leaves it moving.
         guard surface.targetFrame != frame || (wasAnimating && duration == 0) else { return }
@@ -336,11 +333,26 @@ final class NotchPanelController: NSObject {
         let revision = surface.layoutRevision
         surface.frameAnimationInFlight = duration > 0
         if duration > 0 {
+            let currentFrame = surface.panel.frame
+            let startFrame = CovePanelFrameAnchor(target: frame, screen: surface.screenFrame, scale: surface.scale)
+                .startingFrame(from: currentFrame)
+            if wasAnimating {
+                // Stop the old interpolation at the current size, with its
+                // rounded origin corrected before the next animator samples it.
+                // The revision already changed, so its completion cannot settle
+                // the old target or retire content for the new transition.
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0
+                    surface.panel.animator().setFrame(startFrame, display: true)
+                }
+            } else if currentFrame != startFrame {
+                surface.panel.setFrame(startFrame, display: true)
+            }
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = duration
                 context.timingFunction = CoveMotion.timingFunction
-                // The panel reconstructs each submitted origin from the target
-                // anchor; interrupted, rounded frames cannot move that anchor.
+                // Both endpoints share the target anchor. Leave interpolation
+                // to AppKit, with the panel's frame setters inherited unchanged.
                 surface.panel.animator().setFrame(frame, display: true)
             } completionHandler: { [weak self, weak surface] in
                 Task { @MainActor in
@@ -559,12 +571,8 @@ final class NotchPanelController: NSObject {
 @MainActor
 private final class CoveNotchPanel: NSPanel {
     var onEvent: ((NSEvent) -> Bool)?
-    var frameAnchor: CovePanelFrameAnchor?
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
-    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
-        super.setFrame(frameAnchor?.constrain(frameRect) ?? frameRect, display: flag)
-    }
     override func sendEvent(_ event: NSEvent) {
         if onEvent?(event) == true { return }
         super.sendEvent(event)
@@ -576,16 +584,17 @@ private struct CovePanelFrameAnchor {
     let screen: NSRect
     let scale: CGFloat
 
-    func constrain(_ proposed: NSRect) -> NSRect {
+    // Resolve once before a native animation, never on its intermediate frames.
+    func startingFrame(from current: NSRect) -> NSRect {
         // Keep settled geometry exactly as resolved by CovePanelGeometry.
-        guard proposed != target else { return target }
+        guard current != target else { return target }
         let pixel = 1 / scale
         // Two-pixel width steps retain the target's pixel parity. With the
         // target center fixed, both horizontal edges then stay on pixel bounds.
         let widthStep = 2 * pixel
         let width = min(screen.width, max(pixel,
-            target.width + ((proposed.width - target.width) / widthStep).rounded() * widthStep))
-        let height = min(screen.height, max(pixel, (proposed.height * scale).rounded() / scale))
+            target.width + ((current.width - target.width) / widthStep).rounded() * widthStep))
+        let height = min(screen.height, max(pixel, (current.height * scale).rounded() / scale))
         // Near a display edge, containment takes precedence over centering an
         // intermediate frame that is wider than the current target.
         let x = min(screen.maxX - width, max(screen.minX, target.midX - width / 2))
