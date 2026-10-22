@@ -447,6 +447,8 @@ final class DevelopmentServer {
         media.elapsed = store.media.playback.elapsed
         media.artworkData = nil
         result["media"] = try encoded(media)
+        result["playbackClock"] = ["receivedSamples": store.media.playback.receivedSamples,
+                                   "changeNotifications": store.media.playback.changeNotifications]
         result["artworkAvailable"] = store.media.state.artworkData != nil
         result["systemReduceMotion"] = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         result["mediaTextMotion"] = NSApp.windows.filter(\.isVisible).flatMap { window in

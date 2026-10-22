@@ -52,6 +52,8 @@ The owned media flow also starts a separate `--rate-controls` fixture. It checks
 
 For `media.speed`, API clients must echo the current media state's `sourceBundleIdentifier` as `source` and `contentItemIdentifier` as `item`, plus a `speed` from `supportedPlaybackSpeeds`. A stale target returns HTTP 409; missing identifiers or an unadvertised value return HTTP 400. The app reports a new speed only when the source supplies it; HTTP 200 means submission. Native speed menus capture the same item identity when built.
 
+`playbackClock` in the development state reports received source samples and clock change notifications. The real media flow checks that stable playback can receive several samples without notifying progress observers for each one, while actual playing seeks and paused position changes still reach the real app. These counters are diagnostic counts, not frame-rate or energy measurements.
+
 ## Evidence and manual gates
 
 Record the exact source-tree hash, bundle path/variant, architecture, version/build, macOS/toolchain, commands, exit status, and failing flows for each final integration run. Keep tokens, private event/banner/media data, and raw state out of public reports. This guide is a procedure, not a record that its commands passed. The final integrated revision still needs its own recorded run.
