@@ -10,6 +10,7 @@ final class CoveStore: ObservableObject {
     @Published private(set) var selectedTab: CoveTab = .media
     @Published var isExpanded = false
     @Published private(set) var compactMediaVisible = false
+    @Published private(set) var mediaPeekVisible = false
     @Published var hud: CoveHUD?
     @Published var settingsVisible = false
     @Published var lastError: String?
@@ -67,7 +68,8 @@ final class CoveStore: ObservableObject {
 
     func openCompactActivity() {
         // A transient HUD must not replace the prior expanded section.
-        if hud == nil {
+        if showsMediaPeek { selectTab(.media) }
+        else if hud == nil {
             switch compactActivity {
             case .media: selectTab(.media)
             case .calendar: selectTab(.calendar)
@@ -137,6 +139,18 @@ final class CoveStore: ObservableObject {
     private var mediaIdleDeadline: ContinuousClock.Instant?
     private var mediaIdleTask: Task<Void, Never>?
     private var mediaIdleRevision: UInt64 = 0
+    private var mediaPeekInput: CompactMediaInput?
+    private var mediaPeekTask: Task<Void, Never>?
+    private var mediaPeekRevision: UInt64 = 0
+
+    var showsMediaPeek: Bool {
+        mediaPeekVisible && mayPresentMediaPeek && media.state.available && media.state.isPlaying
+    }
+
+    private var mayPresentMediaPeek: Bool {
+        started && sessionActive && !system.state.isLocked && preferences.enableMedia
+            && preferences.peekOnSongChange && !isExpanded && hud == nil
+    }
 
     /// Elapsed position, artwork and rate changes must not restart the grace.
     private struct CompactMediaInput: Equatable {
@@ -206,6 +220,7 @@ final class CoveStore: ObservableObject {
                 // Keep an observed resume/item change even if a second source
                 // update arrives before this deferred main-run-loop delivery.
                 self.reconcileCompactMedia(resetGrace: observed != self.mediaIdleInput)
+                self.observeMediaPeek(observed)
             }.store(in: &subscriptions)
         system.onHUD = { [weak self] in self?.showHUD($0) }
         activities.onHUD = { [weak self] value in
@@ -239,6 +254,7 @@ final class CoveStore: ObservableObject {
             guard let self else { return }
             if locked { self.collapse() }
             self.refreshSessionActivity()
+            self.resetMediaPeek()
             self.reconcileCalendarPrivacy()
             self.reconcileMirroring()
             self.objectWillChange.send()
@@ -248,11 +264,13 @@ final class CoveStore: ObservableObject {
         workspace.publisher(for: NSWorkspace.sessionDidResignActiveNotification).sink { [weak self] _ in
             self?.sessionActive = false
             self?.collapse()
+            self?.resetMediaPeek()
             self?.reconcileCalendarPrivacy()
             self?.reconcileMirroring()
         }.store(in: &subscriptions)
         workspace.publisher(for: NSWorkspace.sessionDidBecomeActiveNotification).sink { [weak self] _ in
             self?.refreshSessionActivity()
+            self?.resetMediaPeek()
             self?.system.refresh()
             self?.reconcileCalendarPrivacy()
             self?.reconcileMirroring()
@@ -267,6 +285,7 @@ final class CoveStore: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
+        resetMediaPeek()
         refreshSessionActivity()
         media.preferredSource = preferences.preferredMusicApp
         activities.preferredCalendarApp = preferences.preferredCalendarApp
@@ -289,6 +308,8 @@ final class CoveStore: ObservableObject {
 
     func stop() {
         started = false
+        dismissMediaPeek()
+        mediaPeekInput = nil
         cancelMediaIdleDeadline()
         mediaIdleInput = nil
         mediaPausedAt = nil
@@ -353,9 +374,54 @@ final class CoveStore: ObservableObject {
         }
     }
 
-    func expand() { isExpanded = true }
-    func collapse() { isExpanded = false }
-    func toggleExpanded() { isExpanded.toggle() }
+    private func dismissMediaPeek() {
+        mediaPeekRevision &+= 1
+        mediaPeekTask?.cancel()
+        mediaPeekTask = nil
+        if mediaPeekVisible { mediaPeekVisible = false }
+    }
+
+    private func resetMediaPeek() {
+        dismissMediaPeek()
+        mediaPeekInput = CompactMediaInput(media.state)
+    }
+
+    private func observeMediaPeek(_ observed: CompactMediaInput) {
+        // Deferred obsolete samples must not overwrite a preference/session
+        // baseline or briefly present metadata from an item already replaced.
+        guard observed == CompactMediaInput(media.state) else { return }
+        let previous = mediaPeekInput
+        mediaPeekInput = observed
+        guard mayPresentMediaPeek, observed.available, observed.playing else {
+            dismissMediaPeek()
+            return
+        }
+        // Discovery/reconnection is quiet. Metadata/position/rate/artwork
+        // corrections for the same opaque item do not extend its deadline.
+        guard let previous, previous.available else { return }
+        let changed: Bool
+        if previous.source != observed.source { changed = true }
+        else if let before = previous.item, !before.isEmpty, let after = observed.item, !after.isEmpty {
+            changed = before != after
+        } else {
+            changed = previous.title != observed.title || previous.artist != observed.artist || previous.album != observed.album
+        }
+        guard changed else { return }
+        dismissMediaPeek()
+        mediaPeekVisible = true
+        let revision = mediaPeekRevision, clock = mediaIdleClock
+        let deadline = clock.now.advanced(by: .seconds(preferences.mediaPeekDuration))
+        mediaPeekTask = Task { @MainActor [weak self] in
+            do { try await clock.sleep(until: deadline) } catch { return }
+            guard !Task.isCancelled, let self, self.mediaPeekRevision == revision else { return }
+            self.mediaPeekTask = nil
+            if self.mediaPeekVisible { self.mediaPeekVisible = false }
+        }
+    }
+
+    func expand() { dismissMediaPeek(); isExpanded = true }
+    func collapse() { dismissMediaPeek(); isExpanded = false }
+    func toggleExpanded() { isExpanded ? collapse() : expand() }
     func openSettings() { settingsVisible = true; onOpenSettings?() }
 
     private func reconcileMirroring() {
@@ -433,6 +499,7 @@ final class CoveStore: ObservableObject {
 
     func showHUD(_ value: CoveHUD) {
         guard isHUDEnabled(value) else { return }
+        dismissMediaPeek()
         hudDismiss?.cancel()
         hud = value
         if preferences.enableHaptics { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default) }
@@ -493,6 +560,13 @@ final class CoveStore: ObservableObject {
         appliedPreferences = preferences
         reconcileActivitySelection(resetToDefault: preferences.expandedLayout != previous.expandedLayout)
         reconcileCompactMedia()
+        if preferences.peekOnSongChange != previous.peekOnSongChange
+            || preferences.enableMedia != previous.enableMedia
+            || preferences.enablePrivateAPIs != previous.enablePrivateAPIs
+            || preferences.allowAppleScript != previous.allowAppleScript
+            || preferences.preferredMusicApp != previous.preferredMusicApp {
+            resetMediaPeek()
+        } else if !mayPresentMediaPeek { dismissMediaPeek() }
         onPreferencesChange?()
         var success = true
         do {

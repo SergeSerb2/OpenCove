@@ -29,6 +29,7 @@ final class NotchPanelController: NSObject {
         var hud: Bool
         var media: Bool
         var compactActivity: CoveCompactActivity
+        var mediaPeek: Bool
         var timer: Bool
         var event: Bool
     }
@@ -38,6 +39,7 @@ final class NotchPanelController: NSObject {
                      hud: store.hud != nil,
                      media: store.preferences.enableMedia && store.compactMediaVisible && store.media.state.available,
                      compactActivity: store.compactActivity,
+                     mediaPeek: store.showsMediaPeek,
                      timer: store.activities.timer.remaining > 0, event: store.activities.eventActivity != nil)
     }
 
