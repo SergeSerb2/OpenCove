@@ -27,23 +27,7 @@ struct NotchView: View {
         let cutoutHeight = max(0, cutout.map { Double($0.height) } ?? store.physicalNotchHeight)
         let height = max(32, store.preferences.notchHeight, cutoutHeight)
         if store.isExpanded {
-            let tab = CoveTab.allCases.first { tab in
-                switch tab {
-                case .media: return store.preferences.enableMedia
-                case .calendar: return store.preferences.enableCalendar
-                case .files: return store.preferences.enableFileTray
-                case .timer: return store.preferences.enableTimer
-                }
-            }
-            let selected = store.selectedTab
-            let active: CoveTab? = {
-                switch selected {
-                case .media: return store.preferences.enableMedia ? selected : tab
-                case .calendar: return store.preferences.enableCalendar ? selected : tab
-                case .files: return store.preferences.enableFileTray ? selected : tab
-                case .timer: return store.preferences.enableTimer ? selected : tab
-                }
-            }()
+            let active = store.visibleTab
             let contentHeight: Double = active == .media ? (store.preferences.expandedLayout == "duo" ? 240 : 205)
                 : active == .calendar ? 235 : 260
             return CGSize(width: max(440, width, cutoutWidth + 80), height: max(contentHeight + cutoutHeight, height))
@@ -72,20 +56,8 @@ struct NotchView: View {
         return CoveMotion.animation(preferences: store.preferences, hud: store.hud != nil)
     }
 
-    private var enabledTabs: [CoveTab] {
-        CoveTab.allCases.filter { tab in
-            switch tab {
-            case .media: return store.preferences.enableMedia
-            case .calendar: return store.preferences.enableCalendar
-            case .files: return store.preferences.enableFileTray
-            case .timer: return store.preferences.enableTimer
-            }
-        }
-    }
-
-    private var visibleTab: CoveTab? {
-        enabledTabs.contains(store.selectedTab) ? store.selectedTab : enabledTabs.first
-    }
+    private var enabledTabs: [CoveTab] { store.enabledTabs }
+    private var visibleTab: CoveTab? { store.visibleTab }
 
     private var showsDuo: Bool {
         store.preferences.expandedLayout == "duo" && visibleTab == .media
@@ -106,19 +78,7 @@ struct NotchView: View {
             .animation(motion, value: store.hud?.kind)
             .animation(motion, value: store.hidesCompactWhenIdle)
             .animation(motion, value: Self.desiredSize(store: store, cutout: cutout))
-            .onAppear(perform: applyInitialLayout)
-            .onChange(of: store.preferences.expandedLayout) { _, _ in applyExpandedLayout() }
             .onExitCommand(perform: store.collapse)
-    }
-
-    private func applyExpandedLayout() {
-        store.selectedTab = store.preferences.expandedLayout == "calendar" ? .calendar : .media
-    }
-
-    private func applyInitialLayout() {
-        if store.selectedTab == .media && store.preferences.expandedLayout == "calendar" {
-            store.selectedTab = .calendar
-        }
     }
 
     private var surface: some View {
@@ -303,7 +263,7 @@ struct NotchView: View {
                 if store.preferences.enableNotifications { CoveNotificationButton(activities: activities) }
                 Menu {
                     ForEach(enabledTabs) { tab in
-                        Button { store.selectedTab = tab } label: {
+                        Button { store.selectTab(tab) } label: {
                             Label(tab == .media && showsDuo ? "Media & Calendar" : tab.title, systemImage: tab.symbol)
                         }
                     }

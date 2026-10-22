@@ -96,8 +96,7 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         if !files.isEmpty {
             if store.preferences.enableFileTray {
                 store.activities.addFiles(files)
-                store.selectedTab = .files
-                store.expand()
+                store.selectTab(.files, expand: true)
             } else {
                 store.activities.lastError = "The file tray is off. Enable File tray in Activities settings, then add the files again."
                 store.openSettings()

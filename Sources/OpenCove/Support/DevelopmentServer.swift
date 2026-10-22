@@ -289,7 +289,7 @@ final class DevelopmentServer {
         case "toggle": store.toggleExpanded()
         case "selectTab":
             guard let name = values["tab"] as? String, let tab = CoveTab(rawValue: name) else { throw ControlError.invalid("Unknown tab.") }
-            store.selectedTab = tab; store.expand()
+            guard store.selectTab(tab, expand: true) else { throw ControlError.rejected("This section is disabled. Enable it in Settings first.") }
         case "preferences":
             guard let changes = values["values"] as? [String: Any] else { throw ControlError.invalid("Preference values are required.") }
             guard var object = try encoded(store.preferences) as? [String: Any] else { throw ControlError.failed("Settings could not be encoded.") }
@@ -476,6 +476,8 @@ final class DevelopmentServer {
         }
         var result: [String: Any] = ["app": "OpenCove", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unbundled", "expanded": store.isExpanded, "tab": store.selectedTab.rawValue, "settingsVisible": store.settingsVisible, "dataDirectory": CovePaths.dataDirectory.path, "nativeWindows": windows]
         result["preferences"] = try encoded(store.preferences)
+        result["enabledTabs"] = store.enabledTabs.map(\.rawValue)
+        result["visibleTab"] = store.visibleTab.map { $0.rawValue as Any } ?? NSNull()
         var media = store.media.state
         media.elapsed = store.media.playback.elapsed
         media.artworkData = nil

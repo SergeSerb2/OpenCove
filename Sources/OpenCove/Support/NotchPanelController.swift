@@ -490,23 +490,13 @@ final class NotchPanelController: NSObject {
         }
     }
 
-    private var enabledTabs: [CoveTab] {
-        CoveTab.allCases.filter { tab in
-            switch tab {
-            case .media: return store.preferences.enableMedia
-            case .calendar: return store.preferences.enableCalendar
-            case .files: return store.preferences.enableFileTray
-            case .timer: return store.preferences.enableTimer
-            }
-        }
-    }
+    private var enabledTabs: [CoveTab] { store.enabledTabs }
 
     private func changeTab(forward: Bool) {
         let tabs = enabledTabs
         guard !tabs.isEmpty else { return }
         let index = tabs.firstIndex(of: store.selectedTab) ?? (forward ? tabs.count - 1 : 0)
-        store.selectedTab = tabs[(index + (forward ? 1 : tabs.count - 1)) % tabs.count]
-        store.expand()
+        store.selectTab(tabs[(index + (forward ? 1 : tabs.count - 1)) % tabs.count], expand: true)
     }
 
     private func showContextMenu(event: NSEvent, view: NSView) {
@@ -549,8 +539,7 @@ final class NotchPanelController: NSObject {
         guard mayHandleMenuAction,
               let raw = item.representedObject as? String, let tab = CoveTab(rawValue: raw),
               enabledTabs.contains(tab) else { return }
-        store.selectedTab = tab
-        store.expand()
+        store.selectTab(tab, expand: true)
     }
 
     private func finite(_ value: Double, fallback: Double, range: ClosedRange<Double>) -> Double {
