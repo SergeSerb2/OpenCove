@@ -11,7 +11,14 @@ import ObjectiveC
 @MainActor
 final class MediaController: ObservableObject {
     @Published private(set) var state = MediaState()
-    @Published private(set) var lastError: String?
+    @Published private var errorMessage: String?
+    private(set) var lastError: String? {
+        get { errorMessage }
+        set { if errorMessage != newValue { errorMessage = newValue } }
+    }
+    // Position updates belong to the visible progress controls. They must not
+    // invalidate artwork, transport, compact panels, or panel geometry.
+    let playback = CovePlaybackClock()
     var onHUD: ((CoveHUD) -> Void)?
 
     /// system follows Now Playing; explicit selections never fall through to another app.
@@ -57,14 +64,10 @@ final class MediaController: ObservableObject {
     private var refreshAgain = false
     private var remoteRead: CoveRemoteRead?
     private var pollTimer: Timer?
-    private var elapsedTimer: Timer?
     private var delayedRefresh: DispatchWorkItem?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var sourceBundleID: String?
     private var sourcePID: pid_t?
-    private var elapsedAnchor = 0.0
-    private var clockAnchor = 0.0
-    private var playbackRate = 0.0
     private var trackIdentity = ""
     private var artworkDownload: CoveMediaArtworkDownload?
     private var artworkDownloadID = UUID()
@@ -74,7 +77,6 @@ final class MediaController: ObservableObject {
 
     deinit {
         pollTimer?.invalidate()
-        elapsedTimer?.invalidate()
         delayedRefresh?.cancel()
         for (center, token) in observers { center.removeObserver(token) }
         scripts.cancelAll()
@@ -121,9 +123,7 @@ final class MediaController: ObservableObject {
         running = false
         generation = UUID()
         pollTimer?.invalidate()
-        elapsedTimer?.invalidate()
         pollTimer = nil
-        elapsedTimer = nil
         delayedRefresh?.cancel()
         delayedRefresh = nil
         remoteRead?.cancel()
@@ -305,13 +305,6 @@ final class MediaController: ObservableObject {
         observers.append((center, token))
     }
 
-    private func tick() {
-        guard running, state.available, state.isPlaying else { return }
-        let elapsed = elapsedAnchor + max(0, ProcessInfo.processInfo.systemUptime - clockAnchor) * playbackRate
-        let bounded = state.duration > 0 ? min(elapsed, state.duration) : elapsed
-        if bounded.isFinite, state.elapsed != bounded { state.elapsed = max(0, bounded) }
-    }
-
     private func reconcileTimers() {
         guard running else { return }
         let interval: TimeInterval = state.available ? 4 : 15
@@ -323,19 +316,6 @@ final class MediaController: ObservableObject {
             timer.tolerance = interval * 0.2
             RunLoop.main.add(timer, forMode: .common)
             pollTimer = timer
-        }
-        if state.available && state.isPlaying {
-            if elapsedTimer == nil {
-                let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.tick() }
-                }
-                timer.tolerance = 0.1
-                RunLoop.main.add(timer, forMode: .common)
-                elapsedTimer = timer
-            }
-        } else {
-            elapsedTimer?.invalidate()
-            elapsedTimer = nil
         }
     }
 
@@ -363,7 +343,8 @@ final class MediaController: ObservableObject {
     }
 
     private func clearState() {
-        state = MediaState()
+        let empty = MediaState()
+        if state != empty { state = empty }
         reconcileTimers()
         backend = nil
         remoteSeekSupported = false
@@ -374,9 +355,7 @@ final class MediaController: ObservableObject {
         remoteItemID = nil
         trackIdentity = ""
         scripts.selectItem("")
-        playbackRate = 0
-        elapsedAnchor = 0
-        clockAnchor = ProcessInfo.processInfo.systemUptime
+        playback.update(elapsed: 0, duration: 0, rate: 0)
         artworkDownload?.cancel()
         artworkDownload = nil
         remoteArtworkData = nil
@@ -409,10 +388,13 @@ final class MediaController: ObservableObject {
         sourcePID = pid
         self.backend = backend
         remoteSeekSupported = backend != .script && value.supportsSeek
-        elapsedAnchor = value.elapsed
-        clockAnchor = ProcessInfo.processInfo.systemUptime
-        playbackRate = value.isPlaying ? rate : 0
-        if state != value { state = value }
+        playback.update(elapsed: value.elapsed, duration: value.duration,
+                        rate: value.isPlaying ? rate : 0)
+        // Keep the last published metadata sample. Elapsed-only source updates
+        // refresh the separate clock, including seeks while playback is paused.
+        var comparable = state
+        comparable.elapsed = value.elapsed
+        if comparable != value { state = value }
         reconcileTimers()
     }
 
@@ -713,7 +695,7 @@ final class MediaController: ObservableObject {
                 // enrichment cannot make an unidentifiable remote item seekable.
                 value.supportsSeek = remoteSeek
                 self.scriptTrackID = track.trackID
-                self.state = value
+                if self.state != value { self.state = value }
             }
             self.finishRefresh()
         }

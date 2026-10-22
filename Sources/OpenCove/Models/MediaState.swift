@@ -1,4 +1,37 @@
 import Foundation
+import Combine
+
+/// A monotonic playback anchor with no timer. Only progress views observe it;
+/// API snapshots read its current position directly, even with no view mounted.
+@MainActor
+final class CovePlaybackClock: ObservableObject {
+    private struct Sample {
+        var elapsed = 0.0
+        var duration = 0.0
+        var rate = 0.0
+        var uptime = ProcessInfo.processInfo.systemUptime
+    }
+    @Published private var sample = Sample()
+
+    var isAdvancing: Bool { sample.rate != 0 }
+
+    var elapsed: Double {
+        let delta = max(0, ProcessInfo.processInfo.systemUptime - sample.uptime)
+        let advanced = sample.elapsed + delta * sample.rate
+        let value = max(0, advanced.isFinite ? advanced : sample.elapsed)
+        return sample.duration > 0 ? min(value, sample.duration) : value
+    }
+
+    func update(elapsed: Double, duration: Double, rate: Double) {
+        let elapsed = elapsed.isFinite ? max(0, elapsed) : 0
+        let duration = duration.isFinite ? max(0, duration) : 0
+        let rate = rate.isFinite ? rate : 0
+        // A stationary source does not need repeated identical anchors.
+        if rate == 0, sample.rate == 0, sample.elapsed == elapsed,
+           sample.duration == duration { return }
+        sample = Sample(elapsed: elapsed, duration: duration, rate: rate)
+    }
+}
 
 struct MediaState: Codable, Equatable {
     var title: String = ""

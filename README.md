@@ -2,6 +2,8 @@
 
 # OpenCove
 
+[![Build and source archive](https://github.com/SergeSerb2/OpenCove/actions/workflows/ci.yml/badge.svg)](https://github.com/SergeSerb2/OpenCove/actions/workflows/ci.yml)
+
 An independent, MIT-licensed macOS notch app, written in SwiftUI and AppKit.
 
 **Early beta (`0.1.0-beta.1`).** Real app/API/CLI integration checks are provided in [the quality guide](docs/quality.md). This is not a stable release or a claim of complete hardware, macOS, or player compatibility. No notarized public binary has been verified. See [compatibility and open gaps](docs/compatibility.md).
@@ -16,9 +18,9 @@ An independent, MIT-licensed macOS notch app, written in SwiftUI and AppKit.
 
 ## Requirements
 
-The deployment target is **macOS 15+**. Local runtime evidence is **Apple silicon, macOS 27.2**; macOS 15/26 and Intel runtime support are not yet proven. Glass effects use macOS 26 APIs with an older-system fallback.
+The deployment target is **macOS 15+**. Local app/API runtime evidence is **Apple silicon, macOS 27.2**. Automated packaged-app/API/CLI smoke checks have also passed on the macOS 15 arm64 CI runner; full macOS 15/26 and Intel feature coverage is still open. Glass effects use macOS 26 APIs with an older-system fallback.
 
-Building needs **Xcode 26+ with the macOS 26 SDK**, Swift 6+, and Python 3.9+. Only **Xcode 27.1 / Swift 6.4 / macOS 27 SDK** has been used locally. CI targets the separately available Xcode 26.2 toolchain. There are no third-party Swift packages.
+Building needs **Xcode 26+ with the macOS 26 SDK**, Swift 6+, and Python 3.9+. Local builds use **Xcode 27.1 / Swift 6.4 / macOS 27 SDK**. Hosted CI has also passed with **Xcode 26.2 / Swift 6.2.3 / macOS 26.2 SDK**. There are no third-party Swift packages.
 
 When macOS denies direct media reads, an isolated adapter uses the built-in `/usr/bin/osascript` JavaScript host. This path does not need developer tools at runtime and does not send Apple Events. A legacy Swift adapter is retained for diagnostics and needs Xcode or Command Line Tools. Music/Spotify Automation is a separate opt-in fallback.
 

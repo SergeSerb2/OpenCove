@@ -94,17 +94,19 @@ private struct CoveLockMediaSection: View {
                 }
             }
             if controller.state.available, controller.state.duration.isFinite,
-               controller.state.elapsed.isFinite, controller.state.duration > 0 {
-                HStack(spacing: 9) {
-                    Text(playbackTime(controller.state.elapsed))
-                    ProgressView(value: min(max(0, controller.state.elapsed), controller.state.duration),
-                                 total: controller.state.duration)
-                        .tint(.primary)
-                        .accessibilityLabel("Playback progress")
-                    Text("−" + playbackTime(max(0, controller.state.duration - controller.state.elapsed)))
+               controller.state.duration > 0 {
+                CovePlaybackTimeline(clock: controller.playback) { elapsed in
+                    HStack(spacing: 9) {
+                        Text(playbackTime(elapsed))
+                        ProgressView(value: min(max(0, elapsed), controller.state.duration),
+                                     total: controller.state.duration)
+                            .tint(.primary)
+                            .accessibilityLabel("Playback progress")
+                        Text("−" + playbackTime(max(0, controller.state.duration - elapsed)))
+                    }
+                    .font(.system(size: 9, weight: .medium, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.secondary)
                 }
-                .font(.system(size: 9, weight: .medium, design: .rounded).monospacedDigit())
-                .foregroundStyle(.secondary)
             }
             if controller.lastError != nil {
                 Text("Playback could not be updated.")

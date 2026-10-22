@@ -345,12 +345,26 @@ struct CoveEmptySurface: View {
     }
 }
 
+/// Mount the refresh schedule only around the progress controls. The model has
+/// no elapsed timer, and a paused source stops this schedule completely.
+@MainActor
+struct CovePlaybackTimeline<Content: View>: View {
+    @ObservedObject var clock: CovePlaybackClock
+    @ViewBuilder var content: (Double) -> Content
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.5, paused: !clock.isAdvancing)) { _ in
+            content(clock.elapsed)
+        }
+    }
+}
+
 @MainActor
 struct CoveMediaSurface: View {
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @ObservedObject var media: MediaController
-    @ObservedObject var system: SystemController
-    @ObservedObject var waveform: AudioWaveformController
+    let system: SystemController
+    let waveform: AudioWaveformController
     var showLiveWaveform = false
     var condensed = false
     var musicColorAccent = true
@@ -366,14 +380,8 @@ struct CoveMediaSurface: View {
         let seconds = media.state.duration
         return seconds.isFinite && seconds > 0 && seconds < Double(Int.max / 2) ? seconds : 0
     }
-    private var elapsed: Double {
-        min(duration, max(0, media.state.elapsed.isFinite ? media.state.elapsed : 0))
-    }
     private var identity: CoveMediaScrubIdentity { CoveMediaScrubIdentity(state: media.state) }
     private var canSeek: Bool { media.state.available && media.state.supportsSeek && duration > 0 }
-    private var displayedPosition: Double {
-        scrubbing && scrubIdentity == identity ? min(duration, max(0, scrubTime)) : elapsed
-    }
 
     var body: some View {
         if media.state.available {
@@ -431,40 +439,7 @@ struct CoveMediaSurface: View {
                         .accessibilityLabel("More playback actions")
                     }
                 }
-                VStack(spacing: 1) {
-                    Slider(value: Binding(get: { displayedPosition }, set: { value in
-                        guard acceptsSliderChanges, canSeek, value.isFinite,
-                              !scrubbing || scrubIdentity == identity else { return }
-                        scrubTime = min(duration, max(0, value))
-                        if !scrubbing { media.seek(to: scrubTime) }
-                    }),
-                           in: 0...max(1, duration), onEditingChanged: { editing in
-                        if editing {
-                            guard acceptsSliderChanges, canSeek else { return }
-                            scrubTime = elapsed
-                            scrubIdentity = identity
-                            scrubbing = true
-                        } else {
-                            let shouldSeek = acceptsSliderChanges && scrubbing && canSeek && scrubIdentity == identity
-                            scrubbing = false
-                            scrubIdentity = nil
-                            if shouldSeek { media.seek(to: min(duration, max(0, scrubTime))) }
-                        }
-                    })
-                    .controlSize(.mini)
-                    .disabled(!canSeek)
-                    .accessibilityLabel("Playback position")
-                    .accessibilityValue(duration > 0 ? "\(CoveNotchStyle.duration(displayedPosition)) of \(CoveNotchStyle.duration(duration))" : "Position unavailable")
-                    HStack {
-                        Text(duration > 0 ? CoveNotchStyle.duration(displayedPosition) : "—")
-                        Spacer()
-                        Text(duration > 0 ? "−\(CoveNotchStyle.duration(duration - displayedPosition))" : media.state.source)
-                            .lineLimit(1)
-                    }
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(CoveNotchStyle.tertiary)
-                }
+                progress
                 HStack(spacing: 12) {
                     Spacer(minLength: 0)
                     transport
@@ -501,6 +476,47 @@ struct CoveMediaSurface: View {
             CoveEmptySurface(symbol: "music.note", title: "Nothing playing",
                              message: media.lastError ?? "Play something in your favorite app.",
                              actionTitle: "Refresh", action: media.refresh)
+        }
+    }
+
+    private var progress: some View {
+        CovePlaybackTimeline(clock: media.playback) { elapsed in
+            let displayedPosition = scrubbing && scrubIdentity == identity
+                ? min(duration, max(0, scrubTime)) : min(duration, max(0, elapsed))
+            VStack(spacing: 1) {
+                Slider(value: Binding(get: { displayedPosition }, set: { value in
+                    guard acceptsSliderChanges, canSeek, value.isFinite,
+                          !scrubbing || scrubIdentity == identity else { return }
+                    scrubTime = min(duration, max(0, value))
+                    if !scrubbing { media.seek(to: scrubTime) }
+                }),
+                       in: 0...max(1, duration), onEditingChanged: { editing in
+                    if editing {
+                        guard acceptsSliderChanges, canSeek else { return }
+                        scrubTime = min(duration, max(0, media.playback.elapsed))
+                        scrubIdentity = identity
+                        scrubbing = true
+                    } else {
+                        let shouldSeek = acceptsSliderChanges && scrubbing && canSeek && scrubIdentity == identity
+                        scrubbing = false
+                        scrubIdentity = nil
+                        if shouldSeek { media.seek(to: min(duration, max(0, scrubTime))) }
+                    }
+                })
+                .controlSize(.mini)
+                .disabled(!canSeek)
+                .accessibilityLabel("Playback position")
+                .accessibilityValue(duration > 0 ? "\(CoveNotchStyle.duration(displayedPosition)) of \(CoveNotchStyle.duration(duration))" : "Position unavailable")
+                HStack {
+                    Text(duration > 0 ? CoveNotchStyle.duration(displayedPosition) : "—")
+                    Spacer()
+                    Text(duration > 0 ? "−\(CoveNotchStyle.duration(duration - displayedPosition))" : media.state.source)
+                        .lineLimit(1)
+                }
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(CoveNotchStyle.tertiary)
+            }
         }
     }
 
