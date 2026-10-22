@@ -146,6 +146,133 @@ class Runtime:
         require(backups[0].read_bytes() == original, "Recovery backup changed original bytes.")
         require(stat.S_IMODE(backups[0].stat().st_mode) == 0o600, "Recovery backup is not mode 0600.")
 
+    def motion(self):
+        """Exercise the real native panel animator through the authenticated API."""
+        directory = self.directory("motion-interruption", preferences={**SAFE, "hideWhenIdle": False,
+            "expandOnHover": False, "hideInFullscreen": False, "reduceMotion": True,
+            "animationSpeed": 0.25, "collapseDelay": 5})
+        samples = []
+        started = time.monotonic()
+
+        def panels(state):
+            return sorted((w for w in state["nativeWindows"] if w["title"] == "OpenCove"),
+                          key=lambda w: (w["x"] + w["width"] / 2, w["y"] + w["height"]))
+
+        def matches(rows, target, *, hidden=False):
+            return bool(rows) and len(rows) == len(target) and all(
+                row["contentHidden"] == hidden and all(abs(row[key] - goal[key]) <= 1
+                    for key in ("x", "y", "width", "height")) for row, goal in zip(rows, target))
+
+        @contextmanager
+        def capture_frames():
+            try:
+                yield
+            finally:
+                write_private(directory / "native-frames.json", json_bytes(samples))
+
+        with capture_frames(), self.app(directory) as client:
+            def read(label):
+                state = client.request()
+                rows = panels(state)
+                require(rows, "The owned app has no visible native panel for motion verification.")
+                samples.append({"seconds": time.monotonic() - started, "phase": label,
+                                "expanded": state["expanded"], "panels": rows})
+                return rows
+
+            def until(predicate, label, timeout=2):
+                deadline = time.monotonic() + timeout
+                while True:
+                    rows = read(label)
+                    if predicate(rows):
+                        return rows
+                    require(time.monotonic() < deadline, "Native motion did not reach " + label + ".")
+                    time.sleep(0.01)
+
+            def hold(target, label, *, hidden=False, seconds=0.95):
+                deadline = time.monotonic() + seconds
+                while True:
+                    require(matches(read(label), target, hidden=hidden),
+                            "An old native animation changed the settled " + label + " state.")
+                    if time.monotonic() >= deadline:
+                        return
+                    time.sleep(0.025)
+
+            client.command("collapse")
+            compact = read("compact-calibration")
+            client.command("expand")
+            expanded = until(lambda rows: all(w["height"] > c["height"] + 20
+                for w, c in zip(rows, compact)), "expanded-calibration")
+            client.command("collapse")
+            until(lambda rows: matches(rows, compact), "compact-calibration")
+            animated = not client.request()["systemReduceMotion"]
+            interruption_latency = []
+            if animated:
+                client.command("preferences", values={"reduceMotion": False})
+                for action, origin, target in (("expand", compact, expanded), ("collapse", expanded, compact)):
+                    client.command(action)
+                    # Establish actual intermediate geometry, not only a command
+                    # acknowledgment or a model's intended animation flag.
+                    until(lambda rows: all(min(a["height"], b["height"]) + 2 < w["height"]
+                        < max(a["height"], b["height"]) - 2
+                        for w, a, b in zip(rows, origin, target)), action + "-moving")
+                    time.sleep(0.1)
+                    client.command("preferences", values={"reduceMotion": True})
+                    interrupted = time.monotonic()
+                    until(lambda rows: matches(rows, target), action + "-reduce-motion", timeout=0.2)
+                    interruption_latency.append(time.monotonic() - interrupted)
+                    hold(target, action + "-settled")
+                    client.command("preferences", values={"reduceMotion": False})
+
+                # Retarget several times while the native window is moving.
+                for action in ("expand", "collapse", "expand"):
+                    client.command(action)
+                    deadline = time.monotonic() + 0.12
+                    while time.monotonic() < deadline:
+                        rows = read("rapid-reversal")
+                        require(len(rows) == len(compact), "A native panel vanished during reversal.")
+                        for row, small, large in zip(rows, compact, expanded):
+                            require(small["height"] - 1 <= row["height"] <= large["height"] + 1
+                                and small["width"] - 1 <= row["width"] <= large["width"] + 1
+                                and abs(row["y"] + row["height"] - small["y"] - small["height"]) <= 1
+                                and abs(row["x"] + row["width"] / 2 - small["x"] - small["width"] / 2) <= 1,
+                                "A reversed native animation exceeded its bounds or moved its top/center anchor.")
+                        time.sleep(0.01)
+                until(lambda rows: matches(rows, expanded), "reversal-expanded")
+                client.command("preferences", values={"reduceMotion": True})
+                client.command("collapse")
+                until(lambda rows: matches(rows, compact), "before-idle-hide")
+                client.command("preferences", values={"reduceMotion": False, "hideWhenIdle": True})
+                until(lambda rows: all(3 < row["height"] < small["height"] - 1
+                    for row, small in zip(rows, compact)), "idle-shrinking")
+                client.command("preferences", values={"reduceMotion": True})
+                hidden = until(lambda rows: all(row["height"] <= 3 and row["contentHidden"] for row in rows),
+                               "idle-reduce-motion", timeout=0.2)
+                client.command("expand")
+                until(lambda rows: matches(rows, expanded), "restored-content")
+                hold(expanded, "restored-content")
+                require(all(w["contentHidden"] for w in hidden), "The settled idle surface retained its content.")
+            else:
+                # Do not alter the user's system accessibility preference.
+                client.command("preferences", values={"reduceMotion": False})
+                client.command("expand")
+                until(lambda rows: matches(rows, expanded), "system-reduced-expand", timeout=0.2)
+                client.command("collapse")
+                until(lambda rows: matches(rows, compact), "system-reduced-collapse", timeout=0.2)
+
+            client.command("preferences", values={"reduceMotion": True, "hideWhenIdle": False})
+            client.command("expand")
+            until(lambda rows: matches(rows, expanded), "final-expanded")
+            write_private(directory / "expanded.png", client.request("/render?surface=notch"))
+            client.command("collapse")
+            until(lambda rows: matches(rows, compact), "final-compact")
+        with self.app(directory) as client:
+            state = client.request()
+            require(state["preferences"]["reduceMotion"] and matches(panels(state), compact),
+                    "Reduce Motion or native compact geometry did not survive restart.")
+        self.record("motion: native interruption, reversal, hidden-content cleanup and preference restart",
+                    observedAnimation=animated, interruptionReadLatencySeconds=interruption_latency,
+                    nativeGeometrySamples=len(samples))
+
     def preferences(self):
         for name, original in (
             ("field-recovery", json_bytes({**SAFE, "reduceMotion": "damaged", "notchWidth": 999,
@@ -1085,7 +1212,7 @@ def main():
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
     parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
-    parser.add_argument("--only", choices=("storage", "storage-alias", "media", "weather", "preferences", "timers", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--only", choices=("storage", "storage-alias", "media", "weather", "motion", "preferences", "timers", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
@@ -1108,6 +1235,8 @@ def main():
         groups = [("temp", runtime.temp_alias), ("storage-alias", runtime.storage_alias), ("preferences", runtime.preferences),
                   ("timers", runtime.timers), ("timer-corruption", runtime.timer_corruption),
                   ("calendar", runtime.calendar), ("files", runtime.files)]
+        if args.only != "storage":
+            groups.append(("motion", runtime.motion))
         if args.media_fixture and args.only != "storage":
             groups.append(("media", lambda: runtime.media(args.pathological_duration)))
         if args.weather_service and args.only != "storage":

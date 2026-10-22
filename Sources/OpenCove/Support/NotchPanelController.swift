@@ -328,14 +328,19 @@ final class NotchPanelController: NSObject {
 
     private func apply(frame: NSRect, to surface: CovePanelSurface, animated: Bool, hideContent: Bool,
                        preferences: CovePreferences) {
-        guard surface.targetFrame != frame else { return }
+        let duration = animated ? CoveMotion.duration(preferences: preferences, hud: store.hud != nil) : 0
+        let wasAnimating = surface.frameAnimationInFlight
+        // Reduce Motion can change without changing the destination. Settle the
+        // running animator too; comparing target frames alone leaves it moving.
+        guard surface.targetFrame != frame || (wasAnimating && duration == 0) else { return }
         surface.targetFrame = frame
         surface.hasLayout = true
         surface.layoutRevision &+= 1
         let revision = surface.layoutRevision
-        if animated {
+        surface.frameAnimationInFlight = duration > 0
+        if duration > 0 {
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = CoveMotion.duration(preferences: preferences, hud: store.hud != nil)
+                context.duration = duration
                 context.timingFunction = CoveMotion.timingFunction
                 // Both frames have the same maxY. Interpolation keeps the top edge
                 // fixed while the panel grows down and out from the camera housing.
@@ -343,12 +348,23 @@ final class NotchPanelController: NSObject {
             } completionHandler: { [weak self, weak surface] in
                 Task { @MainActor in
                     guard let self, let surface, surface.layoutRevision == revision, self.started else { return }
+                    surface.frameAnimationInFlight = false
                     surface.content.hosting.isHidden = hideContent
                     self.reconcileHover()
                 }
             }
         } else {
-            surface.panel.setFrame(frame, display: true)
+            if wasAnimating {
+                // Replacing the animator's own frame target cancels its pending
+                // interpolation. A direct setFrame alone can be overwritten by
+                // the next tick of the old animator.
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0
+                    surface.panel.animator().setFrame(frame, display: true)
+                }
+            } else {
+                surface.panel.setFrame(frame, display: true)
+            }
             surface.content.hosting.isHidden = hideContent
         }
     }
@@ -627,6 +643,7 @@ private final class CovePanelSurface {
     var screenFrame = NSRect.zero
     var scale: CGFloat = 1
     var layoutRevision: UInt = 0
+    var frameAnimationInFlight = false
     var gestureStripHeight: CGFloat = 32
     var scroll = CovePanelScroll()
 
