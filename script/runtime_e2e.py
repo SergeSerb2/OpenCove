@@ -571,11 +571,17 @@ class Runtime:
                 require(all(not row["animating"] for row in short["mediaTextMotion"]),
                         "Short native media text started unnecessary motion.")
                 client.command("collapse")
+                baseline = client.request()
                 before = selected()["elapsed"]
-                time.sleep(1.25)
+                time.sleep(4)
                 after = selected()["elapsed"]
-                require(0.5 < after - before < 3.5,
+                require(3 < after - before < 6,
                         "Actual API playback position stopped advancing with the compact panel.")
+                updated = client.request()
+                samples = updated["playbackClock"]["receivedSamples"] - baseline["playbackClock"]["receivedSamples"]
+                notifications = updated["playbackClock"]["changeNotifications"] - baseline["playbackClock"]["changeNotifications"]
+                require(samples >= 2 and notifications < samples,
+                        "Stable real playback still notified clock observers for every source sample.")
                 client.command("selectTab", tab="media")
                 client.command("media.playPause")
                 wait_for(fixture, lambda s: not s["playing"], "Actual fixture pause was not delivered.")
@@ -602,8 +608,12 @@ class Runtime:
                 state = wait_for(client.request, lambda s: s["media"].get("supportsSeek"),
                                  "Fixture did not expose safe seek capability.")
                 selected()
+                clock_before_seek = client.request()["playbackClock"]["changeNotifications"]
                 client.command("media.seek", seconds=17)
                 wait_for(fixture, lambda s: 16 <= s["elapsed"] <= 23, "Actual native seek did not reach the fixture.")
+                wait_for(client.request, lambda s: s["playbackClock"]["changeNotifications"] > clock_before_seek
+                         and 16 <= s["media"]["elapsed"] <= 23,
+                         "The real playing seek did not notify progress observers.")
                 native = read_adapter("--read")[1]
                 require(native.get("bundleID") == FIXTURE_ID, "Fixture lost selection before stale-item check.")
                 old_item = native.get("info", {}).get("kMRMediaRemoteNowPlayingInfoContentItemIdentifier")
@@ -637,7 +647,8 @@ class Runtime:
                 require(code != 0 and fixture()["elapsed"] < 30, "Stale native item seek was not rejected.")
                 self.record("media: owned real fixture readback, pause/play, normal app seek, next, stale adapter item rejection",
                             metadataBackend=state["media"]["metadataBackend"], originalArtwork=True,
-                            compactPlaybackClock=True, pausedSeek=True)
+                            compactPlaybackClock=True, pausedSeek=True,
+                            stableClockSamples=samples, stableClockNotifications=notifications)
         finally:
             stop(child)
 
@@ -646,10 +657,14 @@ class Runtime:
             wait_for(fixture_state.exists, bool, "Rate-capable fixture did not start.")
             directory = self.directory("media-rates", preferences={**SAFE, "enableMedia": True, "enablePrivateAPIs": True})
             with self.app(directory) as client:
-                def owned_rate():
+                def fixture_rate():
                     require(child.poll() is None, "Own rate fixture stopped; no media command sent.")
                     value = json.loads(fixture_state.read_bytes())
                     require(value["pid"] == child.pid, "Own rate fixture PID changed; no media command sent.")
+                    return value
+
+                def owned_rate():
+                    value = fixture_rate()
                     require(client.request()["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
                             "Rate source changed; no media command sent.")
                     require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
@@ -670,7 +685,7 @@ class Runtime:
                     rate(invalid, expected=400)
                 require(owned_rate()["rate"] == 1, "Rejected rate changed actual playback.")
                 rate(1.5)
-                wait_for(owned_rate, lambda s: s["rate"] == 1.5, "Rate command did not change actual AVAudioPlayer rate.")
+                wait_for(fixture_rate, lambda s: s["rate"] == 1.5, "Rate command did not change actual AVAudioPlayer rate.")
                 wait_for(client.request, lambda s: s["media"].get("playbackSpeed") == 1.5,
                          "App did not report the actual changed rate.")
                 client.command("selectTab", tab="media")
@@ -679,18 +694,25 @@ class Runtime:
                 time.sleep(1)
                 require(1 < owned_rate()["elapsed"] - before < 3, "Actual player time did not advance at the chosen rate.")
                 client.command("media.playPause")
-                wait_for(owned_rate, lambda s: not s["playing"], "Own rate fixture did not pause.")
+                wait_for(fixture_rate, lambda s: not s["playing"], "Own rate fixture did not pause.")
+                owned_rate()
                 rate(0.75)
-                wait_for(owned_rate, lambda s: not s["playing"] and s["rate"] == 0.75,
+                wait_for(fixture_rate, lambda s: not s["playing"] and s["rate"] == 0.75,
                          "Changing paused speed started playback or lost the selected rate.")
                 wait_for(client.request, lambda s: not s["media"]["isPlaying"] and s["media"].get("playbackSpeed") == 0.75,
                          "Paused source default rate did not reach the app.")
-                native = read_adapter("--read")[1]
+                native = wait_for(lambda: read_adapter("--read")[1], lambda p: p.get("bundleID") == FIXTURE_ID
+                                  and bool(p.get("info", {}).get("kMRMediaRemoteNowPlayingInfoContentItemIdentifier")),
+                                  "Own native item did not settle before the rate transition.")
                 old_item = native["info"]["kMRMediaRemoteNowPlayingInfoContentItemIdentifier"]
                 old_target = client.request()["media"]
                 owned_rate()
                 client.command("media.next")
-                wait_for(owned_rate, lambda s: s["track"] == 2, "Own rate fixture did not change track.")
+                # A successful command means submission. Native source/item
+                # caches can be temporarily empty during the real transition.
+                # Observe our fixture without issuing any further command;
+                # repeat strict native ownership checks after it settles.
+                wait_for(fixture_rate, lambda s: s["track"] == 2, "Own rate fixture did not change track.")
                 wait_for(client.request, lambda s: s["media"].get("supportedPlaybackSpeeds") == [1, 2],
                          "New item's supported rates did not replace old capabilities.")
                 wait_for(lambda: read_adapter("--read")[1], lambda p: p.get("bundleID") == FIXTURE_ID and

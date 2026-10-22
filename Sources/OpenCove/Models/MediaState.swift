@@ -11,25 +11,42 @@ final class CovePlaybackClock: ObservableObject {
         var rate = 0.0
         var uptime = ProcessInfo.processInfo.systemUptime
     }
-    @Published private var sample = Sample()
+    private var sample = Sample()
+    private(set) var receivedSamples: UInt64 = 0
+    @Published private(set) var changeNotifications: UInt64 = 0
 
     var isAdvancing: Bool { sample.rate != 0 }
 
     var elapsed: Double {
-        let delta = max(0, ProcessInfo.processInfo.systemUptime - sample.uptime)
+        position(at: ProcessInfo.processInfo.systemUptime)
+    }
+
+    private func position(at uptime: Double) -> Double {
+        let delta = max(0, uptime - sample.uptime)
         let advanced = sample.elapsed + delta * sample.rate
         let value = max(0, advanced.isFinite ? advanced : sample.elapsed)
         return sample.duration > 0 ? min(value, sample.duration) : value
     }
 
     func update(elapsed: Double, duration: Double, rate: Double) {
+        receivedSamples &+= 1
         let elapsed = elapsed.isFinite ? max(0, elapsed) : 0
         let duration = duration.isFinite ? max(0, duration) : 0
         let rate = rate.isFinite ? rate : 0
         // A stationary source does not need repeated identical anchors.
         if rate == 0, sample.rate == 0, sample.elapsed == elapsed,
            sample.duration == duration { return }
-        sample = Sample(elapsed: elapsed, duration: duration, rate: rate)
+        // Every accepted source sample stays authoritative for API reads and
+        // the next visible progress tick. Stable playback need not also wake
+        // observers between those ticks. Publish real corrections immediately;
+        // paused position changes, duration and rate changes always publish.
+        let uptime = ProcessInfo.processInfo.systemUptime
+        let correction = abs(elapsed - position(at: uptime))
+        if rate != sample.rate || duration != sample.duration
+            || (rate == 0 && elapsed != sample.elapsed) || correction > 0.1 {
+            changeNotifications &+= 1
+        }
+        sample = Sample(elapsed: elapsed, duration: duration, rate: rate, uptime: uptime)
     }
 }
 
