@@ -630,10 +630,87 @@ class Runtime:
                     observedAnimation=animated, interruptionReadLatencySeconds=interruption_latency,
                     nativeGeometrySamples=len(samples))
 
+    def compact_activity(self):
+        directory = self.directory("compact-activity", preferences={**SAFE, "enableCalendar": True,
+            "hideWhenIdle": False, "expandOnHover": False, "hideInFullscreen": False, "reduceMotion": True,
+            "enableNotifications": True, "hudDuration": 0.5})
+        # A real damaged private policy keeps EventKit reads paused. No calendar
+        # permission, synthetic event or personal player is needed for fallback.
+        write_private(directory / "calendar-settings.json", b'{"excludedCalendarIdentifiers": [42]}')
+        observations = []
+
+        def read(client, expected):
+            state = wait_for(client.request, lambda s: s["compactActivity"] == expected,
+                             "Compact activity did not follow actual availability and preference.")
+            require(state["calendarAuthorization"] == "Saved calendar settings need review" and
+                    not state["media"]["available"], "Empty compact flow enabled a private data source.")
+            observations.append({"choice": state["preferences"]["compactActivity"],
+                                 "resolved": state["compactActivity"], "tab": state["visibleTab"],
+                                 "expanded": state["expanded"]})
+            return state
+
+        with self.app(directory) as client:
+            require(read(client, "clock")["preferences"]["compactActivity"] == "automatic",
+                    "Legacy preferences did not retain automatic compact switching.")
+            for choice in ("media", "calendar", "timer"):
+                client.command("preferences", values={"compactActivity": choice})
+                read(client, "clock")
+            client.command("preferences", values={"compactActivity": "not-an-activity"}, expected=400)
+            client.command("timer.start", seconds=180)
+            client.command("timer.pause")
+            paused = read(client, "timer")["timer"]["remaining"]
+            write_private(directory / "timer.png", client.request("/render?surface=notch"))
+            client.command("selectTab", tab="files")
+            client.command("collapse")
+            client.command("compact.open")
+            state = read(client, "timer")
+            require(state["expanded"] and state["visibleTab"] == "timer",
+                    "Opening compact timer did not select the real timer section.")
+            client.command("collapse")
+            client.command("preferences", values={"enableTimer": False})
+            read(client, "clock")
+            client.command("preferences", values={"enableTimer": True, "compactActivity": "calendar"})
+            read(client, "timer")
+            destination = directory / "preferences.json"
+            original = destination.read_bytes()
+            destination.rename(directory / "held-preferences.json")
+            destination.mkdir(mode=0o700)
+            try:
+                client.command("preferences", values={"compactActivity": "timer"}, expected=500)
+                require(read(client, "timer")["preferences"]["compactActivity"] == "timer",
+                        "A failed compact preference save discarded the applied session choice.")
+            finally:
+                destination.rmdir()
+                (directory / "held-preferences.json").rename(destination)
+            require(destination.read_bytes() == original, "Failed compact save changed the saved settings.")
+            client.command("preferences", values={"compactActivity": "calendar"})
+            client.command("selectTab", tab="files")
+            client.command("collapse")
+            client.command("notification.post", title="Owned compact verification", body="Temporary local activity")
+            require(client.request()["hud"] is not None, "The real local notification did not create its temporary HUD.")
+            client.command("compact.open")
+            require(client.request()["visibleTab"] == "files", "Opening a HUD replaced the prior selected section.")
+            wait_for(client.request, lambda s: s["hud"] is None, "Temporary HUD did not retire.")
+            client.command("collapse")
+            read(client, "timer")
+            write_private(directory / "settings.png", client.request("/render?surface=settings"))
+        with self.app(directory) as client:
+            restored = read(client, "timer")
+            require(restored["preferences"]["compactActivity"] == "calendar" and
+                    abs(restored["timer"]["remaining"] - paused) < 0.25,
+                    "Compact choice or paused timer did not survive actual process restart.")
+            client.command("timer.cancel")
+            read(client, "clock")
+            client.command("preferences", values={"hideWhenIdle": True})
+            wait_for(client.request, lambda s: any(w.get("contentHidden") is True for w in s["nativeWindows"]),
+                     "Unavailable preferred activity kept an otherwise idle panel visible.")
+        write_private(directory / "observations.json", json_bytes(observations))
+        self.record("compact: legacy/default, real timer, disabled/empty fallback, HUD restoration and restart")
+
     def preferences(self):
         for name, original in (
             ("field-recovery", json_bytes({**SAFE, "reduceMotion": "damaged", "notchWidth": 999,
-                                            "accent": "bad", "enableCalendar": False})),
+                                            "accent": "bad", "enableCalendar": False, "compactActivity": "bad"})),
             ("whole-recovery", b'{"invalid": [\xff\x00\n')):
             directory = self.directory(name, raw=original)
             with self.app(directory) as client:
@@ -646,6 +723,8 @@ class Runtime:
                 if name == "field-recovery":
                     require(state["preferences"]["notchWidth"] == 400 and not state["preferences"]["reduceMotion"],
                             "Field recovery did not normalize malformed settings.")
+                    require(state["preferences"]["compactActivity"] == "automatic",
+                            "Field recovery retained an unknown compact activity.")
                 saved = client.command("preferences", values={"reduceMotion": True})
                 require(saved["preferences"]["reduceMotion"], "Actual recovery save was not applied.")
             self.backup(directory, "preferences.recovery.*.json", original)
@@ -1563,6 +1642,63 @@ class Runtime:
         finally:
             stop(child)
 
+        fixture_state, child = session("compact-activity")
+        try:
+            wait_for(fixture_state.exists, bool, "Own compact media fixture did not start.")
+            directory = self.directory("media-compact-activity", preferences={**SAFE, "enableMedia": True,
+                "enablePrivateAPIs": True, "hideWhenIdle": False, "expandOnHover": False,
+                "hideInFullscreen": False, "reduceMotion": True})
+            observations = []
+
+            def owned_compact(client, expected):
+                require(child.poll() is None and json.loads(fixture_state.read_bytes())["pid"] == child.pid,
+                        "Own compact fixture stopped or changed PID.")
+                state = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["compactActivity"] == expected, "Actual compact media/timer selection did not settle.")
+                observations.append({"choice": state["preferences"]["compactActivity"],
+                                     "resolved": state["compactActivity"], "expanded": state["expanded"],
+                                     "tab": state["visibleTab"]})
+                return state
+
+            with self.app(directory) as client:
+                owned_compact(client, "media")
+                client.command("timer.start", seconds=180)
+                client.command("timer.pause")
+                owned_compact(client, "media")
+                client.command("preferences", values={"compactActivity": "timer"})
+                timer = owned_compact(client, "timer")
+                elapsed = timer["media"]["elapsed"]
+                write_private(directory / "preferred-timer.png", client.request("/render?surface=notch"))
+                client.command("compact.open")
+                require(owned_compact(client, "timer")["visibleTab"] == "timer",
+                        "Preferred compact timer opened the media section.")
+                client.command("collapse")
+                client.command("preferences", values={"compactActivity": "calendar"})
+                owned_compact(client, "media")
+                client.command("preferences", values={"compactActivity": "media"})
+                client.command("compact.open")
+                require(owned_compact(client, "media")["visibleTab"] == "media",
+                        "Preferred compact media did not open its section.")
+                client.command("collapse")
+                write_private(directory / "preferred-media.png", client.request("/render?surface=notch"))
+                client.command("preferences", values={"compactActivity": "timer", "enableTimer": False})
+                owned_compact(client, "media")
+                client.command("preferences", values={"enableTimer": True})
+                owned_compact(client, "timer")
+                time.sleep(1.2)
+                current = owned_compact(client, "timer")
+                require(current["media"]["elapsed"] > elapsed + 0.5 and current["media"]["isPlaying"],
+                        "Compact choice interrupted the actual source or its playback clock.")
+            with self.app(directory) as client:
+                require(owned_compact(client, "timer")["preferences"]["compactActivity"] == "timer",
+                        "Preferred timer did not survive restart while media stayed active.")
+                client.command("timer.cancel")
+                owned_compact(client, "media")
+            write_private(directory / "observations.json", json_bytes(observations))
+            self.record("compact: real concurrent media/timer preference, opening, disabled fallback and restart")
+        finally:
+            stop(child)
+
         fixture_state, child = session("unknown-duration", metadata=0)
         try:
             wait_for(fixture_state.exists, bool, "Own zero-duration fixture did not start.")
@@ -1724,7 +1860,7 @@ def main():
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
     parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
-    parser.add_argument("--only", choices=("storage", "storage-alias", "media", "weather", "motion", "displays", "activities", "shape", "preferences", "timers", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--only", choices=("storage", "storage-alias", "media", "weather", "motion", "displays", "activities", "compact", "shape", "preferences", "timers", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
@@ -1751,6 +1887,7 @@ def main():
             groups.append(("motion", runtime.motion))
             groups.append(("displays", runtime.displays))
             groups.append(("activities", runtime.activity_selection))
+            groups.append(("compact", runtime.compact_activity))
             groups.append(("shape", runtime.shape))
         if args.media_fixture and args.only != "storage":
             groups.append(("media", lambda: runtime.media(args.pathological_duration)))

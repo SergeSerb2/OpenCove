@@ -47,6 +47,37 @@ final class CoveStore: ObservableObject {
         return enabled.contains(defaultTab) ? defaultTab : enabled.first
     }
 
+    /// A preference changes priority, never enables a feature or invents an
+    /// activity. Preserve the existing automatic order when it is unavailable.
+    var compactActivity: CoveCompactActivity {
+        let media = preferences.enableMedia && compactMediaVisible && self.media.state.available
+        let timer = preferences.enableTimer && activities.timer.remaining > 0
+        let calendar = preferences.enableCalendar && activities.eventActivity != nil
+        switch preferences.compactActivity {
+        case "media" where media: return .media
+        case "calendar" where calendar: return .calendar
+        case "timer" where timer: return .timer
+        default: break
+        }
+        if media { return .media }
+        if timer { return .timer }
+        if calendar { return .calendar }
+        return .clock
+    }
+
+    func openCompactActivity() {
+        // A transient HUD must not replace the prior expanded section.
+        if hud == nil {
+            switch compactActivity {
+            case .media: selectTab(.media)
+            case .calendar: selectTab(.calendar)
+            case .timer: selectTab(.timer)
+            case .clock: break
+            }
+        }
+        expand()
+    }
+
     @discardableResult func selectTab(_ tab: CoveTab, expand: Bool = false) -> Bool {
         guard enabledTabs.contains(tab) else { return false }
         if selectedTab != tab { selectedTab = tab }

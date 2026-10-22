@@ -136,6 +136,13 @@ struct SettingsView: View {
             }
 
             Section("Interaction") {
+                Picker("Compact activity", selection: preference(\.compactActivity)) {
+                    Text("Automatic").tag("automatic")
+                    Text("Now Playing").tag("media")
+                    Text("Calendar").tag("calendar")
+                    Text("Timer").tag("timer")
+                }
+                CoveSettingsNote("Prefer this activity while it is available. Otherwise use automatic switching: media, timer, then calendar. Temporary alerts still appear. Opening the compact panel shows its activity.")
                 Picker("Expanded layout", selection: preference(\.expandedLayout)) {
                     Text("Now Playing").tag("media")
                     Text("Calendar").tag("calendar")

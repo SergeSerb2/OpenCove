@@ -285,6 +285,7 @@ final class DevelopmentServer {
         }
         switch action {
         case "expand": store.expand()
+        case "compact.open": store.openCompactActivity()
         case "collapse": store.collapse()
         case "toggle": store.toggleExpanded()
         case "selectTab":
@@ -483,6 +484,7 @@ final class DevelopmentServer {
         media.artworkData = nil
         result["media"] = try encoded(media)
         result["compactMediaVisible"] = store.compactMediaVisible
+        result["compactActivity"] = store.compactActivity.rawValue
         result["playbackClock"] = ["receivedSamples": store.media.playback.receivedSamples,
                                    "changeNotifications": store.media.playback.changeNotifications]
         result["artworkAvailable"] = store.media.state.artworkData != nil

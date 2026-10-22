@@ -28,6 +28,7 @@ final class NotchPanelController: NSObject {
         var tab: CoveTab
         var hud: Bool
         var media: Bool
+        var compactActivity: CoveCompactActivity
         var timer: Bool
         var event: Bool
     }
@@ -36,6 +37,7 @@ final class NotchPanelController: NSObject {
         LayoutInputs(preferences: store.preferences, expanded: store.isExpanded, tab: store.selectedTab,
                      hud: store.hud != nil,
                      media: store.preferences.enableMedia && store.compactMediaVisible && store.media.state.available,
+                     compactActivity: store.compactActivity,
                      timer: store.activities.timer.remaining > 0, event: store.activities.eventActivity != nil)
     }
 
@@ -419,7 +421,7 @@ final class NotchPanelController: NSObject {
             guard self.started, !self.hoveredDisplays.isEmpty,
                   self.store.preferences.expandOnHover, !self.screensAsleep,
                   self.sessionActive, self.currentSessionIsActive(), !self.store.system.state.isLocked else { return }
-            self.store.expand()
+            self.store.openCompactActivity()
         }
     }
 

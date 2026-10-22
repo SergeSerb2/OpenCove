@@ -69,6 +69,7 @@ struct CovePreferences: Codable, Equatable {
         pausedMediaDelay = bounded(pausedMediaDelay, 1...300, defaults.pausedMediaDelay)
         if !selectedDisplayUUID.isEmpty, UUID(uuidString: selectedDisplayUUID) == nil { selectedDisplayUUID = "" }
         if CoveWeatherStyle(rawValue: weatherStyle) == nil { weatherStyle = defaults.weatherStyle }
+        if !["automatic", "media", "calendar", "timer"].contains(compactActivity) { compactActivity = defaults.compactActivity }
         if !["media", "calendar", "duo"].contains(expandedLayout) { expandedLayout = defaults.expandedLayout }
         if !["glass", "clear", "frosted"].contains(nowPlayingStyle) { nowPlayingStyle = defaults.nowPlayingStyle }
         if !["smooth", "fast", "instant"].contains(hudSpeed) { hudSpeed = defaults.hudSpeed }
@@ -111,6 +112,7 @@ struct CovePreferences: Codable, Equatable {
     var replaceSystemHUDs = false
     var allowAppleScript = false
     var expandedLayout = "media"
+    var compactActivity = "automatic"
     var nowPlayingStyle = "glass"
     var hudSpeed = "smooth"
     var showLiveWaveform = false
@@ -123,6 +125,8 @@ struct CovePreferences: Codable, Equatable {
     var hudDuration = 2.0
     var accent = "mint"
 }
+
+enum CoveCompactActivity: String { case media, calendar, timer, clock }
 
 enum CoveTab: String, Codable, CaseIterable, Identifiable {
     case media, calendar, files, timer
