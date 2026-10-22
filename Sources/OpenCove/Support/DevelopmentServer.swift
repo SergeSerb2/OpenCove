@@ -381,7 +381,10 @@ final class DevelopmentServer {
         case "weather.refresh":
             guard store.preferences.enableWeather else { throw ControlError.rejected("Weather is disabled. Enable it in preferences before refreshing.") }
             store.weather.refresh()
-        case "weather.clear": store.weather.clearLocation()
+        case "weather.clear":
+            guard store.weather.clearLocation() else {
+                throw ControlError.failed(store.weather.lastError ?? "The weather location could not be removed.")
+            }
         case "files.add":
             guard let paths = values["paths"] as? [String], !paths.isEmpty, paths.count <= 100 else { throw ControlError.invalid("Provide 1 to 100 absolute file paths.") }
             let urls = try paths.map { path -> URL in
@@ -443,6 +446,9 @@ final class DevelopmentServer {
         result["timer"] = try encoded(store.activities.timer)
         result["notifications"] = try encoded(store.activities.notifications)
         result["weather"] = try encoded(store.weather.state)
+        result["weatherStatus"] = ["hasLocation": store.weather.hasLocation,
+                                    "loading": store.weather.isLoading,
+                                    "requestingLocation": store.weather.isRequestingLocation]
         result["notificationMirror"] = store.mirroringStatus
         result["loginItemStatus"] = store.loginItemStatus
         result["pid"] = ProcessInfo.processInfo.processIdentifier
@@ -478,6 +484,10 @@ final class DevelopmentServer {
         case "lock":
             size = CGSize(width: 460, height: 250)
             content = AnyView(LockScreenView(store: store, weather: store.weather).environment(\.colorScheme, .dark))
+        case "weather":
+            size = CGSize(width: 560, height: 760)
+            content = AnyView(ScrollView { WeatherView(controller: store.weather).padding(20) }
+                .environment(\.colorScheme, .dark))
         default: throw ControlError.invalid("Unknown render surface.")
         }
         guard !rendererBusy else { throw ControlError.rejected("A native capture is already in progress. Retry after it finishes.") }

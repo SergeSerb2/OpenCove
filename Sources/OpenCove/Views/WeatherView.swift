@@ -122,6 +122,23 @@ struct WeatherView: View {
                     .minimumScaleFactor(0.65)
                     .lineLimit(1)
             }
+            HStack(spacing: 16) {
+                if let value = controller.state.apparentTemperature {
+                    metric("Feels like", value: Self.degrees(value), symbol: "thermometer.medium")
+                }
+                if let value = controller.state.humidity {
+                    metric("Humidity", value: value.formatted(.number.precision(.fractionLength(0))) + "%", symbol: "humidity")
+                }
+                if let value = controller.state.windSpeed {
+                    metric("Wind", value: value.formatted(.number.precision(.fractionLength(0))) + " km/h", symbol: "wind")
+                }
+            }
+            if !controller.state.hourly.isEmpty || !controller.state.daily.isEmpty {
+                CoveWeatherForecast(state: controller.state)
+            }
+            if let notice = controller.state.forecastNotice {
+                Text(notice).font(.caption).foregroundStyle(.secondary)
+            }
             TimelineView(.periodic(from: .now, by: 60)) { context in
                 if let date = controller.state.updatedAt {
                     HStack(spacing: 4) {
@@ -135,6 +152,19 @@ struct WeatherView: View {
             }
             CoveWeatherAttribution()
         }
+    }
+
+    private func metric(_ title: String, value: String, symbol: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Label(title, systemImage: symbol).font(.caption2).foregroundStyle(.secondary)
+            Text(value).font(.caption.weight(.medium)).monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    static func degrees(_ value: Double?) -> String {
+        guard let value, value.isFinite else { return "—" }
+        return value.formatted(.number.precision(.fractionLength(0))) + "°"
     }
 
     private var locationEditor: some View {
@@ -212,9 +242,123 @@ struct CoveWeatherAttribution: View {
                 Text("·").foregroundStyle(.secondary)
                 Link("CC BY 4.0", destination: URL(string: "https://creativecommons.org/licenses/by/4.0/")!)
             }
-            Text("Model conditions summarized; temperature rounded.")
+            Text("Model weather summarized; values rounded.")
                 .foregroundStyle(.secondary)
         }
         .font(.caption2)
+    }
+}
+
+/// A small, static forecast: at most 24 cells and 7 rows. Only visible time
+/// labels advance each minute; the weather service keeps its 15-minute cadence.
+@MainActor
+struct CoveWeatherForecast: View {
+    let state: WeatherState
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let hours = Array(state.hourly.filter { $0.date >= context.date.addingTimeInterval(-3_600) }.prefix(24))
+            let days = Array(state.daily.filter { $0.date >= startOfDay(context.date) }.prefix(7))
+            VStack(alignment: .leading, spacing: 12) {
+                if !hours.isEmpty {
+                    heading("Next 24 hours")
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 12) {
+                            ForEach(hours) { hour in hourlyCell(hour) }
+                        }
+                        .padding(.vertical, 3)
+                    }
+                    .scrollIndicators(.hidden)
+                }
+                if !days.isEmpty {
+                    Divider()
+                    heading("7-day forecast")
+                    VStack(spacing: 10) {
+                        ForEach(days) { day in
+                            CoveWeatherDayRow(day: day, days: days, today: isToday(day.date, now: context.date))
+                        }
+                    }
+                }
+            }
+            .environment(\.timeZone, state.timeZone)
+        }
+    }
+
+    private func heading(_ title: String) -> some View {
+        HStack {
+            Text(title).font(.caption.weight(.semibold))
+            Spacer()
+            Text(state.timeZone.abbreviation() ?? state.timeZoneIdentifier)
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private func hourlyCell(_ hour: WeatherHour) -> some View {
+        VStack(spacing: 6) {
+            Text(hour.date, format: .dateTime.hour())
+                .font(.caption2).foregroundStyle(.secondary)
+            Image(systemName: hour.symbol).symbolRenderingMode(.multicolor)
+                .font(.system(size: 17)).frame(height: 22).accessibilityHidden(true)
+            Text(WeatherView.degrees(hour.temperature)).font(.caption.weight(.medium)).monospacedDigit()
+            Text(hour.precipitationProbability.map { $0.formatted(.number.precision(.fractionLength(0))) + "%" } ?? "—")
+                .font(.system(size: 9)).foregroundStyle(.secondary).monospacedDigit()
+        }
+        .frame(width: 44)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(hour.condition + ". Precipitation chance is shown below the temperature.")
+    }
+
+    private func startOfDay(_ date: Date) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = state.timeZone
+        return calendar.startOfDay(for: date)
+    }
+
+    private func isToday(_ date: Date, now: Date) -> Bool {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = state.timeZone
+        return calendar.isDate(date, inSameDayAs: now)
+    }
+}
+
+@MainActor
+private struct CoveWeatherDayRow: View {
+    let day: WeatherDay
+    let days: [WeatherDay]
+    let today: Bool
+
+    private var lower: Double { days.compactMap(\.minimum).min() ?? 0 }
+    private var upper: Double { days.compactMap(\.maximum).max() ?? 1 }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Group {
+                if today { Text("Today") }
+                else { Text(day.date, format: .dateTime.weekday(.abbreviated)) }
+            }
+            .frame(width: 42, alignment: .leading)
+            Image(systemName: day.symbol).symbolRenderingMode(.multicolor)
+                .frame(width: 22).accessibilityHidden(true)
+            Text(day.precipitationProbability.map { $0.formatted(.number.precision(.fractionLength(0))) + "%" } ?? "—")
+                .font(.caption2).foregroundStyle(.secondary).frame(width: 32, alignment: .trailing)
+            Text(WeatherView.degrees(day.minimum)).foregroundStyle(.secondary).frame(width: 34, alignment: .trailing)
+            GeometryReader { proxy in
+                Capsule().fill(.quaternary)
+                if let low = day.minimum, let high = day.maximum {
+                    let range = max(1, upper - lower)
+                    let start = min(1, max(0, (low - lower) / range))
+                    let length = min(1 - start, max(0, (high - low) / range))
+                    Capsule().fill(LinearGradient(colors: [.cyan, .orange], startPoint: .leading, endPoint: .trailing))
+                        .frame(width: min(proxy.size.width, max(3, proxy.size.width * length)))
+                        .offset(x: min(max(0, proxy.size.width - 3), proxy.size.width * start))
+                }
+            }
+            .frame(height: 5)
+            .accessibilityHidden(true)
+            Text(WeatherView.degrees(day.maximum)).frame(width: 34, alignment: .trailing)
+        }
+        .font(.caption.weight(.medium)).monospacedDigit()
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(day.condition + ". Low and high temperature, with precipitation chance.")
     }
 }
