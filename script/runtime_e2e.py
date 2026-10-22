@@ -521,13 +521,15 @@ class Runtime:
             payload = plistlib.loads(base64.b64decode(json.loads(result.stdout)["snapshot"]))
             return result.returncode, payload
 
-        def session(name, metadata=None, style=None):
+        def session(name, metadata=None, style=None, rates=False):
             state_path = work / (name + ".json")
             arguments = [str(executable), "--state", str(state_path)]
             if metadata is not None:
                 arguments += ["--metadata-duration", str(metadata)]
             if style is not None:
                 arguments += ["--metadata-style", style]
+            if rates:
+                arguments += ["--rate-controls"]
             return state_path, subprocess.Popen(arguments, env=environment, stdout=subprocess.DEVNULL,
                                                 stderr=subprocess.DEVNULL, umask=0o077)
 
@@ -556,6 +558,9 @@ class Runtime:
                 wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID and
                          s["media"].get("supportsPlayPause"), "Fixture transport capability not published.")
                 state = selected()
+                require(not state["supportsPlaybackSpeed"] and not state["supportedPlaybackSpeeds"],
+                        "A source without rate controls exposed a speed setter.")
+                client.command("media.speed", speed=1.5, expected=409)
                 wait_for(client.request, lambda s: s.get("artworkAvailable") and
                          s["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
                          "Original fixture artwork did not reach the actual app.", 20)
@@ -633,6 +638,71 @@ class Runtime:
                 self.record("media: owned real fixture readback, pause/play, normal app seek, next, stale adapter item rejection",
                             metadataBackend=state["media"]["metadataBackend"], originalArtwork=True,
                             compactPlaybackClock=True, pausedSeek=True)
+        finally:
+            stop(child)
+
+        fixture_state, child = session("playback-rates", rates=True)
+        try:
+            wait_for(fixture_state.exists, bool, "Rate-capable fixture did not start.")
+            directory = self.directory("media-rates", preferences={**SAFE, "enableMedia": True, "enablePrivateAPIs": True})
+            with self.app(directory) as client:
+                def owned_rate():
+                    require(child.poll() is None, "Own rate fixture stopped; no media command sent.")
+                    value = json.loads(fixture_state.read_bytes())
+                    require(value["pid"] == child.pid, "Own rate fixture PID changed; no media command sent.")
+                    require(client.request()["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
+                            "Rate source changed; no media command sent.")
+                    require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
+                            "Native rate source changed; no media command sent.")
+                    return value
+
+                state = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                                 and s["media"].get("supportsPlaybackSpeed"), "Actual advertised rates did not reach the app.", 25)
+                def rate(speed, expected=200, target=None):
+                    target = target or client.request()["media"]
+                    require(target["sourceBundleIdentifier"] == FIXTURE_ID, "Rate target is not our fixture.")
+                    return client.command("media.speed", speed=speed, source=target["sourceBundleIdentifier"],
+                                          item=target["contentItemIdentifier"], expected=expected)
+                require(state["media"]["supportedPlaybackSpeeds"] == [0.75, 1, 1.25, 1.5, 2],
+                        "App did not use the real source's advertised rates.")
+                owned_rate()
+                for invalid in (0, -1, 1.1, 17):
+                    rate(invalid, expected=400)
+                require(owned_rate()["rate"] == 1, "Rejected rate changed actual playback.")
+                rate(1.5)
+                wait_for(owned_rate, lambda s: s["rate"] == 1.5, "Rate command did not change actual AVAudioPlayer rate.")
+                wait_for(client.request, lambda s: s["media"].get("playbackSpeed") == 1.5,
+                         "App did not report the actual changed rate.")
+                client.command("selectTab", tab="media")
+                write_private(directory / "speed-1.5.png", client.request("/render?surface=notch"))
+                before = owned_rate()["elapsed"]
+                time.sleep(1)
+                require(1 < owned_rate()["elapsed"] - before < 3, "Actual player time did not advance at the chosen rate.")
+                client.command("media.playPause")
+                wait_for(owned_rate, lambda s: not s["playing"], "Own rate fixture did not pause.")
+                rate(0.75)
+                wait_for(owned_rate, lambda s: not s["playing"] and s["rate"] == 0.75,
+                         "Changing paused speed started playback or lost the selected rate.")
+                wait_for(client.request, lambda s: not s["media"]["isPlaying"] and s["media"].get("playbackSpeed") == 0.75,
+                         "Paused source default rate did not reach the app.")
+                native = read_adapter("--read")[1]
+                old_item = native["info"]["kMRMediaRemoteNowPlayingInfoContentItemIdentifier"]
+                old_target = client.request()["media"]
+                owned_rate()
+                client.command("media.next")
+                wait_for(owned_rate, lambda s: s["track"] == 2, "Own rate fixture did not change track.")
+                wait_for(client.request, lambda s: s["media"].get("supportedPlaybackSpeeds") == [1, 2],
+                         "New item's supported rates did not replace old capabilities.")
+                wait_for(lambda: read_adapter("--read")[1], lambda p: p.get("bundleID") == FIXTURE_ID and
+                         p.get("info", {}).get("kMRMediaRemoteNowPlayingInfoContentItemIdentifier") not in (None, "", old_item),
+                         "Actual new native item did not publish before stale-rate check.", 15)
+                rate(1.5, expected=400)
+                rate(2, expected=409, target=old_target)
+                owned_rate()
+                code, _ = read_adapter("--rate", "2", "--source", FIXTURE_ID, "--item", old_item)
+                require(code != 0 and owned_rate()["rate"] == 1, "Stale item rate command was not rejected.")
+                self.record("media: actual advertised rates, real speed/paused change, capability refresh and stale-item refusal",
+                            metadataBackend=state["media"]["metadataBackend"], rates=[0.75, 1, 1.25, 1.5, 2])
         finally:
             stop(child)
 

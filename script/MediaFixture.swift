@@ -11,15 +11,17 @@ enum MediaFixture {
     @MainActor static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
         if args == ["--help"] {
-            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration FINITE_SECONDS] [--metadata-style normal|long|oversized]")
+            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration FINITE_SECONDS] [--metadata-style normal|long|oversized] [--rate-controls]")
             print("Plays only its own two silent tracks for at most 90 seconds. No arguments and missing/unsafe state paths fail before playback. OPENCOVE_FIXTURE_STATE can supply --state.")
             return
         }
         var state = ProcessInfo.processInfo.environment["OPENCOVE_FIXTURE_STATE"]
         var duration: Double?
         var metadataStyle = "normal"
+        var rateControls = false
         var index = 0
         while index < args.count {
+            if args[index] == "--rate-controls" { rateControls = true; index += 1; continue }
             guard index + 1 < args.count else { fail() }
             switch args[index] {
             case "--state": state = args[index + 1]
@@ -41,7 +43,7 @@ enum MediaFixture {
               lstat(url.path, &info) != 0, errno == ENOENT else { fail() }
         umask(0o077)
         let app = NSApplication.shared
-        let delegate = FixtureDelegate(statusURL: url, metadataDuration: duration, metadataStyle: metadataStyle)
+        let delegate = FixtureDelegate(statusURL: url, metadataDuration: duration, metadataStyle: metadataStyle, rateControls: rateControls)
         app.delegate = delegate
         app.setActivationPolicy(.prohibited)
         app.run()
@@ -63,6 +65,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
     private let statusURL: URL
     private let metadataDuration: Double?
     private let metadataStyle: String
+    private let rateControls: Bool
     private var players: [AVAudioPlayer] = []
     // Original, local fixture pixels. A large source exercises the app's real
     // artwork transfer and thumbnail path without contacting an image service.
@@ -79,16 +82,18 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }()
 
-    init(statusURL: URL, metadataDuration: Double?, metadataStyle: String) {
+    init(statusURL: URL, metadataDuration: Double?, metadataStyle: String, rateControls: Bool) {
         self.statusURL = statusURL
         self.metadataDuration = metadataDuration
         self.metadataStyle = metadataStyle
+        self.rateControls = rateControls
         super.init()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
             players = try [120, 125].map { try AVAudioPlayer(data: Self.silence(seconds: $0)) }
+            for value in players { value.enableRate = rateControls }
             player = players[0]
             player.prepareToPlay()
             player.play()
@@ -98,6 +103,23 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
             register(commands.togglePlayPauseCommand) { if self.player.isPlaying { self.player.pause() } else { self.player.play() } }
             register(commands.nextTrackCommand) { self.changeTrack() }
             register(commands.previousTrackCommand) { self.changeTrack() }
+            if rateControls {
+                let rate = commands.changePlaybackRateCommand
+                rate.supportedPlaybackRates = [0.75, 1, 1.25, 1.5, 2]
+                rate.isEnabled = true
+                targets.append((rate, rate.addTarget { event in
+                    guard let event = event as? MPChangePlaybackRateCommandEvent,
+                          [0.75, 1, 1.25, 1.5, 2].contains(event.playbackRate) else { return .commandFailed }
+                    let value = event.playbackRate
+                    Task { @MainActor in
+                        let allowed: [Float] = self.track == 1 ? [0.75, 1, 1.25, 1.5, 2] : [1, 2]
+                        guard allowed.contains(value) else { return }
+                        self.player.rate = value
+                        self.publish()
+                    }
+                    return .success
+                }))
+            } else { commands.changePlaybackRateCommand.isEnabled = false }
             let seek = commands.changePlaybackPositionCommand
             seek.isEnabled = true
             targets.append((seek, seek.addTarget { event in
@@ -123,6 +145,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         track = track == 1 ? 2 : 1
         player = players[track - 1]
         player.currentTime = 0
+        if rateControls { MPRemoteCommandCenter.shared().changePlaybackRateCommand.supportedPlaybackRates = track == 1 ? [0.75, 1, 1.25, 1.5, 2] : [1, 2] }
         if playing { player.play() }
     }
 
@@ -157,12 +180,12 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
             MPMediaItemPropertyPersistentID: UInt64(track),
             MPNowPlayingInfoPropertyExternalContentIdentifier: "org.opencove.MediaFixture.track.\(track)",
             MPNowPlayingInfoPropertyElapsedPlaybackTime: player.currentTime,
-            MPNowPlayingInfoPropertyPlaybackRate: player.isPlaying ? 1.0 : 0.0,
-            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
+            MPNowPlayingInfoPropertyPlaybackRate: player.isPlaying ? Double(player.rate) : 0.0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: Double(player.rate),
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]
         MPNowPlayingInfoCenter.default().playbackState = player.isPlaying ? .playing : .paused
-        let state: [String: Any] = ["track": track, "playing": player.isPlaying, "elapsed": player.currentTime, "duration": player.duration, "pid": ProcessInfo.processInfo.processIdentifier]
+        let state: [String: Any] = ["track": track, "playing": player.isPlaying, "elapsed": player.currentTime, "duration": player.duration, "rate": player.rate, "pid": ProcessInfo.processInfo.processIdentifier]
         if let data = try? JSONSerialization.data(withJSONObject: state) { try? data.write(to: statusURL, options: .atomic) }
     }
 

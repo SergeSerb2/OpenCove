@@ -412,6 +412,11 @@ struct CoveMediaSurface: View {
                             Label("LIVE", systemImage: "dot.radiowaves.left.and.right")
                                 .font(.system(size: 8, weight: .bold)).foregroundStyle(.red)
                         }
+                        if let speed = media.state.playbackSpeed, media.state.supportsPlaybackSpeed {
+                            Text("\(speed.formatted(.number.precision(.fractionLength(0...2))))×")
+                                .font(.system(size: 9, weight: .semibold)).foregroundStyle(CoveNotchStyle.secondary)
+                                .accessibilityLabel("Playback speed \(speed.formatted()) times")
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     if !condensed {
@@ -430,9 +435,16 @@ struct CoveMediaSurface: View {
                                 Button(media.state.isFavorited == true ? "Remove Favorite" : "Favorite", action: media.toggleFavorite)
                             }
                             if media.state.supportsCopyLink { Button("Copy Track Link", action: media.copyLink) }
-                            if media.state.supportsPlaybackSpeed {
-                                ForEach(media.state.supportedPlaybackSpeeds, id: \.self) { speed in
-                                    Button("\(speed.formatted())× Speed") { media.setPlaybackSpeed(speed) }
+                            if media.state.supportsPlaybackSpeed, let item = media.state.contentItemIdentifier {
+                                let source = media.state.sourceBundleIdentifier
+                                Menu("Playback Speed") {
+                                    ForEach(media.state.supportedPlaybackSpeeds, id: \.self) { speed in
+                                        Button { media.setPlaybackSpeed(speed, source: source, itemID: item) } label: {
+                                            if let current = media.state.playbackSpeed, abs(current - speed) < 0.000001 {
+                                                Label("\(speed.formatted())×", systemImage: "checkmark")
+                                            } else { Text("\(speed.formatted())×") }
+                                        }
+                                    }
                                 }
                             }
                             Button("Open Player", action: media.openPlayer)

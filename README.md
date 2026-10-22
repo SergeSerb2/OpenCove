@@ -10,7 +10,7 @@ An independent, MIT-licensed macOS notch app, written in SwiftUI and AppKit.
 
 ## What it does
 
-- Shows Now Playing metadata, readable long titles and artists, and supported media controls.
+- Shows Now Playing metadata, readable long titles and artists, supported media controls, and playback speeds advertised by the source.
 - Shows calendar events, meeting links, and event countdowns.
 - Shows volume, brightness, battery, Bluetooth, and shared Focus status when available.
 - Offers optional current weather with a 24-hour and 7-day forecast, time-to-leave alerts, system audio levels, notification-banner mirroring, lock widgets, a file tray, and a persistent timer.
@@ -51,7 +51,7 @@ Weather sends selected coordinates to Open-Meteo. Optional Maps routing sends th
 
 ## Limits and project links
 
-Secure lock-screen visibility, hardware-key interception, granted-permission flows, audible waveform behavior, and display/Space transitions need further manual verification. Playback-speed control, external DDC brightness, full AirPlay/HomePod control, and universal accessory battery coverage are not provided. Feature availability must come from real source/device data.
+Secure lock-screen visibility, hardware-key interception, granted-permission flows, audible waveform behavior, and display/Space transitions need further manual verification. External DDC brightness, full AirPlay/HomePod control, and universal accessory battery coverage are not provided. Playback speed requires an identified current item and rates advertised by the source. Feature availability must come from real source/device data.
 
 [Contribute](CONTRIBUTING.md) · [Report a bug](https://github.com/SergeSerb2/OpenCove/issues/new/choose) · [Security reporting](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md) · [Changes](CHANGELOG.md)
 
