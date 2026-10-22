@@ -22,6 +22,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import uuid
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -145,6 +146,144 @@ class Runtime:
         require(len(backups) == 1, "Expected exactly one original recovery backup.")
         require(backups[0].read_bytes() == original, "Recovery backup changed original bytes.")
         require(stat.S_IMODE(backups[0].stat().st_mode) == 0o600, "Recovery backup is not mode 0600.")
+
+    def displays(self):
+        """Use real NSScreen discovery and native window placement; no virtual displays."""
+        # Deliberately omit selectedDisplayUUID to exercise the legacy file.
+        initial = {**SAFE, "showOnAllDisplays": False, "preferBuiltInDisplay": False,
+                   "hideWhenIdle": False, "expandOnHover": False, "hideInFullscreen": False,
+                   "reduceMotion": True}
+        directory = self.directory("display-selection", preferences=initial)
+        samples = []
+
+        def settled(client, mode, requested=""):
+            def matches(state):
+                selection = state["displaySelection"]
+                available = selection["available"]
+                if not available or selection["mode"] != mode or selection["requestedUUID"] != requested:
+                    return False
+                primary = next((d for d in available if d["isMain"]), available[0])
+                target = ([d for d in available if d.get("uuid") == requested and d["canSelect"]]
+                          if mode == "selected" else
+                          available if mode == "all" else
+                          [next((d for d in available if d["isBuiltIn"]), primary)]
+                          if mode == "builtIn" else [primary])
+                fallback = mode == "selected" and not target
+                if fallback:
+                    target = [primary]
+                if mode == "builtIn":
+                    fallback = not any(d["isBuiltIn"] for d in available)
+                if mode == "main":
+                    fallback = not any(d["isMain"] for d in available)
+                ids = {d["id"] for d in target}
+                panels = [w for w in state["nativeWindows"] if w["title"] == "OpenCove"]
+                if (set(selection["selectedDisplayIDs"]) != ids or selection["isFallback"] != fallback
+                        or len(panels) != len(ids) or {w.get("displayID") for w in panels} != ids):
+                    return False
+                for panel in panels:
+                    display = next(d for d in target if d["id"] == panel["displayID"])
+                    if (panel.get("contentHidden", True) or panel["width"] <= 0 or panel["height"] <= 3
+                            or panel["x"] < display["x"] - 1 or panel["y"] < display["y"] - 1
+                            or panel["x"] + panel["width"] > display["x"] + display["width"] + 1
+                            or not -1 <= display["y"] + display["height"] - panel["y"] - panel["height"] <= 7):
+                        return False
+                return True
+            state = wait_for(client.request, matches, "Display policy and actual native placement did not agree.")
+            samples.append({"selection": state["displaySelection"], "panels": [w for w in state["nativeWindows"]
+                            if w["title"] == "OpenCove"]})
+            return state
+
+        with self.app(directory) as client:
+            state = settled(client, "main")
+            require(state["preferences"]["selectedDisplayUUID"] == "" and not state["errors"],
+                    "A legacy display preference file was not read without repair.")
+            for mode in ("builtIn", "all", "main"):
+                client.command("display.select", choice=mode)
+                settled(client, mode)
+            available = state["displaySelection"]["available"]
+            selectable = [d["uuid"] for d in available if d["canSelect"]]
+            require(selectable, "No real display has a unique identity for saved-choice verification.")
+            for identity in selectable:
+                client.command("display.select", choice=identity)
+                settled(client, "selected", identity)
+            selected = selectable[-1]
+            saved = (directory / "preferences.json").read_bytes()
+            for action, values in (("display.select", {"choice": "invalid-display"}),
+                                   ("preferences", {"values": {"selectedDisplayUUID": "invalid-display"}})):
+                client.command(action, expected=400, **values)
+                require((directory / "preferences.json").read_bytes() == saved,
+                        "Invalid display input changed saved settings.")
+            missing = str(uuid.uuid4()).upper()
+            require(missing not in [d.get("uuid") for d in available], "Unavailable-choice UUID unexpectedly exists.")
+            client.command("display.select", choice=missing, expected=409)
+            settled(client, "selected", selected)
+            require((directory / "preferences.json").read_bytes() == saved,
+                    "A rejected unavailable display changed saved settings.")
+        with self.app(directory) as client:
+            settled(client, "selected", selected)
+            client.command("preferences", values={"selectedDisplayUUID": missing})
+            state = settled(client, "selected", missing)
+            require(state["preferences"]["selectedDisplayUUID"] == missing and state["displaySelection"]["status"],
+                    "Unavailable saved display did not retain its choice and fallback explanation.")
+            write_private(directory / "unavailable-settings.png", client.request("/render?surface=settings"))
+        with self.app(directory) as client:
+            settled(client, "selected", missing)
+            client.command("display.select", choice="all")
+            state = settled(client, "all", missing)
+            require(state["preferences"]["selectedDisplayUUID"] == missing,
+                    "All displays erased the saved individual choice.")
+            client.command("preferences", values={"showOnAllDisplays": False})
+            settled(client, "selected", missing)
+            client.command("preferences", values={"selectedDisplayUUID": selected.lower()})
+            settled(client, "selected", selected)
+        with self.app(directory) as client:
+            state = settled(client, "selected", selected)
+            require(not state["errors"], "A valid lowercase saved identity was treated as damaged.")
+            destination, held = directory / "preferences.json", directory / "held-preferences.json"
+            original = destination.read_bytes()
+            destination.rename(held)
+            destination.mkdir(mode=0o700)
+            try:
+                client.command("display.select", choice="main", expected=500)
+                state = settled(client, "main")
+                require(state["errors"] and held.read_bytes() == original,
+                        "Failed display save hid its error or replaced original settings.")
+                write_private(directory / "save-error-settings.png", client.request("/render?surface=settings"))
+            finally:
+                destination.rmdir()
+                held.rename(destination)
+        with self.app(directory) as client:
+            settled(client, "selected", selected)
+            client.command("display.select", choice="main")
+            require(settled(client, "main")["preferences"]["selectedDisplayUUID"] == "",
+                    "Choosing Main did not clear the saved identity.")
+        with self.app(directory) as client:
+            settled(client, "main")
+        write_private(directory / "placement.json", json_bytes(samples))
+        self.record("displays: real placement, legacy/UUID restart, unavailable fallback and failed-save recovery",
+                    actualDisplays=len(available), selectableDisplays=len(selectable), placementSamples=len(samples),
+                    multiDisplayObserved=len(available) > 1)
+
+        original = json_bytes({**initial, "selectedDisplayUUID": "damaged"})
+        directory = self.directory("display-recovery", raw=original)
+        with self.app(directory) as client:
+            state = settled(client, "main")
+            require(state["preferences"]["selectedDisplayUUID"] == "" and state["errors"],
+                    "Malformed saved display did not show a repair notice.")
+            require((directory / "preferences.json").read_bytes() == original,
+                    "Display repair overwrote the original before saving.")
+            for key, value in SAFE.items():
+                if value is False:
+                    require(state["preferences"][key] is False, "Display repair re-enabled an integration.")
+            write_private(directory / "repair-settings.png", client.request("/render?surface=settings"))
+            client.command("display.select", choice="all")
+            settled(client, "all")
+        self.backup(directory, "preferences.recovery.*.json", original)
+        with self.app(directory) as client:
+            state = settled(client, "all")
+            require(state["preferences"]["selectedDisplayUUID"] == "" and not state["errors"],
+                    "Repaired display settings did not restart cleanly.")
+        self.record("displays: malformed identity repair, opt-outs and byte-exact 0600 backup")
 
     def motion(self):
         """Exercise the real native panel animator through the authenticated API."""
@@ -1287,7 +1426,7 @@ def main():
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
     parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
-    parser.add_argument("--only", choices=("storage", "storage-alias", "media", "weather", "motion", "preferences", "timers", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--only", choices=("storage", "storage-alias", "media", "weather", "motion", "displays", "preferences", "timers", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
@@ -1312,6 +1451,7 @@ def main():
                   ("calendar", runtime.calendar), ("files", runtime.files)]
         if args.only != "storage":
             groups.append(("motion", runtime.motion))
+            groups.append(("displays", runtime.displays))
         if args.media_fixture and args.only != "storage":
             groups.append(("media", lambda: runtime.media(args.pathological_duration)))
         if args.weather_service and args.only != "storage":

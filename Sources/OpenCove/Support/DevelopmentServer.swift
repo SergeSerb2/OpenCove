@@ -310,6 +310,22 @@ final class DevelopmentServer {
             guard candidate == normalized else { throw ControlError.invalid("A preference is outside its supported range or choices.") }
             store.preferences = candidate
             guard store.savePreferences() else { throw ControlError.failed(store.lastError ?? "Settings could not be saved.") }
+        case "display.select":
+            guard let choice = values["choice"] as? String, choice.utf8.count <= 64 else {
+                throw ControlError.invalid("Provide a display choice.")
+            }
+            guard ["all", "builtIn", "main"].contains(choice) || UUID(uuidString: choice) != nil else {
+                throw ControlError.invalid("Choose a display mode or an available display.")
+            }
+            switch store.chooseDisplay(choice) {
+            case .success: break
+            case .failure(let error):
+                switch error {
+                case .invalidChoice: throw ControlError.invalid(error.localizedDescription)
+                case .unavailable: throw ControlError.rejected(error.localizedDescription)
+                case .saveFailed: throw ControlError.failed(error.localizedDescription)
+                }
+            }
         case "preferences.reset":
             guard store.resetPreferences() else { throw ControlError.failed(store.lastError ?? "Settings could not be saved.") }
         case "onboarding.complete":
@@ -453,6 +469,9 @@ final class DevelopmentServer {
             var value: [String: Any] = ["title": window.title, "width": window.frame.width, "height": window.frame.height,
                                        "x": window.frame.origin.x, "y": window.frame.origin.y]
             if let hidden = NotchPanelController.contentIsHidden(in: window) { value["contentHidden"] = hidden }
+            if let id = window.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
+                value["displayID"] = id.uint32Value
+            }
             return value
         }
         var result: [String: Any] = ["app": "OpenCove", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unbundled", "expanded": store.isExpanded, "tab": store.selectedTab.rawValue, "settingsVisible": store.settingsVisible, "dataDirectory": CovePaths.dataDirectory.path, "nativeWindows": windows]
@@ -499,6 +518,7 @@ final class DevelopmentServer {
         result["travel"] = try encoded(store.travel.state)
         result["waveform"] = ["available": store.waveform.available, "status": store.waveform.status]
         result["physicalNotch"] = ["width": store.physicalNotchWidth, "height": store.physicalNotchHeight]
+        result["displaySelection"] = try encoded(store.displaySelection)
         if let hud = store.hud { result["hud"] = try encoded(hud) }
         else { result["hud"] = NSNull() }
         result["errors"] = [store.lastError, store.media.lastError, store.system.lastError, store.activities.lastError, store.weather.lastError].compactMap { $0 }

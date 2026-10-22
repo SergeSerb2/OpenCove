@@ -144,6 +144,8 @@ def protocol_checks(client, passed):
         ("preferences", {"values": {"enableCalendar": 1}}, 400),
         ("preferences", {"values": {"accent": "invalid"}}, 400),
         ("preferences", {"values": {"weatherStyle": "invalid"}}, 400),
+        ("preferences", {"values": {"selectedDisplayUUID": "invalid"}}, 400),
+        ("display.select", {"choice": "invalid"}, 400),
         ("preferences", {"values": {"unknown": True}}, 400),
         ("files.add", {"paths": ["relative.txt"]}, 400),
         ("files.add", {"paths": ["/tmp/file\0suffix"]}, 400),

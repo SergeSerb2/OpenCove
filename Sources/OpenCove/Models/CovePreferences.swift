@@ -67,6 +67,7 @@ struct CovePreferences: Codable, Equatable {
         hudDuration = bounded(hudDuration, 0.5...10, defaults.hudDuration)
         animationSpeed = bounded(animationSpeed, 0.25...2, defaults.animationSpeed)
         pausedMediaDelay = bounded(pausedMediaDelay, 1...300, defaults.pausedMediaDelay)
+        if !selectedDisplayUUID.isEmpty, UUID(uuidString: selectedDisplayUUID) == nil { selectedDisplayUUID = "" }
         if CoveWeatherStyle(rawValue: weatherStyle) == nil { weatherStyle = defaults.weatherStyle }
         if !["media", "calendar", "duo"].contains(expandedLayout) { expandedLayout = defaults.expandedLayout }
         if !["glass", "clear", "frosted"].contains(nowPlayingStyle) { nowPlayingStyle = defaults.nowPlayingStyle }
@@ -77,6 +78,7 @@ struct CovePreferences: Codable, Equatable {
     }
     var showOnAllDisplays = false
     var preferBuiltInDisplay = true
+    var selectedDisplayUUID = ""
     var showOnLockScreen = false
     var showLockScreenPrivateContent = false
     var hideWhenIdle = true

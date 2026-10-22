@@ -121,9 +121,7 @@ struct SettingsView: View {
     private var generalSettings: some View {
         Group {
             Section("Displays") {
-                Toggle("Show on all displays", isOn: preference(\.showOnAllDisplays))
-                Toggle("Prefer the built-in display", isOn: preference(\.preferBuiltInDisplay))
-                    .disabled(store.preferences.showOnAllDisplays)
+                CoveDisplayPreference(store: store)
                 Toggle("Show on the lock screen", isOn: preference(\.showOnLockScreen))
                 Toggle("Show event details while locked", isOn: preference(\.showLockScreenPrivateContent))
                     .disabled(!store.preferences.showOnLockScreen)

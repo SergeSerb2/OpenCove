@@ -116,12 +116,13 @@ final class LockScreenController {
             return
         }
 
-        let screens = selectedScreens(preferences: preferences)
+        let screens = CoveDisplays.resolve(preferences).screens
         let selectedIDs = Set(screens.map(\.id))
         for id in Array(panels.keys) where !selectedIDs.contains(id) {
             removePanel(id)
         }
-        for (id, screen) in screens {
+        for entry in screens {
+            let id = entry.id, screen = entry.screen
             guard let frame = widgetFrame(on: screen) else {
                 removePanel(id)
                 continue
@@ -169,20 +170,6 @@ final class LockScreenController {
         hosting.sizingOptions = []
         panel.contentView = hosting
         return panel
-    }
-
-    private func selectedScreens(preferences: CovePreferences) -> [(id: CGDirectDisplayID, screen: NSScreen)] {
-        let screens: [(id: CGDirectDisplayID, screen: NSScreen)] = NSScreen.screens.compactMap { screen in
-            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
-            let id = number.uint32Value
-            guard CGDisplayIsOnline(id) != 0, CGDisplayIsActive(id) != 0, CGDisplayIsAsleep(id) == 0 else { return nil }
-            return (id, screen)
-        }
-        if preferences.showOnAllDisplays { return screens }
-        if preferences.preferBuiltInDisplay,
-           let builtIn = screens.first(where: { CGDisplayIsBuiltin($0.id) != 0 }) { return [builtIn] }
-        if let main = NSScreen.main, let match = screens.first(where: { $0.screen == main }) { return [match] }
-        return Array(screens.prefix(1))
     }
 
     private func widgetFrame(on screen: NSScreen) -> NSRect? {

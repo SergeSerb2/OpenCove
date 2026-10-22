@@ -26,6 +26,8 @@ The app requires an owned private data directory, created with mode `0700`. It r
 
 Saved data can include preferences, calendar filters and alert receipts, a timer deadline, file paths/bookmarks, weather coordinates and consent, travel origin and alert-receipt hashes, and optional notification-URL API credentials. Tray removal removes the reference, not the original file. Calendar event snapshots, media state/artwork, mirrored banner text, and audio levels are held in memory rather than intentionally written as content archives. OS notifications or logs can persist separately under macOS policy. Do not attach raw app state, preferences, or data folders to public issues.
 
+Choosing an individual display saves its system display UUID in preferences. Names and geometry remain in memory and appear in the optional authenticated control state. This display information is not sent to a service. Choosing Main or Built-in clears the saved UUID; choosing All retains it for later use.
+
 Disable the related feature and remove its saved origin/location in Settings when available. To remove all local app data, quit OpenCove and remove its own data folder. This also removes saved timers and file references. It does not delete source files, revoke OS permissions, or cancel all OS-managed records. Turn off native notifications and login-item registration in the app before uninstalling if those options were enabled.
 
 ## Network and external services
