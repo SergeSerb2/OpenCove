@@ -1090,6 +1090,7 @@ class Runtime:
         environment = {k: v for k, v in os.environ.items() if not k.startswith("OPENCOVE_")}
         for extra, code in ((["--help"], 0), ([], 2), (["--state", "relative.json"], 2),
                             (["--state", str(work / "invalid.json"), "--metadata-duration", "nan"], 2),
+                            (["--state", str(work / "invalid.json"), "--metadata-duration", "-1"], 2),
                             (["--state", str(work / "invalid.json"), "--metadata-style", "unknown"], 2)):
             result = subprocess.run([str(executable), *extra], env=environment, capture_output=True, timeout=5)
             require(result.returncode == code, "Fixture help/default/invalid options did not fail safely before playback.")
@@ -1108,7 +1109,7 @@ class Runtime:
             payload = plistlib.loads(base64.b64decode(json.loads(result.stdout)["snapshot"]))
             return result.returncode, payload
 
-        def session(name, metadata=None, style=None, rates=False):
+        def session(name, metadata=None, style=None, rates=False, live=False):
             state_path = work / (name + ".json")
             arguments = [str(executable), "--state", str(state_path)]
             if metadata is not None:
@@ -1117,6 +1118,8 @@ class Runtime:
                 arguments += ["--metadata-style", style]
             if rates:
                 arguments += ["--rate-controls"]
+            if live:
+                arguments += ["--live-metadata"]
             return state_path, subprocess.Popen(arguments, env=environment, stdout=subprocess.DEVNULL,
                                                 stderr=subprocess.DEVNULL, umask=0o077)
 
@@ -1500,6 +1503,83 @@ class Runtime:
         finally:
             stop(child)
 
+
+        fixture_state, child = session("live-metadata", live=True, rates=True)
+        try:
+            wait_for(fixture_state.exists, bool, "Own live-metadata fixture did not start.")
+            directory = self.directory("media-live", preferences={**SAFE, "enableMedia": True,
+                "enablePrivateAPIs": True, "hideWhenIdle": False, "expandOnHover": False,
+                "hideInFullscreen": False, "reduceMotion": True})
+            with self.app(directory) as client:
+                def owned_live():
+                    require(child.poll() is None, "Own live fixture stopped; no command sent.")
+                    own = json.loads(fixture_state.read_bytes())
+                    require(own["pid"] == child.pid, "Own live fixture PID changed.")
+                    state = client.request()
+                    require(state["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
+                            "Live app source changed; no command sent.")
+                    return state
+
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID and
+                         s["media"].get("isLive") is True and s["media"]["duration"] == 0,
+                         "The app did not map the real source's public live-stream flag.")
+                raw = read_adapter("--read")[1]
+                require(raw.get("bundleID") == FIXTURE_ID and
+                        raw.get("info", {}).get("kMRMediaRemoteNowPlayingInfoIsAlwaysLive") is True,
+                        "Native current source did not supply the real live flag.")
+                client.command("selectTab", tab="media")
+                state = owned_live()
+                require(not state["media"]["supportsSeek"], "Unknown-duration live metadata exposed seeking.")
+                client.command("media.seek", seconds=10, expected=409)
+                write_private(directory / "live.png", client.request("/render?surface=notch"))
+                write_private(directory / "live-mounted.png", client.request("/render?surface=live-notch"))
+                owned_live()
+                require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
+                        "Native live source changed; no next command sent.")
+                client.command("media.next")
+                wait_for(lambda: json.loads(fixture_state.read_bytes()), lambda s: s["track"] == 2,
+                         "Own live-metadata fixture did not advance.")
+                normal = wait_for(owned_live, lambda s: s["media"].get("isLive") is False and
+                    s["media"]["duration"] > 0 and s["media"]["title"] == "OpenCove verification 2",
+                    "Live status or duration did not follow the actual next item.")
+                require(normal["media"]["supportsSeek"], "A real timed seekable item did not restore seek support.")
+                write_private(directory / "timed-first.png", client.request("/render?surface=live-notch"))
+                initial = normal["media"]["elapsed"]
+                time.sleep(2.2)
+                advanced = owned_live()
+                require(advanced["media"]["elapsed"] > initial + 1,
+                        "The API clock stopped advancing after leaving unknown-duration media.")
+                write_private(directory / "timed-later.png", client.request("/render?surface=live-notch"))
+                owned_live()
+                require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
+                        "Native timed source changed; no previous command sent.")
+                client.command("media.previous")
+                returned = wait_for(owned_live, lambda s: s["media"].get("isLive") is True and
+                    s["media"]["duration"] == 0 and s["media"]["title"] == "OpenCove verification 1",
+                    "Returning to the live item did not restore live/unavailable-timing state.")
+                require(not returned["media"]["supportsSeek"], "Returning live item retained timed seek support.")
+                write_private(directory / "live-returned.png", client.request("/render?surface=live-notch"))
+            self.record("media: real public live flag, unknown duration, rejected seek and timed-item transition")
+        finally:
+            stop(child)
+
+        fixture_state, child = session("unknown-duration", metadata=0)
+        try:
+            wait_for(fixture_state.exists, bool, "Own zero-duration fixture did not start.")
+            directory = self.directory("media-unknown-duration", preferences={**SAFE, "enableMedia": True,
+                "enablePrivateAPIs": True, "hideWhenIdle": False, "expandOnHover": False,
+                "hideInFullscreen": False, "reduceMotion": True})
+            with self.app(directory) as client:
+                state = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID and
+                    s["media"]["available"] and s["media"]["duration"] == 0,
+                    "Own unknown-duration metadata was not read.")
+                require(state["media"].get("isLive") is not True and not state["media"]["supportsSeek"],
+                        "Unknown duration alone became a live or seekable source.")
+                client.command("selectTab", tab="media")
+                write_private(directory / "unknown-duration.png", client.request("/render?surface=live-notch"))
+            self.record("media: zero duration remains unavailable timing rather than inferred live content")
+        finally:
+            stop(child)
 
         fixture_state, child = session("paused-idle", rates=True)
         try:
