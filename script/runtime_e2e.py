@@ -283,10 +283,86 @@ class Runtime:
             require(not state["weatherStatus"]["requestingLocation"], "Manual coordinates requested device location.")
             return state
 
+        def presentation(client, name):
+            """Independent time/interval checks on actual provider-backed app state."""
+            baseline = client.request()["weatherStatus"]["requestAttempts"]
+            for style in ("conditions", "precipitation", "sun"):
+                client.command("preferences", values={"weatherStyle": style})
+                state = client.request()
+                weather, widget = state["weather"], state["weatherPresentation"]
+                require(state["preferences"]["weatherStyle"] == style and widget["style"] == style,
+                        "Saved style and the native weather presentation disagree.")
+                require(state["weatherStatus"]["requestAttempts"] == baseline,
+                        "Changing the weather presentation queued another provider request.")
+                now = datetime.fromisoformat(widget["asOf"].replace("Z", "+00:00"))
+                zone = ZoneInfo(weather["timeZoneIdentifier"])
+                def instant(value):
+                    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+                today = next((day for day in weather["daily"]
+                              if instant(day["date"]).astimezone(zone).date() == now.astimezone(zone).date()), None)
+                require(widget.get("today") == today, "Widget selected a day in the host timezone instead of the city timezone.")
+                hours = [hour for hour in weather["hourly"] if instant(hour["date"]) + timedelta(hours=1) > now][:3]
+                probability_hours = [hour for hour in weather["hourly"] if instant(hour["date"]) > now][:3]
+                require(widget["hours"] == hours and widget["precipitationHours"] == probability_hours,
+                        "Widget's bounded hours do not cover the actual current/next intervals.")
+                current = next((hour for hour in probability_hours
+                                if instant(hour["date"]) - timedelta(hours=1) <= now < instant(hour["date"])), None)
+                chance, period = None, None
+                if current is not None and current.get("precipitationProbability") is not None:
+                    chance, period = current["precipitationProbability"], "hour"
+                elif today is not None and today.get("precipitationProbability") is not None:
+                    chance, period = today["precipitationProbability"], "day"
+                require(widget.get("precipitationProbability") == chance and widget.get("precipitationPeriod") == period,
+                        "Precipitation chance does not use the hour ending at the provider timestamp.")
+                events = sorted((instant(day[kind]), kind) for day in weather["daily"] for kind in ("sunrise", "sunset")
+                                if day.get(kind) and instant(day[kind]) > now)
+                actual = widget.get("nextSunEvent")
+                require((not events and actual is None) or (events and actual is not None and
+                        instant(actual["date"]) == events[0][0] and actual["kind"] == events[0][1]),
+                        "Widget selected a past or incorrect next sun event.")
+                rise, setting = (today.get("sunrise"), today.get("sunset")) if today else (None, None)
+                duration = today.get("daylightDuration") if today else None
+                expected_sun = "continuousDaylight" if duration == 86400 else "continuousNight" if duration == 0 else \
+                               "events" if rise or setting else "unavailable"
+                require(widget.get("sunCondition") == expected_sun,
+                        "Solar presentation does not match the provider's actual daylight duration.")
+                if rise and setting and instant(setting) > instant(rise):
+                    span = (instant(setting) - instant(rise)).total_seconds()
+                    progress = min(1, max(0, (now - instant(rise)).total_seconds() / span))
+                    require(abs(widget["daylightProgress"] - progress) <= 2 / span and
+                            widget["isDaylight"] == (instant(rise) <= now < instant(setting)),
+                            "Daylight progress or its day/night state disagrees with the actual forecast.")
+                else:
+                    daylight = True if duration == 86400 else False if duration == 0 else None
+                    require(widget.get("daylightProgress") is None and widget.get("isDaylight") is daylight,
+                            "Missing sun data produced a fabricated daylight position.")
+                stem = name.lower() + "-" + style
+                write_private(directory / (stem + ".json"), json_bytes({"weather": weather, "presentation": widget,
+                              "requestAttempts": baseline, "sourceTreeSHA256": state["sourceTreeSHA256"]}))
+                for surface in ("weather", "lock", "settings-weather"):
+                    write_private(directory / (stem + "-" + surface + ".png"), client.request("/render?surface=" + surface))
+                original_surface = state["preferences"]["nowPlayingStyle"]
+                client.command("preferences", values={"nowPlayingStyle": "frosted"})
+                try:
+                    write_private(directory / (stem + "-lock-frosted.png"), client.request("/render?surface=lock"))
+                    require(client.request()["weatherStatus"]["requestAttempts"] == baseline,
+                            "Changing the lock surface queued a weather request.")
+                finally:
+                    client.command("preferences", values={"nowPlayingStyle": original_surface})
+            return baseline
+
         with self.app(directory) as client:
             empty = client.request()
             require(not empty["weatherStatus"]["hasLocation"] and not empty["weather"]["available"],
                     "Weather requested a location without an explicit selection.")
+            for style in ("conditions", "sun", "precipitation"):
+                client.command("preferences", values={"weatherStyle": style})
+                blank = client.request()
+                require(blank["weatherStatus"]["requestAttempts"] == 0 and not blank["weatherStatus"]["requestingLocation"]
+                        and not blank["weatherPresentation"]["hours"] and not blank["weatherPresentation"]["precipitationHours"]
+                        and blank["weatherPresentation"].get("nextSunEvent") is None
+                        and blank["weatherPresentation"].get("precipitationProbability") is None,
+                        "A style without a location fetched weather or fabricated a value.")
             client.command("weather.location", expected=400, latitude=91, longitude=0)
             require(not location_file.exists(), "Invalid coordinates were saved.")
             client.command("weather.location", latitude=49.28, longitude=-123.12, name="Vancouver")
@@ -295,11 +371,31 @@ class Runtime:
                     and json.loads(location_file.read_bytes())["consented"], "Saved weather consent is not private.")
             write_private(directory / "weather.png", client.request("/render?surface=weather"))
             write_private(directory / "lock.png", client.request("/render?surface=lock"))
+            presentation(client, "Vancouver")
             client.command("weather.location", latitude=52.52, longitude=13.405, name="Berlin")
             loaded(client, "Berlin", "Europe/Berlin")
             write_private(directory / "berlin.png", client.request("/render?surface=weather"))
+            presentation(client, "Berlin")
         with self.app(directory) as client:
             loaded(client, "Berlin", "Europe/Berlin")
+            require(client.request()["preferences"]["weatherStyle"] == "sun"
+                    and client.request()["weatherPresentation"]["style"] == "sun", "Weather style did not survive restart.")
+            polar_conditions = []
+            for city, latitude in (("South Pole", -89.99), ("North Pole", 89.99)):
+                client.command("weather.location", latitude=latitude, longitude=0, name=city)
+                polar = wait_for(client.request, lambda s: s["weather"]["available"] and s["weather"]["locationName"] == city,
+                                 "The actual polar provider did not return conditions.", 35)
+                presentation(client, city)
+                polar = client.request()
+                today = polar["weatherPresentation"].get("today")
+                require(today is not None and today.get("daylightDuration") is not None,
+                        "The live polar response lacks a usable daylight duration.")
+                condition = polar["weatherPresentation"]["sunCondition"]
+                if today["daylightDuration"] in (0, 86400):
+                    require(today.get("sunrise") is None and today.get("sunset") is None
+                            and polar["weatherPresentation"].get("daylightProgress") is None,
+                            "Polar midnight boundaries became fabricated sunrise/set events or a daylight arc.")
+                polar_conditions.append(condition)
             client.command("preferences", values={**SAFE, "enableWeather": False})
             client.command("weather.refresh", expected=409)
             stopped = client.request()
@@ -322,8 +418,15 @@ class Runtime:
             require(not empty["weatherStatus"]["hasLocation"] and not empty["weather"]["available"],
                     "Removed weather selection returned after restart.")
             write_private(directory / "empty.png", client.request("/render?surface=weather"))
+            require(empty["weatherStatus"]["requestAttempts"] == 0
+                    and empty["weatherPresentation"].get("nextSunEvent") is None
+                    and empty["weatherPresentation"].get("precipitationProbability") is None,
+                    "Removed weather kept a sun event/chance or restarted a provider request.")
         self.record("weather: real 24-hour/7-day provider, city/timezone change, restart, opt-out and clear failures",
                     provider="Open-Meteo", publicCities=["Vancouver", "Berlin"], deviceLocationRequested=False)
+        self.record("weather: actual conditions/sun/precipitation views, correct intervals, no extra fetch on style changes and saved choice")
+        self.record("weather: real polar daylight duration suppresses false midnight sun events",
+                    publicCoordinates=[[-89.99, 0], [89.99, 0]], observedSolarConditions=polar_conditions)
 
     def files(self):
         directory = self.directory("tray-restart")
@@ -981,7 +1084,7 @@ def main():
     parser.add_argument("--evidence-dir", type=Path, help="Fresh private evidence path; defaults to a unique .local directory")
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
-    parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo with public Vancouver/Berlin coordinates; no device location")
+    parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
     parser.add_argument("--only", choices=("storage", "storage-alias", "media", "weather", "preferences", "timers", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()

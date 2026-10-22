@@ -12,6 +12,7 @@ final class WeatherController: NSObject, ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var isLoading = false
     @Published private(set) var isRequestingLocation = false
+    private(set) var requestAttempts: UInt64 = 0
     @Published private var selection: WeatherLocation?
 
     var hasLocation: Bool { selection != nil }
@@ -185,7 +186,7 @@ final class WeatherController: NSObject, ObservableObject {
             URLQueryItem(name: "longitude", value: String(selected.longitude)),
             URLQueryItem(name: "current", value: "temperature_2m,weather_code,is_day,apparent_temperature,relative_humidity_2m,wind_speed_10m"),
             URLQueryItem(name: "hourly", value: "temperature_2m,weather_code,is_day,precipitation_probability"),
-            URLQueryItem(name: "daily", value: "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset"),
+            URLQueryItem(name: "daily", value: "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset,daylight_duration"),
             URLQueryItem(name: "temperature_unit", value: "celsius"),
             URLQueryItem(name: "wind_speed_unit", value: "kmh"),
             URLQueryItem(name: "timeformat", value: "unixtime"),
@@ -206,6 +207,7 @@ final class WeatherController: NSObject, ObservableObject {
                 try Task.checkCancellation()
                 var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
                 request.setValue("application/json", forHTTPHeaderField: "Accept")
+                self?.requestAttempts &+= 1
                 let result = try await CoveWeatherDownload().load(request)
                 try Task.checkCancellation()
                 let current = result.current
@@ -358,10 +360,23 @@ final class WeatherController: NSObject, ObservableObject {
                     guard let raw, raw.isFinite, raw > 0, abs(raw - time) < 2 * 86_400 else { return nil }
                     return Date(timeIntervalSince1970: raw)
                 }
+                let daylight = values.daylightDuration.flatMap { durations -> Double? in
+                    guard durations.count == values.time.count else { return nil }
+                    return valid(durations[index], in: 0...86_400)
+                }
+                var sunrise = sunTime(values.sunrise[index]), sunset = sunTime(values.sunset[index])
+                // At the poles the provider can use midnight boundaries for an
+                // all-day interval. Those boundaries are not sunrise/set events.
+                if daylight == 0 || daylight == 86_400 {
+                    sunrise = nil; sunset = nil
+                } else if let rise = sunrise, let setting = sunset,
+                          setting <= rise || setting.timeIntervalSince(rise) >= 86_400 {
+                    sunrise = nil; sunset = nil
+                }
                 days.append(WeatherDay(date: date, minimum: low, maximum: high,
                                        condition: condition.name, symbol: condition.symbol,
                                        precipitationProbability: valid(values.precipitation[index], in: 0...100),
-                                       sunrise: sunTime(values.sunrise[index]), sunset: sunTime(values.sunset[index])))
+                                       sunrise: sunrise, sunset: sunset, daylightDuration: daylight))
                 if days.count == 7 { break }
             }
         }
@@ -467,8 +482,10 @@ private struct CoveWeatherResponse: Decodable, Sendable {
         let precipitation: [Double?]
         let sunrise: [Double?]
         let sunset: [Double?]
+        let daylightDuration: [Double?]?
         enum CodingKeys: String, CodingKey {
             case time, sunrise, sunset
+            case daylightDuration = "daylight_duration"
             case minimum = "temperature_2m_min"
             case maximum = "temperature_2m_max"
             case code = "weather_code"

@@ -23,7 +23,9 @@ struct LockScreenView: View {
                                                     showPrivateContent: store.preferences.showLockScreenPrivateContent)
                         }
                         if store.preferences.enableWeather {
-                            CoveLockWeatherSection(controller: weather)
+                            CoveLockWeatherSection(controller: weather,
+                                style: CoveWeatherStyle(rawValue: store.preferences.weatherStyle) ?? .conditions,
+                                motion: store.preferences.reduceMotion ? nil : CoveMotion.animation(preferences: store.preferences, hud: false))
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -39,7 +41,8 @@ struct LockScreenView: View {
         }
         .scrollIndicators(.hidden)
         .scrollBounceBehavior(.basedOnSize)
-        .frame(maxWidth: 560, maxHeight: 280)
+        .defaultScrollAnchor(.top)
+        .frame(maxWidth: 560, maxHeight: .infinity, alignment: .top)
         .modifier(CoveLockSurfaceStyle(style: store.preferences.nowPlayingStyle))
         .foregroundStyle(.primary)
         .preferredColorScheme(.dark)
@@ -195,39 +198,34 @@ private struct CoveLockCalendarSection: View {
 @MainActor
 private struct CoveLockWeatherSection: View {
     @ObservedObject var controller: WeatherController
+    let style: CoveWeatherStyle
+    let motion: Animation?
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
     var body: some View {
+        Group {
+            if controller.state.available {
+                TimelineView(.periodic(from: .now, by: 60)) { context in content(at: context.date) }
+            } else { content(at: Date()) }
+        }
+        .animation(systemReduceMotion ? nil : motion, value: style)
+    }
+
+    private func content(at now: Date) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Label("Weather", systemImage: controller.state.available ? controller.state.symbol : "cloud.sun")
+            Label(style.title, systemImage: style == .conditions && controller.state.available ? controller.state.symbol : style.symbol)
                 .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
             if controller.state.available {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(controller.state.temperatureText).font(.system(size: 18, weight: .medium, design: .rounded))
-                    Text(controller.state.condition).font(.system(size: 10)).foregroundStyle(.secondary)
-                }
-                if let today = controller.state.today {
-                    Text("H \(WeatherView.degrees(today.maximum)) · L \(WeatherView.degrees(today.minimum))")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                }
-                if !controller.state.hourly.isEmpty {
-                    HStack(spacing: 12) {
-                        ForEach(Array(controller.state.hourly.filter { $0.date >= Date().addingTimeInterval(-3_600) }.prefix(3))) { hour in
-                            VStack(spacing: 3) {
-                                Text(hour.date, format: .dateTime.hour())
-                                Image(systemName: hour.symbol).accessibilityHidden(true)
-                                Text(WeatherView.degrees(hour.temperature))
-                            }
-                        }
-                    }
-                    .font(.system(size: 9)).foregroundStyle(.secondary)
-                    .environment(\.timeZone, controller.state.timeZone)
-                }
+                // A chosen location name can contain personal text. Keep it out
+                // of this locked surface, including accessibility and help.
+                CoveWeatherSummary(state: controller.state,
+                    data: WeatherWidgetData(state: controller.state, style: style, at: now),
+                    compact: true, showsLocation: false)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(controller.state.isStale ? "Saved weather · Open-Meteo" : "Weather data · Open-Meteo")
+                    Text(controller.state.isStale ? "Saved weather · Open-Meteo · CC BY 4.0" : "Open-Meteo · CC BY 4.0")
                     Text(verbatim: "https://open-meteo.com")
-                    Text("CC BY 4.0")
                     Text(verbatim: "https://creativecommons.org/licenses/by/4.0")
-                    Text("Temperature rounded; conditions summarized.")
+                    Text("Model forecast summarized; values rounded.")
                 }
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)

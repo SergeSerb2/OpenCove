@@ -4,6 +4,9 @@ import SwiftUI
 @MainActor
 struct WeatherView: View {
     @ObservedObject var controller: WeatherController
+    var style: CoveWeatherStyle = .conditions
+    var motion: Animation? = nil
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var editingLocation = false
     @State private var name = ""
     @State private var latitude = ""
@@ -15,7 +18,7 @@ struct WeatherView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Label("Weather", systemImage: "cloud.sun")
+                Label("Weather", systemImage: style.symbol)
                     .font(.headline)
                 Spacer()
                 if controller.hasLocation {
@@ -98,60 +101,48 @@ struct WeatherView: View {
         }
         .padding(16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .animation(systemReduceMotion ? nil : motion, value: style)
         .onAppear { loadLocationFields() }
     }
 
     private var conditions: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 16) {
-                Image(systemName: controller.state.symbol)
-                    .symbolRenderingMode(.multicolor)
-                    .font(.system(size: 38))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(controller.state.locationName)
-                        .font(.subheadline.weight(.medium))
-                        .lineLimit(2)
-                    Text(controller.state.condition)
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 8)
-                Text(controller.state.temperatureText)
-                    .font(.system(size: 34, weight: .light, design: .rounded))
-                    .monospacedDigit()
-                    .minimumScaleFactor(0.65)
-                    .lineLimit(1)
-            }
-            HStack(spacing: 16) {
-                if let value = controller.state.apparentTemperature {
-                    metric("Feels like", value: Self.degrees(value), symbol: "thermometer.medium")
-                }
-                if let value = controller.state.humidity {
-                    metric("Humidity", value: value.formatted(.number.precision(.fractionLength(0))) + "%", symbol: "humidity")
-                }
-                if let value = controller.state.windSpeed {
-                    metric("Wind", value: value.formatted(.number.precision(.fractionLength(0))) + " km/h", symbol: "wind")
-                }
-            }
-            if !controller.state.hourly.isEmpty || !controller.state.daily.isEmpty {
-                CoveWeatherForecast(state: controller.state)
-            }
-            if let notice = controller.state.forecastNotice {
-                Text(notice).font(.caption).foregroundStyle(.secondary)
-            }
-            TimelineView(.periodic(from: .now, by: 60)) { context in
-                if let date = controller.state.updatedAt {
-                    HStack(spacing: 4) {
-                        Text(context.date.timeIntervalSince(date) > 3600 ? "Older conditions ·" : "Conditions ·")
-                        Text(date, style: .relative)
-                        Text("ago")
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            VStack(alignment: .leading, spacing: 9) {
+                CoveWeatherSummary(state: controller.state,
+                                   data: WeatherWidgetData(state: controller.state, style: style, at: context.date))
+                HStack(spacing: 16) {
+                    if let value = controller.state.apparentTemperature {
+                        metric("Feels like", value: Self.degrees(value), symbol: "thermometer.medium")
                     }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    if let value = controller.state.humidity {
+                        metric("Humidity", value: value.formatted(.number.precision(.fractionLength(0))) + "%", symbol: "humidity")
+                    }
+                    if let value = controller.state.windSpeed {
+                        metric("Wind", value: value.formatted(.number.precision(.fractionLength(0))) + " km/h", symbol: "wind")
+                    }
                 }
+                if !controller.state.hourly.isEmpty || !controller.state.daily.isEmpty {
+                    CoveWeatherForecast(state: controller.state, now: context.date)
+                }
+                if let notice = controller.state.forecastNotice {
+                    Text(notice).font(.caption).foregroundStyle(.secondary)
+                }
+                if let date = controller.state.updatedAt {
+                    Text(Self.updateDescription(date, at: context.date))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                CoveWeatherAttribution()
             }
-            CoveWeatherAttribution()
         }
+    }
+
+    private static func updateDescription(_ date: Date, at now: Date) -> String {
+        let age = now.timeIntervalSince(date)
+        guard age.isFinite, age >= 0 else { return "Update time unavailable" }
+        if age < 60 { return "Updated just now" }
+        if age < 3_600 { return "Updated \(Int(age / 60)) min ago" }
+        if age < 7 * 86_400 { return "Saved weather · updated \(Int(age / 3_600)) hr ago" }
+        return "Saved weather · over a week old"
     }
 
     private func metric(_ title: String, value: String, symbol: String) -> some View {
@@ -254,34 +245,35 @@ struct CoveWeatherAttribution: View {
 @MainActor
 struct CoveWeatherForecast: View {
     let state: WeatherState
+    let now: Date
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            let hours = Array(state.hourly.filter { $0.date >= context.date.addingTimeInterval(-3_600) }.prefix(24))
-            let days = Array(state.daily.filter { $0.date >= startOfDay(context.date) }.prefix(7))
-            VStack(alignment: .leading, spacing: 12) {
-                if !hours.isEmpty {
-                    heading("Next 24 hours")
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 12) {
-                            ForEach(hours) { hour in hourlyCell(hour) }
-                        }
-                        .padding(.vertical, 3)
+        let hours = Array(state.hourly.filter { $0.date.addingTimeInterval(3_600) > now }.prefix(24))
+        let days = Array(state.daily.filter { $0.date >= startOfDay(now) }.prefix(7))
+        VStack(alignment: .leading, spacing: 12) {
+            if !hours.isEmpty {
+                heading("Next 24 hours")
+                Text("Precipitation chances cover the hour ending at each time.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                ScrollView(.horizontal) {
+                    HStack(spacing: 12) {
+                        ForEach(hours) { hour in hourlyCell(hour) }
                     }
-                    .scrollIndicators(.hidden)
+                    .padding(.vertical, 3)
                 }
-                if !days.isEmpty {
-                    Divider()
-                    heading("7-day forecast")
-                    VStack(spacing: 10) {
-                        ForEach(days) { day in
-                            CoveWeatherDayRow(day: day, days: days, today: isToday(day.date, now: context.date))
-                        }
+                .scrollIndicators(.hidden)
+            }
+            if !days.isEmpty {
+                Divider()
+                heading("7-day forecast")
+                VStack(spacing: 10) {
+                    ForEach(days) { day in
+                        CoveWeatherDayRow(day: day, days: days, today: isToday(day.date, now: now))
                     }
                 }
             }
-            .environment(\.timeZone, state.timeZone)
         }
+        .environment(\.timeZone, state.timeZone)
     }
 
     private func heading(_ title: String) -> some View {
