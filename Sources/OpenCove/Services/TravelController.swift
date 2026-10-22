@@ -75,24 +75,20 @@ final class TravelController: NSObject, ObservableObject {
         status = settings.enabled ? "Waiting for the calendar and a saved origin." : "Time-to-leave alerts are off."
     }
 
+    deinit { heartbeat?.invalidate() }
+
     func start() {
         guard !running else { return }
         running = true
+        reconcileHeartbeat()
         // Saved enablement and a saved origin represent prior explicit consent.
         // Starting never creates a CLLocationManager or asks for location access.
         evaluate()
-        let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.evaluate() }
-        }
-        timer.tolerance = 2
-        RunLoop.main.add(timer, forMode: .common)
-        heartbeat = timer
     }
 
     func stop() {
         running = false
-        heartbeat?.invalidate()
-        heartbeat = nil
+        reconcileHeartbeat()
         clearRoute()
         cancelLocationRequest()
         events = []
@@ -114,6 +110,7 @@ final class TravelController: NSObject, ObservableObject {
         settings.enabled = enabled
         settings.mode = requestedMode
         settings.bufferMinutes = bufferMinutes
+        reconcileHeartbeat()
         rawState.enabled = enabled
         lastError = nil
         if !enabled {
@@ -191,6 +188,24 @@ final class TravelController: NSObject, ObservableObject {
     }
 
     // MARK: Bounded route work and a separate, exact leave deadline
+
+    private func reconcileHeartbeat() {
+        guard running && settings.enabled else {
+            heartbeat?.invalidate()
+            heartbeat = nil
+            return
+        }
+        guard heartbeat == nil else { return }
+        let timer = Timer(timeInterval: 30, repeats: true) { [weak self] timer in
+            Task { @MainActor [weak self] in
+                guard let self, self.running, self.settings.enabled, self.heartbeat === timer else { return }
+                self.evaluate()
+            }
+        }
+        timer.tolerance = 2
+        heartbeat = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
 
     private func evaluate() {
         guard running else { return }
