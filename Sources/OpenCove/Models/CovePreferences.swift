@@ -118,6 +118,7 @@ struct CovePreferences: Codable, Equatable {
     var compactActivity = "automatic"
     var nowPlayingStyle = "glass"
     var hudSpeed = "smooth"
+    var showPlaybackIndicator = true
     var showLiveWaveform = false
     var musicColorAccent = true
     var preferredMusicApp = "system"
@@ -127,6 +128,9 @@ struct CovePreferences: Codable, Equatable {
     var completedOnboarding = false
     var hudDuration = 2.0
     var accent = "mint"
+
+    /// A saved waveform choice alone must not start system-audio capture.
+    var usesLiveWaveform: Bool { enableMedia && showPlaybackIndicator && showLiveWaveform }
 }
 
 enum CoveCompactActivity: String { case media, calendar, timer, clock }

@@ -145,13 +145,15 @@ struct NotchView: View {
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.indigo.opacity(0.9))
                 }
-                if store.preferences.showLiveWaveform {
-                    LiveWaveformView(controller: waveform, isPlaying: media.state.isPlaying,
-                                     color: CoveNotchStyle.accent(store.preferences.accent))
-                } else {
-                    CoveAudioBars(isPlaying: media.state.isPlaying,
-                                  reduceMotion: systemReduceMotion || store.preferences.reduceMotion,
-                                  color: CoveNotchStyle.accent(store.preferences.accent))
+                if store.preferences.showPlaybackIndicator {
+                    if store.preferences.showLiveWaveform {
+                        LiveWaveformView(controller: waveform, isPlaying: media.state.isPlaying,
+                                         color: CoveNotchStyle.accent(store.preferences.accent))
+                    } else {
+                        CoveAudioBars(isPlaying: media.state.isPlaying,
+                                      reduceMotion: systemReduceMotion || store.preferences.reduceMotion,
+                                      color: CoveNotchStyle.accent(store.preferences.accent))
+                    }
                 }
                 if store.preferences.enableTimer && activities.timer.remaining > 0 ||
                     store.preferences.enableCalendar && activities.eventActivity != nil {
@@ -234,9 +236,16 @@ struct NotchView: View {
                 Text(CoveNotchStyle.metadataLabel(media.state.artist.isEmpty ? media.state.source : media.state.artist, limit: 96))
                     .font(.system(size: 10, weight: .medium)).foregroundStyle(CoveNotchStyle.secondary).lineLimit(1)
             }.frame(maxWidth: .infinity, alignment: .leading)
-            CoveAudioBars(isPlaying: media.state.isPlaying,
-                          reduceMotion: systemReduceMotion || store.preferences.reduceMotion,
-                          color: CoveNotchStyle.accent(store.preferences.accent))
+            if store.preferences.showPlaybackIndicator {
+                if store.preferences.showLiveWaveform {
+                    LiveWaveformView(controller: waveform, isPlaying: media.state.isPlaying,
+                                     color: CoveNotchStyle.accent(store.preferences.accent))
+                } else {
+                    CoveAudioBars(isPlaying: media.state.isPlaying,
+                                  reduceMotion: systemReduceMotion || store.preferences.reduceMotion,
+                                  color: CoveNotchStyle.accent(store.preferences.accent))
+                }
+            }
         }
         .padding(.horizontal, 18)
         .padding(.top, cutoutHeight + 8)
@@ -251,7 +260,8 @@ struct NotchView: View {
                     if showsDuo {
                         HStack(alignment: .top, spacing: 13) {
                             CoveMediaSurface(media: media, system: system, waveform: waveform,
-                                             showLiveWaveform: store.preferences.showLiveWaveform, condensed: true,
+                                             showPlaybackIndicator: store.preferences.showPlaybackIndicator,
+                                         showLiveWaveform: store.preferences.showLiveWaveform, condensed: true,
                                              musicColorAccent: store.preferences.musicColorAccent,
                                              reduceMotion: store.preferences.reduceMotion)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -261,6 +271,7 @@ struct NotchView: View {
                         }
                     } else {
                         CoveMediaSurface(media: media, system: system, waveform: waveform,
+                                         showPlaybackIndicator: store.preferences.showPlaybackIndicator,
                                          showLiveWaveform: store.preferences.showLiveWaveform,
                                          musicColorAccent: store.preferences.musicColorAccent,
                                          reduceMotion: store.preferences.reduceMotion)

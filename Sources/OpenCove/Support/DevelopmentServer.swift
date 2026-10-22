@@ -534,7 +534,12 @@ final class DevelopmentServer {
         result["controlProtocol"] = 1
         result["build"] = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") ?? ""
         result["travel"] = try encoded(store.travel.state)
-        result["waveform"] = ["available": store.waveform.available, "status": store.waveform.status]
+        result["waveform"] = ["available": store.waveform.available, "status": store.waveform.status,
+                              "enabled": store.preferences.usesLiveWaveform,
+                              "startAttempts": store.waveform.startAttempts,
+                              "captureActive": store.waveform.captureActive,
+                              "captureStarting": store.waveform.captureStarting,
+                              "meterActive": store.waveform.meterActive]
         result["physicalNotch"] = ["width": store.physicalNotchWidth, "height": store.physicalNotchHeight]
         result["displaySelection"] = try encoded(store.displaySelection)
         if let hud = store.hud { result["hud"] = try encoded(hud) }

@@ -283,10 +283,20 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 Toggle("Use artwork colors", isOn: preference(\.musicColorAccent))
-                Toggle("Live waveform", isOn: preference(\.showLiveWaveform))
-                if store.preferences.showLiveWaveform {
+                Picker("Playback indicator", selection: Binding(get: {
+                    !store.preferences.showPlaybackIndicator ? "none" : store.preferences.showLiveWaveform ? "live" : "decorative"
+                }, set: { mode in
+                    store.preferences.showPlaybackIndicator = mode != "none"
+                    store.preferences.showLiveWaveform = mode == "live"
+                    store.savePreferences()
+                })) {
+                    Text("None").tag("none")
+                    Text("Decorative bars").tag("decorative")
+                    Text("System audio levels").tag("live")
+                }
+                if store.preferences.usesLiveWaveform {
                     Text(waveform.status).font(.caption).foregroundStyle(.secondary)
-                    Button("Allow System Audio Levels") { waveform.requestAccessAndStart() }
+                    Button("Allow System Audio Levels") { store.requestWaveformAccess() }
                 }
                 CoveSettingsNote("Optional system audio levels use Screen & System Audio Recording access. Audio stays in memory and is not saved.")
             }

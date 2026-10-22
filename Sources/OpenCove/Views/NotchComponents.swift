@@ -89,6 +89,7 @@ struct CoveIconButton: View {
     var symbol: String
     var label: String
     var size: Double = 11
+    var allowsKeyboardFocus = true
     var action: () -> Void
 
     var body: some View {
@@ -99,6 +100,7 @@ struct CoveIconButton: View {
                 .contentShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(CoveQuietButtonStyle())
+        .focusable(allowsKeyboardFocus)
         .accessibilityLabel(label)
         .help(label)
     }
@@ -358,8 +360,10 @@ struct CoveMediaSurface: View {
     @ObservedObject var media: MediaController
     let system: SystemController
     let waveform: AudioWaveformController
+    var showPlaybackIndicator = true
     var showLiveWaveform = false
     var condensed = false
+    var locked = false
     var musicColorAccent = true
     var reduceMotion = false
     @State private var scrubbing = false
@@ -379,86 +383,13 @@ struct CoveMediaSurface: View {
     var body: some View {
         if media.state.available {
             VStack(spacing: condensed ? 6 : 8) {
-                HStack(alignment: .center, spacing: condensed ? 9 : 15) {
-                    Button(action: media.openPlayer) {
-                        CoveArtwork(data: media.state.artworkData, size: condensed ? 46 : 54,
-                                    radius: condensed ? 9 : 12)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Open media player")
-                    VStack(alignment: .leading, spacing: 5) {
-                        CoveScrollingMediaText(text: media.state.title.isEmpty ? "Untitled" : media.state.title,
-                                               size: condensed ? 12 : 15, weight: .semibold,
-                                               reduceMotion: reduceMotion || systemReduceMotion)
-                        CoveScrollingMediaText(text: media.lastError != nil ? "Open player to retry controls" : (media.state.artist.isEmpty ? media.state.source : media.state.artist),
-                                               size: condensed ? 10 : 11, weight: .medium,
-                                               color: media.lastError != nil ? .systemOrange : CoveNotchStyle.secondaryNative,
-                                               reduceMotion: reduceMotion || systemReduceMotion || media.lastError != nil,
-                                               helpText: media.lastError)
-                        HStack(spacing: 6) {
-                            if let format = media.state.audioFormat, !format.isEmpty {
-                                Text(CoveNotchStyle.metadataLabel(format))
-                                    .font(.system(size: 8, weight: .semibold)).foregroundStyle(CoveNotchStyle.secondary)
-                                    .lineLimit(1).truncationMode(.tail)
-                                    .help(CoveNotchStyle.metadataLabel(format, limit: 160))
-                            }
-                            if media.state.isLive == true {
-                                Label("LIVE", systemImage: "dot.radiowaves.left.and.right")
-                                    .font(.system(size: 8, weight: .bold)).foregroundStyle(.red)
-                                    .fixedSize()
-                                    .accessibilityLabel("Live stream")
-                                    .help("Live-stream status supplied by the player")
-                            }
-                            if let speed = media.state.playbackSpeed, media.state.supportsPlaybackSpeed {
-                                Text("\(speed.formatted(.number.precision(.fractionLength(0...2))))×")
-                                    .font(.system(size: 9, weight: .semibold)).foregroundStyle(CoveNotchStyle.secondary)
-                                    .fixedSize()
-                                    .accessibilityLabel("Playback speed \(speed.formatted()) times")
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    if !condensed {
-                        if showLiveWaveform {
-                            LiveWaveformView(controller: waveform, isPlaying: media.state.isPlaying,
-                                             color: musicColorAccent ? artworkTint ?? .mint : .mint)
-                        } else {
-                            CoveAudioBars(isPlaying: media.state.isPlaying,
-                                          reduceMotion: reduceMotion || systemReduceMotion,
-                                          color: musicColorAccent ? artworkTint ?? .white : .white)
-                        }
-                    }
-                    if !condensed {
-                        Menu {
-                            if media.state.supportsFavorite {
-                                Button(media.state.isFavorited == true ? "Remove Favorite" : "Favorite", action: media.toggleFavorite)
-                            }
-                            if media.state.supportsCopyLink { Button("Copy Track Link", action: media.copyLink) }
-                            if media.state.supportsPlaybackSpeed, let item = media.state.contentItemIdentifier {
-                                let source = media.state.sourceBundleIdentifier
-                                Menu("Playback Speed") {
-                                    ForEach(media.state.supportedPlaybackSpeeds, id: \.self) { speed in
-                                        Button { media.setPlaybackSpeed(speed, source: source, itemID: item) } label: {
-                                            if let current = media.state.playbackSpeed, abs(current - speed) < 0.000001 {
-                                                Label("\(speed.formatted())×", systemImage: "checkmark")
-                                            } else { Text("\(speed.formatted())×") }
-                                        }
-                                    }
-                                }
-                            }
-                            Button("Open Player", action: media.openPlayer)
-                        } label: { Image(systemName: "ellipsis.circle").font(.system(size: 13)) }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-                        .accessibilityLabel("More playback actions")
-                    }
-                }
+                header
                 progress
                 HStack(spacing: 12) {
                     Spacer(minLength: 0)
                     transport
                     Spacer(minLength: 0)
-                    if !condensed {
+                    if !condensed && !locked {
                         CoveIconButton(symbol: "hifispeaker", label: "Audio output and volume") { showsOutput.toggle() }
                             .popover(isPresented: $showsOutput, arrowEdge: .bottom) {
                                 CoveOutputControls(system: system)
@@ -487,10 +418,100 @@ struct CoveMediaSurface: View {
                 scrubIdentity = nil
             }
         } else {
-            CoveEmptySurface(symbol: "music.note", title: "Nothing playing",
-                             message: media.lastError ?? "Play something in your favorite app.",
-                             actionTitle: "Refresh", action: media.refresh)
+            if locked {
+                CoveEmptySurface(symbol: "music.note", title: "Nothing playing",
+                                 message: "Start playback after unlocking.")
+            } else {
+                CoveEmptySurface(symbol: "music.note", title: "Nothing playing",
+                                 message: media.lastError ?? "Play something in your favorite app.",
+                                 actionTitle: "Refresh", action: media.refresh)
+            }
         }
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: condensed ? 9 : 15) {
+            if locked {
+                CoveArtwork(data: media.state.artworkData, size: 54, radius: 12)
+            } else {
+                Button(action: media.openPlayer) {
+                    CoveArtwork(data: media.state.artworkData, size: condensed ? 46 : 54,
+                                radius: condensed ? 9 : 12)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open media player")
+            }
+            metadata
+            if !condensed && showPlaybackIndicator {
+                if showLiveWaveform {
+                    LiveWaveformView(controller: waveform, isPlaying: media.state.isPlaying,
+                                     color: musicColorAccent ? artworkTint ?? .mint : .mint)
+                } else {
+                    CoveAudioBars(isPlaying: media.state.isPlaying,
+                                  reduceMotion: reduceMotion || systemReduceMotion,
+                                  color: musicColorAccent ? artworkTint ?? .white : .white)
+                }
+            }
+            if !condensed && !locked {
+                Menu {
+                    if media.state.supportsFavorite {
+                        Button(media.state.isFavorited == true ? "Remove Favorite" : "Favorite", action: media.toggleFavorite)
+                    }
+                    if media.state.supportsCopyLink { Button("Copy Track Link", action: media.copyLink) }
+                    if media.state.supportsPlaybackSpeed, let item = media.state.contentItemIdentifier {
+                        let source = media.state.sourceBundleIdentifier
+                        Menu("Playback Speed") {
+                            ForEach(media.state.supportedPlaybackSpeeds, id: \.self) { speed in
+                                Button { media.setPlaybackSpeed(speed, source: source, itemID: item) } label: {
+                                    if let current = media.state.playbackSpeed, abs(current - speed) < 0.000001 {
+                                        Label("\(speed.formatted())×", systemImage: "checkmark")
+                                    } else { Text("\(speed.formatted())×") }
+                                }
+                            }
+                        }
+                    }
+                    Button("Open Player", action: media.openPlayer)
+                } label: { Image(systemName: "ellipsis.circle").font(.system(size: 13)) }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .accessibilityLabel("More playback actions")
+            }
+        }
+    }
+
+    private var metadata: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            CoveScrollingMediaText(text: media.state.title.isEmpty ? "Untitled" : media.state.title,
+                                   size: condensed ? 12 : 15, weight: .semibold,
+                                   reduceMotion: reduceMotion || systemReduceMotion)
+            CoveScrollingMediaText(text: media.lastError != nil ? (locked ? "Playback controls unavailable" : "Open player to retry controls") : (media.state.artist.isEmpty ? media.state.source : media.state.artist),
+                                   size: condensed ? 10 : 11, weight: .medium,
+                                   color: media.lastError != nil ? .systemOrange : CoveNotchStyle.secondaryNative,
+                                   reduceMotion: reduceMotion || systemReduceMotion || media.lastError != nil,
+                                   helpText: locked ? nil : media.lastError)
+            HStack(spacing: 6) {
+                if let format = media.state.audioFormat, !format.isEmpty {
+                    Text(CoveNotchStyle.metadataLabel(format))
+                        .font(.system(size: 8, weight: .semibold)).foregroundStyle(CoveNotchStyle.secondary)
+                        .lineLimit(1).truncationMode(.tail)
+                        .help(CoveNotchStyle.metadataLabel(format, limit: 160))
+                }
+                if media.state.isLive == true {
+                    Label("LIVE", systemImage: "dot.radiowaves.left.and.right")
+                        .font(.system(size: 8, weight: .bold)).foregroundStyle(.red)
+                        .fixedSize()
+                        .accessibilityLabel("Live stream")
+                        .help("Live-stream status supplied by the player")
+                }
+                if let speed = media.state.playbackSpeed, media.state.supportsPlaybackSpeed {
+                    Text("\(speed.formatted(.number.precision(.fractionLength(0...2))))×")
+                        .font(.system(size: 9, weight: .semibold)).foregroundStyle(CoveNotchStyle.secondary)
+                        .fixedSize()
+                        .accessibilityLabel("Playback speed \(speed.formatted()) times")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder private var progress: some View {
@@ -533,6 +554,7 @@ struct CoveMediaSurface: View {
                 }
             })
             .controlSize(.mini)
+            .focusable(!locked)
             .disabled(!canSeek)
             .accessibilityLabel("Playback position")
             .accessibilityValue(duration > 0 ? "\(CoveNotchStyle.duration(displayedPosition)) of \(CoveNotchStyle.duration(duration))" : "Position unavailable")
@@ -551,10 +573,11 @@ struct CoveMediaSurface: View {
     private var transport: some View {
         HStack(spacing: condensed ? 15 : 18) {
             if media.state.supportsShuffle && !condensed {
-                CoveIconButton(symbol: "shuffle", label: "Toggle shuffle", action: media.toggleShuffle)
+                CoveIconButton(symbol: "shuffle", label: "Toggle shuffle", allowsKeyboardFocus: !locked, action: media.toggleShuffle)
                     .foregroundStyle(media.state.isShuffling == true ? Color.mint : Color.white.opacity(0.5))
             }
             CoveIconButton(symbol: "backward.fill", label: "Previous track", size: 15,
+                           allowsKeyboardFocus: !locked,
                            action: media.previous)
                 .disabled(!media.state.supportsPrevious)
             Button(action: media.playPause) {
@@ -563,13 +586,15 @@ struct CoveMediaSurface: View {
                     .frame(width: 44, height: 36)
             }
             .buttonStyle(CoveQuietButtonStyle())
+            .focusable(!locked)
             .accessibilityLabel(media.state.isPlaying ? "Pause" : "Play")
             .disabled(!media.state.supportsPlayPause)
             CoveIconButton(symbol: "forward.fill", label: "Next track", size: 15,
+                           allowsKeyboardFocus: !locked,
                            action: media.next)
                 .disabled(!media.state.supportsNext)
             if media.state.supportsRepeat && !condensed {
-                CoveIconButton(symbol: media.state.repeatMode == "one" ? "repeat.1" : "repeat", label: "Cycle repeat mode", action: media.cycleRepeat)
+                CoveIconButton(symbol: media.state.repeatMode == "one" ? "repeat.1" : "repeat", label: "Cycle repeat mode", allowsKeyboardFocus: !locked, action: media.cycleRepeat)
                     .foregroundStyle(media.state.isRepeating == true ? Color.mint : Color.white.opacity(0.5))
             }
         }
