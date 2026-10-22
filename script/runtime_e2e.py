@@ -840,6 +840,141 @@ class Runtime:
             stop(child)
 
 
+        fixture_state, child = session("paused-idle", rates=True)
+        try:
+            wait_for(fixture_state.exists, bool, "Idle fixture did not start.")
+            directory = self.directory("media-idle", preferences={**SAFE, "enableMedia": True,
+                                       "enablePrivateAPIs": True, "hidePausedMedia": True, "pausedMediaDelay": 3,
+                                       "hideWhenIdle": True, "expandOnHover": False, "reduceMotion": True,
+                                       "enableNotifications": True, "hudDuration": 0.5})
+            with self.app(directory) as client:
+                def own_idle():
+                    require(child.poll() is None, "Own idle fixture stopped; no command sent.")
+                    own = json.loads(fixture_state.read_bytes())
+                    require(own["pid"] == child.pid, "Idle fixture PID changed; no command sent.")
+                    media = client.request()["media"]
+                    require(media.get("sourceBundleIdentifier") == FIXTURE_ID,
+                            "App idle source is not our fixture; no command sent.")
+                    require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
+                            "Native idle source is not our fixture; no command sent.")
+                    return media
+
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                         and s["media"]["title"] == "OpenCove verification 1" and s["media"]["isPlaying"]
+                         and s["compactMediaVisible"], "Playing idle fixture did not appear.", 25)
+                client.command("collapse")
+                own_idle()
+                client.command("media.playPause")
+                wait_for(client.request, lambda s: not s["media"]["isPlaying"] and s["compactMediaVisible"],
+                         "Paused media skipped its compact grace interval.")
+                time.sleep(0.5)
+                require(client.request()["compactMediaVisible"], "Compact pause grace expired too early.")
+                hidden = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                                  and s["media"]["available"] and not s["media"]["isPlaying"]
+                                  and not s["compactMediaVisible"], "Paused compact media never hid.", 6)
+                def panels(state):
+                    return [w for w in state["nativeWindows"] if w["title"] == "OpenCove"]
+
+                wait_for(client.request, lambda s: panels(s) and
+                         all(w["height"] <= 3 and w["contentHidden"] for w in panels(s)),
+                         "Idle-hidden native panel did not reduce to its edge target.")
+                client.command("selectTab", tab="media")
+                expanded = client.request()
+                require(expanded["expanded"] and expanded["media"]["supportsPlayPause"]
+                        and expanded["media"]["title"] == hidden["media"]["title"],
+                        "Hiding compact media discarded full playback controls or metadata.")
+                write_private(directory / "paused-expanded.png", client.request("/render?surface=notch"))
+                write_private(directory / "media-settings.png", client.request("/render?surface=settings-media"))
+                client.command("collapse")
+                client.command("timer.start", seconds=2)
+                wait_for(client.request, lambda s: s["timer"]["running"] and not s["compactMediaVisible"]
+                         and any(w["height"] > 3 for w in s["nativeWindows"] if w["title"] == "OpenCove"),
+                         "Hiding paused media also hid the real active timer.")
+                wait_for(client.request, lambda s: s.get("hud", {}).get("title") == "Timer finished" if s.get("hud") else False,
+                         "Real timer completion HUD did not override compact idle hiding.", 5)
+                wait_for(client.request, lambda s: s.get("hud") is None and not s["timer"]["running"],
+                         "Completed timer HUD did not retire.")
+                own_idle()
+                client.command("media.playPause")
+                wait_for(client.request, lambda s: s["media"]["isPlaying"] and s["compactMediaVisible"],
+                         "Resuming did not restore compact media.")
+                own_idle()
+                client.command("media.playPause")
+                wait_for(client.request, lambda s: not s["media"]["isPlaying"] and s["compactMediaVisible"],
+                         "Second pause did not begin its grace.")
+                own_idle()
+                client.command("media.playPause")
+                wait_for(client.request, lambda s: s["media"]["isPlaying"] and s["compactMediaVisible"],
+                         "Quick resume did not cancel the old deadline.")
+                time.sleep(3.3)
+                require(client.request()["compactMediaVisible"], "An old pause deadline hid resumed playback.")
+                own_idle()
+                client.command("media.playPause")
+                wait_for(client.request, lambda s: not s["media"]["isPlaying"] and s["compactMediaVisible"],
+                         "New pause did not start.")
+                own_idle()
+                client.command("media.next")
+                next_state = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                                      and s["media"]["title"] == "OpenCove verification 2"
+                                      and not s["media"]["isPlaying"] and s["compactMediaVisible"],
+                                      "New paused item did not receive a fresh compact grace.")
+                started = time.monotonic()
+                time.sleep(0.5)
+                target = own_idle()
+                client.command("media.speed", speed=2, source=FIXTURE_ID, item=target["contentItemIdentifier"])
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                         and not s["compactMediaVisible"], "Paused rate updates kept resetting compact grace.", 5)
+                require(time.monotonic() - started < 3.8, "A paused metadata update extended the original grace.")
+                wait_for(client.request, lambda s: s["media"].get("playbackSpeed") == 2 and not s["compactMediaVisible"],
+                         "Paused rate update restored hidden compact media.")
+                client.command("preferences", values={"accent": "orange"})
+                require(not client.request()["compactMediaVisible"], "Unrelated preferences restarted compact grace.")
+                client.command("preferences", values={"hidePausedMedia": False})
+                wait_for(client.request, lambda s: s["compactMediaVisible"], "Disabling idle hiding did not restore media.")
+                client.command("preferences", values={"hidePausedMedia": True, "pausedMediaDelay": 3})
+                wait_for(client.request, lambda s: not s["compactMediaVisible"], "Re-enabling did not honor the observed pause.")
+                animated_reversal = not client.request()["systemReduceMotion"]
+                if animated_reversal:
+                    client.command("preferences", values={"hidePausedMedia": False, "reduceMotion": False,
+                                                         "animationSpeed": 0.25})
+                    visible = wait_for(client.request, lambda s: panels(s) and s["compactMediaVisible"] and
+                                       all(w["height"] > 3 and not w["contentHidden"] for w in panels(s)),
+                                       "Native content did not restore before expanding.")
+                    top_edges = sorted(w["y"] + w["height"] for w in panels(visible))
+                    time.sleep(1.0)
+                    client.command("preferences", values={"hidePausedMedia": True})
+                    wait_for(client.request, lambda s: panels(s) and not s["compactMediaVisible"] and
+                             all(not w["contentHidden"] for w in panels(s)),
+                             "Native content retired before its shrink animation completed.", 2)
+                    client.command("preferences", values={"hidePausedMedia": False})
+                    time.sleep(1.05)
+                    restored = client.request()
+                    require(restored["compactMediaVisible"] and panels(restored) and
+                            all(w["height"] > 3 and not w["contentHidden"] for w in panels(restored)),
+                            "An interrupted shrink callback hid restored native content.")
+                    require(all(abs(a - b) <= 1 for a, b in zip(top_edges,
+                                sorted(w["y"] + w["height"] for w in panels(restored))))
+                            and len(top_edges) == len(panels(restored)),
+                            "Idle animation moved the panel away from its top edge.")
+                    client.command("preferences", values={"hidePausedMedia": True})
+                    wait_for(client.request, lambda s: panels(s) and not s["compactMediaVisible"] and
+                             all(w["height"] <= 3 and w["contentHidden"] for w in panels(s)),
+                             "Native hosting content did not retire after the completed shrink.", 3)
+                    client.command("preferences", values={"reduceMotion": True, "animationSpeed": 1})
+            with self.app(directory) as client:
+                restarted = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                                     and s["media"]["available"] and not s["media"]["isPlaying"]
+                                     and s["compactMediaVisible"], "Restart did not begin a grace for the observed paused item.", 25)
+                require(restarted["preferences"]["hidePausedMedia"] and restarted["preferences"]["pausedMediaDelay"] == 3,
+                        "Idle preferences did not survive restart.")
+                wait_for(client.request, lambda s: not s["compactMediaVisible"] and s["media"]["available"],
+                         "Paused media did not hide after restarted observation.", 6)
+            self.record("media: paused compact grace, resume cancellation, new item/rate, timer HUD and preference restart",
+                        nativeAnimationReversal=animated_reversal)
+        finally:
+            stop(child)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--app", required=True, type=Path)

@@ -441,12 +441,19 @@ final class DevelopmentServer {
     }
 
     private func snapshot() throws -> [String: Any] {
-        var result: [String: Any] = ["app": "OpenCove", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unbundled", "expanded": store.isExpanded, "tab": store.selectedTab.rawValue, "settingsVisible": store.settingsVisible, "dataDirectory": CovePaths.dataDirectory.path, "nativeWindows": NSApp.windows.filter { $0.isVisible && ($0.title == "OpenCove" || $0.identifier != nil) }.map { ["title": $0.title, "width": $0.frame.width, "height": $0.frame.height, "x": $0.frame.origin.x, "y": $0.frame.origin.y] }]
+        let windows = NSApp.windows.filter { $0.isVisible && ($0.title == "OpenCove" || $0.identifier != nil) }.map { window in
+            var value: [String: Any] = ["title": window.title, "width": window.frame.width, "height": window.frame.height,
+                                       "x": window.frame.origin.x, "y": window.frame.origin.y]
+            if let hidden = NotchPanelController.contentIsHidden(in: window) { value["contentHidden"] = hidden }
+            return value
+        }
+        var result: [String: Any] = ["app": "OpenCove", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unbundled", "expanded": store.isExpanded, "tab": store.selectedTab.rawValue, "settingsVisible": store.settingsVisible, "dataDirectory": CovePaths.dataDirectory.path, "nativeWindows": windows]
         result["preferences"] = try encoded(store.preferences)
         var media = store.media.state
         media.elapsed = store.media.playback.elapsed
         media.artworkData = nil
         result["media"] = try encoded(media)
+        result["compactMediaVisible"] = store.compactMediaVisible
         result["playbackClock"] = ["receivedSamples": store.media.playback.receivedSamples,
                                    "changeNotifications": store.media.playback.changeNotifications]
         result["artworkAvailable"] = store.media.state.artworkData != nil
@@ -498,6 +505,9 @@ final class DevelopmentServer {
         case "settings":
             size = CGSize(width: 760, height: 550)
             content = AnyView(SettingsView(store: store))
+        case "settings-media":
+            size = CGSize(width: 760, height: 550)
+            content = AnyView(SettingsView(store: store, initialPage: .media))
         case "lock":
             size = CGSize(width: 460, height: 250)
             content = AnyView(LockScreenView(store: store, weather: store.weather).environment(\.colorScheme, .dark))

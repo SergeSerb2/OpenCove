@@ -66,6 +66,7 @@ struct CovePreferences: Codable, Equatable {
         collapseDelay = bounded(collapseDelay, 0.1...5, defaults.collapseDelay)
         hudDuration = bounded(hudDuration, 0.5...10, defaults.hudDuration)
         animationSpeed = bounded(animationSpeed, 0.25...2, defaults.animationSpeed)
+        pausedMediaDelay = bounded(pausedMediaDelay, 1...300, defaults.pausedMediaDelay)
         if !["media", "calendar", "duo"].contains(expandedLayout) { expandedLayout = defaults.expandedLayout }
         if !["glass", "clear", "frosted"].contains(nowPlayingStyle) { nowPlayingStyle = defaults.nowPlayingStyle }
         if !["smooth", "fast", "instant"].contains(hudSpeed) { hudSpeed = defaults.hudSpeed }
@@ -88,6 +89,8 @@ struct CovePreferences: Codable, Equatable {
     var enableHaptics = true
     var reduceMotion = false
     var enableMedia = true
+    var hidePausedMedia = false
+    var pausedMediaDelay = 30.0
     var enableVolumeHUD = true
     var enableBrightnessHUD = true
     var enableBattery = true

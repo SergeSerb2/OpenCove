@@ -54,6 +54,8 @@ For `media.speed`, API clients must echo the current media state's `sourceBundle
 
 `playbackClock` in the development state reports received source samples and clock change notifications. The real media flow checks that stable playback can receive several samples without notifying progress observers for each one, while actual playing seeks and paused position changes still reach the real app. These counters are diagnostic counts, not frame-rate or energy measurements.
 
+The media flow also enables paused-media compact hiding with a short real deadline. It checks the grace, retained expanded controls, native edge-target geometry, resume cancellation, new-item grace, unchanged deadlines on rate/appearance changes, real timer completion HUDs, and saved preferences after a process restart. Where system reduced motion is off, it also reverses an actual native shrink and checks that its old completion cannot hide restored content, then checks content retirement after a completed shrink. These are native lifecycle checks, not frame-rate measurements. The default setting stays off. Existing metadata is retained and no source is paused, resumed, or sought merely because its compact view hides.
+
 ## Evidence and manual gates
 
 Record the exact source-tree hash, bundle path/variant, architecture, version/build, macOS/toolchain, commands, exit status, and failing flows for each final integration run. Keep tokens, private event/banner/media data, and raw state out of public reports. This guide is a procedure, not a record that its commands passed. The final integrated revision still needs its own recorded run.

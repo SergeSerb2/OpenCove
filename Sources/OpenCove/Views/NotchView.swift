@@ -51,7 +51,7 @@ struct NotchView: View {
         if store.hud != nil {
             return CGSize(width: max(310, width, cutoutWidth > 0 ? cutoutWidth + 240 : 0), height: max(40, height))
         }
-        if store.preferences.enableMedia && store.media.state.available {
+        if store.preferences.enableMedia && store.compactMediaVisible && store.media.state.available {
             if store.preferences.enableTimer && store.activities.timer.remaining > 0 ||
                 store.preferences.enableCalendar && store.activities.eventActivity != nil {
                 return CGSize(width: max(300, width, cutoutWidth > 0 ? cutoutWidth + 220 : 0), height: height)
@@ -104,6 +104,7 @@ struct NotchView: View {
             .environment(\.colorScheme, .dark)
             .animation(motion, value: store.isExpanded)
             .animation(motion, value: store.hud?.kind)
+            .animation(motion, value: store.hidesCompactWhenIdle)
             .animation(motion, value: Self.desiredSize(store: store, cutout: cutout))
             .onAppear(perform: applyInitialLayout)
             .onChange(of: store.preferences.expandedLayout) { _, _ in applyExpandedLayout() }
@@ -132,6 +133,7 @@ struct NotchView: View {
             }
             .foregroundStyle(Color.white)
             .tint(CoveNotchStyle.accent(store.preferences.accent))
+            .opacity(store.hidesCompactWhenIdle ? 0 : 1)
     }
 
     @ViewBuilder private var content: some View {
@@ -154,10 +156,12 @@ struct NotchView: View {
     }
 
     @ViewBuilder private var compact: some View {
-        if let hud = store.hud {
+        if store.hidesCompactWhenIdle {
+            Color.clear
+        } else if let hud = store.hud {
             CoveCompactHUD(hud: hud, accent: CoveNotchStyle.accent(store.preferences.accent), centerGap: compactGap)
                 .padding(.horizontal, 18)
-        } else if store.preferences.enableMedia && media.state.available {
+        } else if store.preferences.enableMedia && store.compactMediaVisible && media.state.available {
             HStack(spacing: 0) {
                 CoveArtwork(data: media.state.artworkData, size: 23, radius: 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -321,7 +325,7 @@ struct NotchView: View {
         if let hud = store.hud {
             return [hud.title, hud.subtitle].filter { !$0.isEmpty }.joined(separator: ", ")
         }
-        if store.preferences.enableMedia && media.state.available {
+        if store.preferences.enableMedia && store.compactMediaVisible && media.state.available {
             var label = "\(media.state.isPlaying ? "Playing" : "Paused"), \(media.state.title), \(media.state.artist)"
             if store.preferences.enableTimer && activities.timer.remaining > 0 {
                 label += ", timer \(CoveNotchStyle.duration(activities.timer.remaining)) remaining"
