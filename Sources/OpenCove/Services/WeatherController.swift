@@ -4,7 +4,7 @@ import CoreLocation
 import Darwin
 import Foundation
 
-/// Open-Meteo current conditions. No location manager or network request is
+/// Open-Meteo conditions and forecasts. No location manager or network request is
 /// created until the user selects a location. `start()` can reuse that consent.
 @MainActor
 final class WeatherController: NSObject, ObservableObject {
@@ -48,7 +48,8 @@ final class WeatherController: NSObject, ObservableObject {
             guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_size <= 65_536,
                   let data = try file.read(upToCount: 65_537), data.count <= 65_536 else { throw CocoaError(.fileReadCorruptFile) }
             let saved = try JSONDecoder().decode(WeatherLocation.self, from: data)
-            guard saved.consented, Self.validCoordinates(saved.latitude, saved.longitude), saved.name.count <= 120 else {
+            guard saved.consented, Self.validCoordinates(saved.latitude, saved.longitude),
+                  saved.name.count <= 120, saved.name.utf8.count <= 1_024 else {
                 lastError = "The saved weather location is invalid. Choose a location again."
                 return
             }
@@ -112,7 +113,10 @@ final class WeatherController: NSObject, ObservableObject {
         }
         cancelLocationRequest()
         cancelRequest()
-        let cleanedName = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
+        // Bound scalars as well as characters: one grapheme can contain a very
+        // large combining-mark sequence supplied through the control interface.
+        let boundedName = String(String.UnicodeScalarView(name.unicodeScalars.prefix(256)))
+        let cleanedName = String(boundedName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
         let displayName = cleanedName.isEmpty
             ? String(format: "%.2f°, %.2f°", latitude, longitude)
             : cleanedName
@@ -144,7 +148,8 @@ final class WeatherController: NSObject, ObservableObject {
     }
 
     /// Removes the saved consent and stops all weather and location work.
-    func clearLocation() {
+    @discardableResult
+    func clearLocation() -> Bool {
         let wasRunning = isRunning
         stop()
         selection = nil
@@ -152,14 +157,17 @@ final class WeatherController: NSObject, ObservableObject {
         persistenceError = nil
         lastError = nil
         do {
-            if FileManager.default.fileExists(atPath: locationFile.path) {
-                try FileManager.default.removeItem(at: locationFile)
+            // unlink removes the entry itself, including a dangling link, and
+            // never follows it into another location.
+            if Darwin.unlink(locationFile.path) != 0, errno != ENOENT {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
             }
         } catch {
             lastError = "The saved weather location could not be removed: \(error.localizedDescription)"
         }
         // Keep the feature gate, without any work until a new explicit selection.
         if wasRunning { start() }
+        return lastError == nil
     }
 
     func refresh() {
@@ -175,10 +183,15 @@ final class WeatherController: NSObject, ObservableObject {
         components.queryItems = [
             URLQueryItem(name: "latitude", value: String(selected.latitude)),
             URLQueryItem(name: "longitude", value: String(selected.longitude)),
-            URLQueryItem(name: "current", value: "temperature_2m,weather_code,is_day"),
+            URLQueryItem(name: "current", value: "temperature_2m,weather_code,is_day,apparent_temperature,relative_humidity_2m,wind_speed_10m"),
+            URLQueryItem(name: "hourly", value: "temperature_2m,weather_code,is_day,precipitation_probability"),
+            URLQueryItem(name: "daily", value: "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset"),
             URLQueryItem(name: "temperature_unit", value: "celsius"),
+            URLQueryItem(name: "wind_speed_unit", value: "kmh"),
             URLQueryItem(name: "timeformat", value: "unixtime"),
-            URLQueryItem(name: "forecast_days", value: "1")
+            URLQueryItem(name: "timezone", value: "auto"),
+            URLQueryItem(name: "forecast_hours", value: "24"),
+            URLQueryItem(name: "forecast_days", value: "7")
         ]
         guard let url = components.url else {
             lastError = "The weather request could not be created."
@@ -202,6 +215,7 @@ final class WeatherController: NSObject, ObservableObject {
                     throw CoveWeatherFailure.invalidResponse
                 }
                 let condition = Self.condition(for: current.code, isDay: current.isDay == 1)
+                let forecast = Self.forecast(from: result)
                 guard let self, self.isRunning, self.requestID == id, self.selection == selected else { return }
                 self.state = WeatherState(
                     locationName: selected.name,
@@ -209,7 +223,12 @@ final class WeatherController: NSObject, ObservableObject {
                     condition: condition.name,
                     symbol: condition.symbol,
                     updatedAt: Date(timeIntervalSince1970: current.time),
-                    available: true
+                    available: true,
+                    apparentTemperature: Self.valid(current.apparent, in: -200...150),
+                    humidity: Self.valid(current.humidity, in: 0...100),
+                    windSpeed: Self.valid(current.wind, in: 0...500),
+                    timeZoneIdentifier: forecast.zone,
+                    hourly: forecast.hours, daily: forecast.days, forecastNotice: forecast.notice
                 )
                 self.lastError = self.persistenceError
             } catch {
@@ -277,6 +296,82 @@ final class WeatherController: NSObject, ObservableObject {
         latitude.isFinite && longitude.isFinite && (-90...90).contains(latitude) && (-180...180).contains(longitude)
     }
 
+    private static func valid(_ value: Double?, in range: ClosedRange<Double>) -> Double? {
+        guard let value, value.isFinite, range.contains(value) else { return nil }
+        return value
+    }
+
+    private static func forecast(from response: CoveWeatherResponse)
+        -> (zone: String, hours: [WeatherHour], days: [WeatherDay], notice: String?) {
+        guard let identifier = response.timezone, identifier.utf8.count <= 128,
+              let zone = TimeZone(identifier: identifier), let offset = response.utcOffset,
+              (-64_800...64_800).contains(offset), let fixedZone = TimeZone(secondsFromGMT: offset) else {
+            return ("UTC", [], [], "The forecast time zone is unavailable. Try refreshing later.")
+        }
+        let now = Date().timeIntervalSince1970
+        var hours: [WeatherHour] = []
+        if let values = response.hourly, values.time.count <= 48,
+           values.temperature.count == values.time.count, values.code.count == values.time.count,
+           values.isDay.count == values.time.count, values.precipitation.count == values.time.count {
+            var previous = -Double.infinity
+            for index in values.time.indices {
+                let time = values.time[index]
+                guard time.isFinite, time > previous, time >= response.current.time - 3_600,
+                      time <= now + 2 * 86_400 else { continue }
+                previous = time
+                let daylight = values.isDay[index]
+                let condition = condition(for: daylight == 0 || daylight == 1 ? values.code[index] ?? -1 : -1,
+                                          isDay: daylight == 1)
+                hours.append(WeatherHour(date: Date(timeIntervalSince1970: time),
+                                         temperature: valid(values.temperature[index], in: -150...100),
+                                         condition: condition.name, symbol: condition.symbol,
+                                         precipitationProbability: valid(values.precipitation[index], in: 0...100)))
+                if hours.count == 24 { break }
+            }
+        }
+        var days: [WeatherDay] = []
+        if let values = response.daily, values.time.count <= 16,
+           [values.minimum.count, values.maximum.count, values.code.count, values.precipitation.count,
+            values.sunrise.count, values.sunset.count].allSatisfy({ $0 == values.time.count }) {
+            var providerCalendar = Calendar(identifier: .gregorian)
+            providerCalendar.timeZone = fixedZone
+            var localCalendar = Calendar(identifier: .gregorian)
+            localCalendar.timeZone = zone
+            var previous = -Double.infinity
+            for index in values.time.indices {
+                let time = values.time[index]
+                guard time.isFinite, time > previous, time >= now - 2 * 86_400,
+                      time <= now + 9 * 86_400 else { continue }
+                previous = time
+                // Daily boundaries use the provider's fixed request-time offset.
+                // Rebuild its civil date locally so a DST change cannot label
+                // tomorrow's forecast as the previous evening.
+                var components = providerCalendar.dateComponents([.year, .month, .day],
+                                                                 from: Date(timeIntervalSince1970: time))
+                components.hour = 12
+                guard let date = localCalendar.date(from: components) else { continue }
+                let condition = condition(for: values.code[index] ?? -1, isDay: true)
+                var low = valid(values.minimum[index], in: -150...100)
+                var high = valid(values.maximum[index], in: -150...100)
+                if let minimum = low, let maximum = high, minimum > maximum { low = nil; high = nil }
+                func sunTime(_ raw: Double?) -> Date? {
+                    guard let raw, raw.isFinite, raw > 0, abs(raw - time) < 2 * 86_400 else { return nil }
+                    return Date(timeIntervalSince1970: raw)
+                }
+                days.append(WeatherDay(date: date, minimum: low, maximum: high,
+                                       condition: condition.name, symbol: condition.symbol,
+                                       precipitationProbability: valid(values.precipitation[index], in: 0...100),
+                                       sunrise: sunTime(values.sunrise[index]), sunset: sunTime(values.sunset[index])))
+                if days.count == 7 { break }
+            }
+        }
+        let incomplete = hours.count < 24 || days.count < 7
+            || hours.contains { $0.temperature == nil || $0.precipitationProbability == nil || $0.condition == "Unknown conditions" }
+            || days.contains { $0.minimum == nil || $0.maximum == nil || $0.precipitationProbability == nil || $0.condition == "Unknown conditions" }
+        return (identifier, hours, days,
+                incomplete ? "Some forecast data is unavailable. Try refreshing later." : nil)
+    }
+
     private static func condition(for code: Int, isDay: Bool) -> (name: String, symbol: String) {
         switch code {
         case 0: return ("Clear", isDay ? "sun.max.fill" : "moon.stars.fill")
@@ -319,18 +414,65 @@ final class WeatherController: NSObject, ObservableObject {
 
 private struct CoveWeatherResponse: Decodable, Sendable {
     let current: Current
+    let timezone: String?
+    let utcOffset: Int?
+    let hourly: Hourly?
+    let daily: Daily?
+
+    enum CodingKeys: String, CodingKey {
+        case current, timezone, hourly, daily
+        case utcOffset = "utc_offset_seconds"
+    }
 
     struct Current: Decodable, Sendable {
         let time: Double
         let temperature: Double
         let code: Int
         let isDay: Int
+        let apparent: Double?
+        let humidity: Double?
+        let wind: Double?
 
         enum CodingKeys: String, CodingKey {
             case time
             case temperature = "temperature_2m"
             case code = "weather_code"
             case isDay = "is_day"
+            case apparent = "apparent_temperature"
+            case humidity = "relative_humidity_2m"
+            case wind = "wind_speed_10m"
+        }
+    }
+
+    struct Hourly: Decodable, Sendable {
+        let time: [Double]
+        let temperature: [Double?]
+        let code: [Int?]
+        let isDay: [Int?]
+        let precipitation: [Double?]
+        enum CodingKeys: String, CodingKey {
+            case time
+            case temperature = "temperature_2m"
+            case code = "weather_code"
+            case isDay = "is_day"
+            case precipitation = "precipitation_probability"
+        }
+    }
+
+    struct Daily: Decodable, Sendable {
+        let time: [Double]
+        let minimum: [Double?]
+        let maximum: [Double?]
+        let code: [Int?]
+        let precipitation: [Double?]
+        let sunrise: [Double?]
+        let sunset: [Double?]
+        enum CodingKeys: String, CodingKey {
+            case time, sunrise, sunset
+            case minimum = "temperature_2m_min"
+            case maximum = "temperature_2m_max"
+            case code = "weather_code"
+            case precipitation = "precipitation_probability_max"
         }
     }
 }
@@ -350,7 +492,7 @@ private enum CoveWeatherFailure: LocalizedError {
     }
 }
 
-/// Current conditions need only a few small fields. Limit declared bytes and
+/// Conditions and the bounded 24-hour/7-day forecast need only a small body. Limit declared bytes and
 /// received body bytes to 64 KiB, including unknown-length/chunked responses and
 /// bytes after URLSession's content decoding. Never use its whole-body data API.
 /// URLSession still owns its network buffers; this bounds our accumulated body.
@@ -434,6 +576,12 @@ private final class CoveWeatherDownload: NSObject, URLSessionDataDelegate, @unch
         if allow { acceptedResponse = true }
         lock.unlock()
         completionHandler(allow ? .allow : .cancel)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        // Consent names this provider; do not forward coordinates to a redirect.
+        completionHandler(nil)
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {

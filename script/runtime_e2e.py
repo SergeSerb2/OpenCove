@@ -22,6 +22,8 @@ import sys
 import tempfile
 import time
 import urllib.error
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from verify_control import ControlClient, ControlFailure, bundle_identity, check_bundle
 
@@ -257,6 +259,71 @@ class Runtime:
             require(not client.request()["events"], "Calendar refresh bypassed recovery pause.")
         require(link.is_symlink() and not target.exists(), "Calendar recovery changed the symlink/target.")
         self.record("calendar: dangling policy link pauses real reads without an authorization request")
+
+    def weather(self):
+        """Opt-in, live provider flow. Uses public city coordinates, never device location."""
+        directory = self.directory("weather-service", preferences={**SAFE, "enableWeather": True})
+        location_file = directory / "weather-location.json"
+
+        def loaded(client, name, zone):
+            state = wait_for(client.request, lambda s: s["weather"]["available"]
+                             and s["weather"]["locationName"] == name,
+                             "The real weather provider did not supply the selected city; inspect private app log/state.", 35)
+            weather = state["weather"]
+            require(weather["timeZoneIdentifier"] == zone, "Provider time zone does not match the public city.")
+            require(len(weather["hourly"]) == 24 and len(weather["daily"]) == 7, "Live forecast is incomplete.")
+            require(not weather.get("forecastNotice"), "Live forecast contains unavailable fields.")
+            dates = [datetime.fromisoformat(day["date"].replace("Z", "+00:00")).astimezone(ZoneInfo(zone)).date()
+                     for day in weather["daily"]]
+            require(all(b == a + timedelta(days=1) for a, b in zip(dates, dates[1:])),
+                    "Forecast civil dates skipped or repeated across a timezone/DST boundary.")
+            require(all(hour["temperature"] is not None and math.isfinite(hour["temperature"])
+                        and 0 <= hour["precipitationProbability"] <= 100 for hour in weather["hourly"]),
+                    "Live hourly values are unavailable or outside their physical bounds.")
+            require(not state["weatherStatus"]["requestingLocation"], "Manual coordinates requested device location.")
+            return state
+
+        with self.app(directory) as client:
+            empty = client.request()
+            require(not empty["weatherStatus"]["hasLocation"] and not empty["weather"]["available"],
+                    "Weather requested a location without an explicit selection.")
+            client.command("weather.location", expected=400, latitude=91, longitude=0)
+            require(not location_file.exists(), "Invalid coordinates were saved.")
+            client.command("weather.location", latitude=49.28, longitude=-123.12, name="Vancouver")
+            state = loaded(client, "Vancouver", "America/Vancouver")
+            require(stat.S_IMODE(location_file.stat().st_mode) == 0o600
+                    and json.loads(location_file.read_bytes())["consented"], "Saved weather consent is not private.")
+            write_private(directory / "weather.png", client.request("/render?surface=weather"))
+            write_private(directory / "lock.png", client.request("/render?surface=lock"))
+            client.command("weather.location", latitude=52.52, longitude=13.405, name="Berlin")
+            loaded(client, "Berlin", "Europe/Berlin")
+            write_private(directory / "berlin.png", client.request("/render?surface=weather"))
+        with self.app(directory) as client:
+            loaded(client, "Berlin", "Europe/Berlin")
+            client.command("preferences", values={**SAFE, "enableWeather": False})
+            client.command("weather.refresh", expected=409)
+            stopped = client.request()
+            require(not stopped["weatherStatus"]["loading"] and not stopped["weatherStatus"]["requestingLocation"],
+                    "Weather opt-out retained an active request.")
+            client.command("weather.clear")
+            require(not location_file.exists() and not client.request()["weather"]["available"],
+                    "Clear retained saved location or current conditions.")
+            # Exercise synchronous remove failure through the real command path.
+            location_file.mkdir(mode=0o700)
+            client.command("weather.clear", expected=500)
+            require(location_file.is_dir(), "Failed clear removed a directory.")
+            location_file.rmdir()
+            target = directory / "absent-location-target"
+            location_file.symlink_to(target)
+            client.command("weather.clear")
+            require(not location_file.is_symlink() and not target.exists(), "Clear followed or retained a dangling link.")
+        with self.app(directory) as client:
+            empty = client.request()
+            require(not empty["weatherStatus"]["hasLocation"] and not empty["weather"]["available"],
+                    "Removed weather selection returned after restart.")
+            write_private(directory / "empty.png", client.request("/render?surface=weather"))
+        self.record("weather: real 24-hour/7-day provider, city/timezone change, restart, opt-out and clear failures",
+                    provider="Open-Meteo", publicCities=["Vancouver", "Berlin"], deviceLocationRequested=False)
 
     def files(self):
         directory = self.directory("tray-restart")
@@ -687,13 +754,16 @@ def main():
     parser.add_argument("--evidence-dir", type=Path, help="Fresh private evidence path; defaults to a unique .local directory")
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
-    parser.add_argument("--only", choices=("storage", "storage-alias", "media", "preferences", "timers", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo with public Vancouver/Berlin coordinates; no device location")
+    parser.add_argument("--only", choices=("storage", "storage-alias", "media", "weather", "preferences", "timers", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
         parser.error("--pathological-duration requires --media-fixture")
     if args.only == "media" and not args.media_fixture:
         parser.error("--only media requires --media-fixture")
+    if args.only == "weather" and not args.weather_service:
+        parser.error("--only weather requires --weather-service")
     os.umask(0o077)
     runtime = None
     try:
@@ -710,6 +780,8 @@ def main():
                   ("calendar", runtime.calendar), ("files", runtime.files)]
         if args.media_fixture and args.only != "storage":
             groups.append(("media", lambda: runtime.media(args.pathological_duration)))
+        if args.weather_service and args.only != "storage":
+            groups.append(("weather", runtime.weather))
         for name, operation in groups:
             if args.only not in (None, "storage", name):
                 continue

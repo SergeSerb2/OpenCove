@@ -205,6 +205,23 @@ private struct CoveLockWeatherSection: View {
                     Text(controller.state.temperatureText).font(.system(size: 18, weight: .medium, design: .rounded))
                     Text(controller.state.condition).font(.system(size: 10)).foregroundStyle(.secondary)
                 }
+                if let today = controller.state.today {
+                    Text("H \(WeatherView.degrees(today.maximum)) · L \(WeatherView.degrees(today.minimum))")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                if !controller.state.hourly.isEmpty {
+                    HStack(spacing: 12) {
+                        ForEach(Array(controller.state.hourly.filter { $0.date >= Date().addingTimeInterval(-3_600) }.prefix(3))) { hour in
+                            VStack(spacing: 3) {
+                                Text(hour.date, format: .dateTime.hour())
+                                Image(systemName: hour.symbol).accessibilityHidden(true)
+                                Text(WeatherView.degrees(hour.temperature))
+                            }
+                        }
+                    }
+                    .font(.system(size: 9)).foregroundStyle(.secondary)
+                    .environment(\.timeZone, controller.state.timeZone)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(controller.state.isStale ? "Saved weather · Open-Meteo" : "Weather data · Open-Meteo")
                     Text(verbatim: "https://open-meteo.com")
