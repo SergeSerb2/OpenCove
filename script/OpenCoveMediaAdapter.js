@@ -7,7 +7,7 @@ ObjC.bindFunction('exit', ['void', ['int']]);
 function run(argv) {
     const action = argv[0] || '--read';
     const watch = action === '--watch';
-    const actions = ['--read','--watch','--toggle','--next','--previous','--seek'];
+    const actions = ['--read','--watch','--toggle','--next','--previous','--seek','--rate'];
     const api = $.NSClassFromString('MRNowPlayingRequest');
     const out = $.NSFileHandle.fileHandleWithStandardOutput;
     let previous = '', emitted = -1e9, artworkKey = '', artworkData = null, artworkAttempt = -1e9, sentArtworkKey = '';
@@ -44,10 +44,11 @@ function run(argv) {
     function dict(values) { return $.NSMutableDictionary.dictionaryWithDictionary(values); }
     function fail(message) { emit(dict({error:message})); $.exit(1); }
     if (!actions.includes(action) || argv.length > 6) fail('Unsupported media adapter action.');
-    const seek=action==='--seek', command=!watch && action!=='--read';
-    if (command && (argv[seek?2:1]!=='--source' || !argv[seek?3:2] || argv.length!==(seek?6:3))) fail('A media source is required.');
+    const seek=action==='--seek', rate=action==='--rate', itemCommand=seek||rate, command=!watch && action!=='--read';
+    if (command && (argv[itemCommand?2:1]!=='--source' || !argv[itemCommand?3:2] || argv.length!==(itemCommand?6:3))) fail('A media source is required.');
     if (!command && argv.length>1) fail('The metadata reader takes no extra arguments.');
-    if (seek && (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(argv[1]) || argv[4]!=='--item' || !argv[5] || argv[5].length>8192 || !Number.isFinite(Number(argv[1])) || Number(argv[1])<0)) fail('A finite seek time and item identifier are required.');
+    if (itemCommand && (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(argv[1]) || argv[4]!=='--item' || !argv[5] || argv[5].length>8192 || !Number.isFinite(Number(argv[1])) || Number(argv[1])<0)) fail('A finite value and item identifier are required.');
+    if (rate && (Number(argv[1])<=0 || Number(argv[1])>16)) fail('The playback rate is outside the supported range.');
     function supported() {
         const result=$.NSMutableArray.alloc.init;
         const list=get(api,'localSupportedCommands');
@@ -66,6 +67,21 @@ function run(argv) {
             if(text(flag).toUpperCase()==='YES') return true;
         }
         return false;
+    }
+    function playbackRates(list) {
+        for(let i=0;i<Number(list.count);i++) {
+            const value=list.objectAtIndex(i);
+            if(text(field(value,'command'))!=='ChangePlaybackRateCommand' || !enabled($.NSArray.arrayWithObject(value),'ChangePlaybackRateCommand')) continue;
+            const rates=field(field(value,'options'),'kMRMediaRemoteCommandInfoSupportedPlaybackRates');
+            if(!present(rates) || Number(rates.count)>32) return [];
+            const result=[];
+            for(let j=0;j<Number(rates.count);j++) {
+                const value=ObjC.unwrap(rates.objectAtIndex(j));
+                if(typeof value==='number' && Number.isFinite(value) && value>0 && value<=16 && !result.includes(value)) result.push(value);
+            }
+            return result;
+        }
+        return [];
     }
     function waitUntil(predicate, seconds) {
         const deadline=now()+seconds;
@@ -112,9 +128,17 @@ function run(argv) {
         return payload;
     }
     if(command) {
-        const source=argv[seek?3:2], info=currentInfo(), commands=supported();
+        const source=argv[itemCommand?3:2], info=currentInfo(), commands=supported();
         if(bundle()!==source || !present(info) || Number(info.count)===0) fail('The selected media source is no longer active.');
-        if(seek) {
+        if(rate) {
+            const selected=playbackRates(commands).find(value=>Math.abs(value-Number(argv[1]))<0.000001);
+            if(selected===undefined) fail('This source does not advertise the selected playback rate.');
+            // Capability and item validation are adjacent to submission. No
+            // asynchronous artwork or metadata work can intervene here.
+            if(id(info)!==argv[5] || id(currentInfo())!==argv[5] || bundle()!==source) fail('The current media item changed.');
+            ObjC.bindFunction('MRMediaRemoteSendCommand',['bool',['int','id']]);
+            if(!$.MRMediaRemoteSendCommand(19,dict({'kMRMediaRemoteOptionPlaybackRate':selected}))) fail('MediaRemote rejected the playback rate.');
+        } else if(seek) {
             if(!enabled(commands,'SeekToPlaybackPosition')) fail('This source does not support seeking.');
             const current=currentInfo();
             const duration=Number(ObjC.unwrap(field(current,'kMRMediaRemoteNowPlayingInfoDuration')));

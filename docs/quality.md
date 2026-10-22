@@ -48,6 +48,10 @@ This starts the supplied bundle with fresh private data for each flow. It checks
 
 `--weather-service` is a separate network opt-in. Combine it with `--only weather` to request real Open-Meteo forecasts for public Vancouver and Berlin coordinates. The flow checks hourly/daily values, civil dates in the provider's time zone (including DST when the live range crosses it), city changes, saved-choice restart, opt-out, and location removal failures. It captures the real native forecast view. It never requests device location. Provider downtime or incomplete live data is reported as a failed flow; the caller does not replace the service with a mock. Default CI remains offline for weather.
 
+The owned media flow also starts a separate `--rate-controls` fixture. It checks real advertised playback speeds, a real AVAudioPlayer rate change while playing and paused, changed capabilities on the next item, unsupported-value rejection, and refusal of stale API and adapter targets. A separate fixture without that command verifies that the rate control stays unavailable. This does not establish rate support in Music, Spotify, or other players.
+
+For `media.speed`, API clients must echo the current media state's `sourceBundleIdentifier` as `source` and `contentItemIdentifier` as `item`, plus a `speed` from `supportedPlaybackSpeeds`. A stale target returns HTTP 409; missing identifiers or an unadvertised value return HTTP 400. The app reports a new speed only when the source supplies it; HTTP 200 means submission. Native speed menus capture the same item identity when built.
+
 ## Evidence and manual gates
 
 Record the exact source-tree hash, bundle path/variant, architecture, version/build, macOS/toolchain, commands, exit status, and failing flows for each final integration run. Keep tokens, private event/banner/media data, and raw state out of public reports. This guide is a procedure, not a record that its commands passed. The final integrated revision still needs its own recorded run.

@@ -331,8 +331,23 @@ final class DevelopmentServer {
             try requireCapability(store.media.state.supportsCopyLink, "This source did not provide a copyable media link.")
             store.media.copyLink()
         case "media.speed":
-            _ = try number("speed")
-            throw ControlError.rejected("This source does not expose a verified playback speed setter.")
+            let speed = try number("speed")
+            try requireCapability(store.media.state.supportsPlaybackSpeed, "Playback speed is unavailable for this source.")
+            guard let source = values["source"] as? String, let item = values["item"] as? String,
+                  !source.isEmpty, source.utf8.count <= 1_024, !item.isEmpty, item.utf8.count <= 8_192 else {
+                throw ControlError.invalid("Provide the source and item identifiers from the current media state.")
+            }
+            guard source == store.media.state.sourceBundleIdentifier,
+                  item == store.media.state.contentItemIdentifier else {
+                throw ControlError.rejected("The media source or item changed. Read fresh state before choosing a speed.")
+            }
+            guard speed > 0, speed <= 16,
+                  store.media.state.supportedPlaybackSpeeds.contains(where: { abs($0 - speed) < 0.000001 }) else {
+                throw ControlError.invalid("Choose a playback speed advertised by the current source.")
+            }
+            guard store.media.setPlaybackSpeed(speed, source: source, itemID: item) else {
+                throw ControlError.rejected(store.media.lastError ?? "Playback speed could not be submitted.")
+            }
         case "media.seek":
             let seconds = try number("seconds")
             guard store.media.state.available, store.media.state.supportsSeek else { throw ControlError.rejected("No seekable media source is available.") }

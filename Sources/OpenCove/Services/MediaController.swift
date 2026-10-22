@@ -247,11 +247,31 @@ final class MediaController: ObservableObject {
         else { lastError = "The media link could not be copied." }
     }
 
-    func setPlaybackSpeed(_ speed: Double) {
-        guard speed.isFinite, speed > 0 else { lastError = "The playback speed must be finite and positive."; return }
-        // Neither installed Music nor Spotify sdef exposes a speed setter. A current
-        // playback rate alone is not evidence that changing it is supported.
-        lastError = "This source does not expose a verified playback speed setter."
+    @discardableResult
+    func setPlaybackSpeed(_ speed: Double, source: String, itemID: String) -> Bool {
+        guard speed.isFinite, speed > 0, speed <= 16 else {
+            lastError = "The playback speed must be finite, positive, and at most 16×."; return false
+        }
+        guard running, state.available, state.supportsPlaybackSpeed,
+              source == sourceBundleID, itemID == state.contentItemIdentifier,
+              let selected = state.supportedPlaybackSpeeds.first(where: { abs($0 - speed) < 0.000001 }) else {
+            lastError = "The current media item or its supported speeds changed."; return false
+        }
+        if backend == .adapter {
+            guard adapterItemID != nil, adapterURL?.pathExtension == "js" else {
+                lastError = "This source cannot safely identify the item for playback speed."; return false
+            }
+            adapterCommand(["--rate", String(selected)])
+        } else {
+            guard backend == .remote, let bundle = sourceBundleID, let item = remoteItemID,
+                  remote?.setPlaybackSpeed(selected, for: bundle, itemID: item) == true else {
+                lastError = "The source, item, or supported playback speeds changed. Refresh before trying again."
+                return false
+            }
+            lastError = nil
+            scheduleRefresh(after: 0.5)
+        }
+        return true // Submission only. State changes when the real player reports it.
     }
 
     func openPlayer() {
@@ -367,6 +387,7 @@ final class MediaController: ObservableObject {
                        rate: Double, identity: String, itemID: String? = nil) {
         var value = value
         value.sourceBundleIdentifier = bundleID ?? ""
+        value.contentItemIdentifier = backend == .script ? nil : itemID
         value.metadataBackend = backend == .script ? "applescript" : backend == .adapter ? "system-adapter" : "mediaremote"
         if backend == .adapter {
             value.sourceDiagnostic = "Reading system media with the isolated system adapter."
@@ -439,7 +460,13 @@ final class MediaController: ObservableObject {
         value.supportsPrevious = identified && result.enabledCommands.contains("PreviousTrack")
         value.supportsSeek = identified && duration > 0 && result.supportsSeek &&
             result.canValidateSeekItem && itemID != nil && (result.adapter || remote?.setElapsedTime != nil)
-        value.playbackSpeed = rawRate > 0 ? rawRate : nil
+        let defaultRate = (field("kMRMediaRemoteNowPlayingInfoDefaultPlaybackRate") as? NSNumber)?.doubleValue ?? 0
+        let shownRate = rawRate > 0 ? rawRate : defaultRate
+        value.playbackSpeed = shownRate.isFinite && shownRate > 0 && shownRate <= 16 ? shownRate : nil
+        value.supportsPlaybackSpeed = identified && itemID != nil && result.canValidateSeekItem
+            && !result.supportedPlaybackSpeeds.isEmpty
+            && (result.adapter ? adapterURL?.pathExtension == "js" : remote?.sendCommand != nil)
+        value.supportedPlaybackSpeeds = value.supportsPlaybackSpeed ? result.supportedPlaybackSpeeds : []
         value.isExplicit = (field("kMRMediaRemoteNowPlayingInfoIsExplicitTrack") as? NSNumber)?.boolValue
         value.isLive = (field("kMRMediaRemoteNowPlayingInfoIsLiveStream") as? NSNumber)?.boolValue
         value.audioFormat = field("kMRMediaRemoteNowPlayingInfoAudioFormat") as? String
@@ -791,13 +818,13 @@ final class MediaController: ObservableObject {
             lastError = "The system media adapter is unavailable."; return
         }
         let epoch = generation, identity = trackIdentity
-        let seeking = action.first == "--seek"
+        let itemCommand = action.first == "--seek" || action.first == "--rate"
         var arguments = action + ["--source", bundleID]
-        if seeking {
+        if itemCommand {
             guard let adapterItemID else { lastError = "This source did not identify the current item."; return }
             arguments += ["--item", adapterItemID]
         }
-        scripts.runAdapter(url: url, arguments: arguments, expectedItem: seeking ? identity : nil) { [weak self] result in
+        scripts.runAdapter(url: url, arguments: arguments, expectedItem: itemCommand ? identity : nil) { [weak self] result in
             guard let self, self.running, self.generation == epoch, self.trackIdentity == identity else { return }
             switch result {
             case .success(let data):
@@ -1163,6 +1190,20 @@ private final class CoveMediaRemote {
         return currentBundleID == bundleID && CoveRemoteResult.enabled(name, commands: commands)
     }
 
+    func setPlaybackSpeed(_ speed: Double, for bundleID: String, itemID: String) -> Bool {
+        guard speed.isFinite, speed > 0, speed <= 16, let sendCommand,
+              MediaController.mediaItemID(itemID) != nil, currentBundleID == bundleID,
+              let cls = NSClassFromString("MRNowPlayingRequest") else { return false }
+        let commands = (Self.object(cls, "localSupportedCommands") as? [AnyObject] ?? []).compactMap {
+            Self.object($0, "dictionaryRepresentation") as? [String: Any]
+        }
+        guard let selected = CoveRemoteResult.playbackRates(commands).first(where: { abs($0 - speed) < 0.000001 }),
+              let current = currentItemInfo(for: bundleID),
+              MediaController.mediaItemID(current[key("kMRMediaRemoteNowPlayingInfoContentItemIdentifier")]) == itemID,
+              currentBundleID == bundleID else { return false }
+        return sendCommand(19, [key("kMRMediaRemoteOptionPlaybackRate"): selected] as CFDictionary)
+    }
+
     /// The global setter cannot compare an item and seek atomically. Keep the
     /// final immediate source/item/duration read adjacent to the actual write,
     /// after capability discovery, and reject stale or unidentifiable targets.
@@ -1221,6 +1262,7 @@ private final class CoveMediaRemote {
         ticket.supportsSeek = modern.supportsSeek
         ticket.canValidateSeekItem = modern.canValidateSeekItem
         ticket.enabledCommands = modern.enabledCommands
+        ticket.supportedPlaybackSpeeds = modern.supportedPlaybackSpeeds
         // A coherent modern item supplies its own rate. Never merge it with
         // later legacy metadata/PID/playing callbacks from a different source.
         if modern.info?.isEmpty == false {
@@ -1250,22 +1292,22 @@ private final class CoveMediaRemote {
     }
 
     private func localSnapshot() -> (info: [String: Any]?, bundleID: String?, supportsSeek: Bool,
-                                     enabledCommands: Set<String>, canValidateSeekItem: Bool) {
-        guard let cls = NSClassFromString("MRNowPlayingRequest") else { return (nil, nil, false, [], false) }
+                                     enabledCommands: Set<String>, canValidateSeekItem: Bool, supportedPlaybackSpeeds: [Double]) {
+        guard let cls = NSClassFromString("MRNowPlayingRequest") else { return (nil, nil, false, [], false, []) }
         let before = currentBundleID
         let item = Self.object(cls, "localNowPlayingItem")
         let info = item.flatMap { Self.object($0, "nowPlayingInfo") } as? [String: Any]
         let commands = (Self.object(cls, "localSupportedCommands") as? [AnyObject] ?? []).compactMap {
             Self.object($0, "dictionaryRepresentation") as? [String: Any]
         }
-        guard before == currentBundleID else { return (nil, before, false, [], false) }
+        guard before == currentBundleID else { return (nil, before, false, [], false, []) }
         let itemKey = key("kMRMediaRemoteNowPlayingInfoContentItemIdentifier")
         let itemID = MediaController.mediaItemID(info?[itemKey])
         let canValidate = before.flatMap { currentItemInfo(for: $0) }.map {
             itemID != nil && MediaController.mediaItemID($0[itemKey]) == itemID
         } ?? false
         return (info, before, CoveRemoteResult.enabled("SeekToPlaybackPosition", commands: commands),
-                CoveRemoteResult.enabledNames(commands), canValidate)
+                CoveRemoteResult.enabledNames(commands), canValidate, CoveRemoteResult.playbackRates(commands))
     }
 
     private func requestInfo(_ completion: @escaping ([String: Any]?, NSError?) -> Void) -> Bool {
@@ -1318,6 +1360,7 @@ private struct CoveRemoteResult {
     var timedOut: Bool
     var supportsSeek = false
     var enabledCommands = Set<String>()
+    var supportedPlaybackSpeeds: [Double] = []
     var adapter = false
     var canValidateSeekItem = false
     var error: String? = nil
@@ -1337,6 +1380,21 @@ private struct CoveRemoteResult {
         })
     }
 
+    static func playbackRates(_ commands: [[String: Any]]) -> [Double] {
+        guard let command = commands.first(where: { $0["command"] as? String == "ChangePlaybackRateCommand"
+            && enabled("ChangePlaybackRateCommand", commands: [$0]) }),
+              let options = command["options"] as? [String: Any],
+              let rates = options["kMRMediaRemoteCommandInfoSupportedPlaybackRates"] as? [Any],
+              rates.count <= 32 else { return [] }
+        var result: [Double] = []
+        for raw in rates {
+            guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { continue }
+            let value = number.doubleValue
+            if value.isFinite, value > 0, value <= 16, !result.contains(value) { result.append(value) }
+        }
+        return result.sorted()
+    }
+
     init(payload: [String: Any]) {
         info = payload["info"] as? [String: Any]
         bundleID = payload["bundleID"] as? String
@@ -1345,6 +1403,7 @@ private struct CoveRemoteResult {
         timedOut = false
         supportsSeek = Self.enabled("SeekToPlaybackPosition", commands: payload["commands"] as? [[String: Any]] ?? [])
         enabledCommands = Self.enabledNames(payload["commands"] as? [[String: Any]] ?? [])
+        supportedPlaybackSpeeds = Self.playbackRates(payload["commands"] as? [[String: Any]] ?? [])
         adapter = true
         canValidateSeekItem = payload["canValidateSeekItem"] as? Bool == true
         error = payload["error"] as? String
@@ -1365,6 +1424,7 @@ private final class CoveRemoteRead {
     var supportsSeek = false
     var canValidateSeekItem = false
     var enabledCommands = Set<String>()
+    var supportedPlaybackSpeeds: [Double] = []
     var readError: String?
     var denied = false
     private let fallback: [String: Any]?
@@ -1403,6 +1463,7 @@ private final class CoveRemoteRead {
                                      supportsSeek: valid && supportsSeek)
         result.error = valid ? readError : "The active source changed during the metadata read."
         result.enabledCommands = valid ? enabledCommands : []
+        result.supportedPlaybackSpeeds = valid ? supportedPlaybackSpeeds : []
         result.canValidateSeekItem = valid && canValidateSeekItem
         result.denied = denied
         cancel()

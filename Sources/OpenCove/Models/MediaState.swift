@@ -57,6 +57,8 @@ struct MediaState: Codable, Equatable {
     var isFavorited: Bool? = nil
     var repeatMode: String? = nil // Music: off/one/all; Spotify: off/all.
     var sourceBundleIdentifier = ""
+    /// Opaque source-provided identity for item-bound command submissions.
+    var contentItemIdentifier: String? = nil
     var audioFormat: String? = nil
     var isExplicit: Bool? = nil
     var isLive: Bool? = nil
@@ -94,6 +96,7 @@ extension MediaState {
         isFavorited = try c.decodeIfPresent(Bool.self, forKey: .isFavorited)
         repeatMode = try c.decodeIfPresent(String.self, forKey: .repeatMode)
         sourceBundleIdentifier = try c.decodeIfPresent(String.self, forKey: .sourceBundleIdentifier) ?? ""
+        contentItemIdentifier = try c.decodeIfPresent(String.self, forKey: .contentItemIdentifier)
         audioFormat = try c.decodeIfPresent(String.self, forKey: .audioFormat)
         isExplicit = try c.decodeIfPresent(Bool.self, forKey: .isExplicit)
         isLive = try c.decodeIfPresent(Bool.self, forKey: .isLive)
