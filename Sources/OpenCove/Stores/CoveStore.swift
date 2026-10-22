@@ -9,6 +9,7 @@ final class CoveStore: ObservableObject {
     @Published var preferences: CovePreferences
     @Published var selectedTab: CoveTab = .media
     @Published var isExpanded = false
+    @Published private(set) var compactMediaVisible = false
     @Published var hud: CoveHUD?
     @Published var settingsVisible = false
     @Published var lastError: String?
@@ -31,10 +32,40 @@ final class CoveStore: ObservableObject {
     private var started = false
     private var sessionActive = false
     private var needsPreferencesBackup = false
+    private let mediaIdleClock = ContinuousClock()
+    private var mediaIdleInput: CompactMediaInput?
+    private var mediaPausedAt: ContinuousClock.Instant?
+    private var mediaIdleDeadline: ContinuousClock.Instant?
+    private var mediaIdleTask: Task<Void, Never>?
+    private var mediaIdleRevision: UInt64 = 0
+
+    /// Elapsed position, artwork and rate changes must not restart the grace.
+    private struct CompactMediaInput: Equatable {
+        var available: Bool
+        var playing: Bool
+        var source: String
+        var item: String?
+        var title: String
+        var artist: String
+        var album: String
+
+        init(_ state: MediaState) {
+            available = state.available; playing = state.isPlaying
+            source = state.sourceBundleIdentifier; item = state.contentItemIdentifier
+            title = state.title; artist = state.artist; album = state.album
+        }
+    }
 
     private var mayMirror: Bool {
         started && sessionActive && preferences.mirrorSystemNotifications && preferences.enableNotifications
             && preferences.enablePrivateAPIs && system.state.lockStateKnown && !system.state.isLocked
+    }
+
+    var hidesCompactWhenIdle: Bool {
+        preferences.hideWhenIdle && !isExpanded && hud == nil
+            && !(preferences.enableMedia && compactMediaVisible && media.state.available)
+            && !(preferences.enableTimer && activities.timer.remaining > 0)
+            && !(preferences.enableCalendar && activities.eventActivity != nil)
     }
 
     var mirroringStatus: String {
@@ -69,6 +100,13 @@ final class CoveStore: ObservableObject {
         lastError = loadError
         needsPreferencesBackup = needsBackup
         media.onHUD = { [weak self] in self?.showHUD($0) }
+        media.$state.map { CompactMediaInput($0) }.removeDuplicates()
+            .receive(on: RunLoop.main).sink { [weak self] observed in
+                guard let self else { return }
+                // Keep an observed resume/item change even if a second source
+                // update arrives before this deferred main-run-loop delivery.
+                self.reconcileCompactMedia(resetGrace: observed != self.mediaIdleInput)
+            }.store(in: &subscriptions)
         system.onHUD = { [weak self] in self?.showHUD($0) }
         activities.onHUD = { [weak self] value in
             guard let self, value.origin != "calendar" || self.preferences.enableCalendar else { return }
@@ -146,15 +184,73 @@ final class CoveStore: ObservableObject {
         hardwareKeys.start(enabled: preferences.replaceSystemHUDs && preferences.enablePrivateAPIs)
         reconcileMirroring()
         appliedPreferences = preferences
+        reconcileCompactMedia()
     }
 
     func stop() {
         started = false
+        cancelMediaIdleDeadline()
+        mediaIdleInput = nil
+        mediaPausedAt = nil
+        setCompactMediaVisible(false)
         hudDismiss?.cancel()
         media.stop(); system.stop(); activities.stop(); weather.stop()
         waveform.stop(); travel.stop(); hardwareKeys.stop()
         reconcileMirroring()
         hud = nil
+    }
+
+    private func setCompactMediaVisible(_ visible: Bool) {
+        if compactMediaVisible != visible { compactMediaVisible = visible }
+    }
+
+    private func cancelMediaIdleDeadline() {
+        mediaIdleRevision &+= 1
+        mediaIdleTask?.cancel()
+        mediaIdleTask = nil
+        mediaIdleDeadline = nil
+    }
+
+    private func reconcileCompactMedia(resetGrace: Bool = false) {
+        let input = CompactMediaInput(media.state)
+        guard started, preferences.enableMedia, input.available else {
+            cancelMediaIdleDeadline()
+            mediaIdleInput = nil
+            mediaPausedAt = nil
+            setCompactMediaVisible(false)
+            return
+        }
+        if resetGrace || input != mediaIdleInput {
+            mediaIdleInput = input
+            mediaPausedAt = input.playing ? nil : mediaIdleClock.now
+        }
+        guard !input.playing, preferences.hidePausedMedia else {
+            cancelMediaIdleDeadline()
+            setCompactMediaVisible(true)
+            return
+        }
+        let pausedAt = mediaPausedAt ?? mediaIdleClock.now
+        mediaPausedAt = pausedAt
+        let deadline = pausedAt.advanced(by: .seconds(preferences.pausedMediaDelay))
+        if mediaIdleClock.now >= deadline {
+            cancelMediaIdleDeadline()
+            setCompactMediaVisible(false)
+            return
+        }
+        setCompactMediaVisible(true)
+        guard mediaIdleTask == nil || mediaIdleDeadline != deadline else { return }
+        cancelMediaIdleDeadline()
+        mediaIdleDeadline = deadline
+        let revision = mediaIdleRevision, clock = mediaIdleClock
+        mediaIdleTask = Task { @MainActor [weak self] in
+            do { try await clock.sleep(until: deadline) } catch { return }
+            guard !Task.isCancelled, let self, self.started, self.mediaIdleRevision == revision else { return }
+            self.mediaIdleTask = nil
+            self.mediaIdleDeadline = nil
+            // Re-read current state and preferences at the deadline. Never hide
+            // a resumed player or a new item based on an old queued pause.
+            self.reconcileCompactMedia()
+        }
     }
 
     func expand() { isExpanded = true }
@@ -295,6 +391,7 @@ final class CoveStore: ObservableObject {
             if let hud, !isHUDEnabled(hud) { hudDismiss?.cancel(); self.hud = nil }
         }
         appliedPreferences = preferences
+        reconcileCompactMedia()
         onPreferencesChange?()
         var success = true
         do {

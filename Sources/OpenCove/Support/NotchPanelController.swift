@@ -34,7 +34,8 @@ final class NotchPanelController: NSObject {
     private var lastLayoutInputs: LayoutInputs?
     private var layoutInputs: LayoutInputs {
         LayoutInputs(preferences: store.preferences, expanded: store.isExpanded, tab: store.selectedTab,
-                     hud: store.hud != nil, media: store.media.state.available,
+                     hud: store.hud != nil,
+                     media: store.preferences.enableMedia && store.compactMediaVisible && store.media.state.available,
                      timer: store.activities.timer.remaining > 0, event: store.activities.eventActivity != nil)
     }
 
@@ -171,10 +172,7 @@ final class NotchPanelController: NSObject {
             hoverTask = nil
         }
 
-        let hasMedia = preferences.enableMedia && store.media.state.available
-        let hasTimer = preferences.enableTimer && store.activities.timer.remaining > 0
-        let hasEvent = preferences.enableCalendar && store.activities.eventActivity != nil
-        let idleHidden = preferences.hideWhenIdle && !store.isExpanded && store.hud == nil && !hasMedia && !hasTimer && !hasEvent
+        let idleHidden = store.hidesCompactWhenIdle
         let fullscreenDisplays = preferences.hideInFullscreen ? fullscreenSizedDisplays(screens) : []
         for (id, screen, geometry) in geometries {
             if fullscreenDisplays.contains(id) {
@@ -192,7 +190,9 @@ final class NotchPanelController: NSObject {
             // Keep a transparent, panel-local edge target when idle is hidden.
             // No global mouse monitor, accessibility access, or input tap is used.
             let height = idleHidden ? min(3, geometry.notchHeight) : max(desiredSize.height, geometry.notchHeight)
-            surface.content.hosting.isHidden = idleHidden
+            // Restore before growing. Retire only after shrinking finishes so
+            // content and geometry share the same interruptible transition.
+            if !idleHidden { surface.content.hosting.isHidden = false }
             surface.gestureStripHeight = max(32, geometry.physicalNotchHeight + 40)
             let frame = geometry.frame(width: width, height: height)
             let animate = surface.hasLayout && surface.panel.isVisible
@@ -200,7 +200,7 @@ final class NotchPanelController: NSObject {
                 && !preferences.reduceMotion && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             surface.screenFrame = screen.frame
             surface.scale = geometry.scale
-            apply(frame: frame, to: surface, animated: animate, preferences: preferences)
+            apply(frame: frame, to: surface, animated: animate, hideContent: idleHidden, preferences: preferences)
             if !surface.panel.isVisible { surface.panel.orderFrontRegardless() }
         }
 
@@ -322,7 +322,12 @@ final class NotchPanelController: NSObject {
         return surface
     }
 
-    private func apply(frame: NSRect, to surface: CovePanelSurface, animated: Bool, preferences: CovePreferences) {
+    static func contentIsHidden(in window: NSWindow) -> Bool? {
+        (window.contentView as? CovePanelTrackingView)?.hosting.isHidden
+    }
+
+    private func apply(frame: NSRect, to surface: CovePanelSurface, animated: Bool, hideContent: Bool,
+                       preferences: CovePreferences) {
         guard surface.targetFrame != frame else { return }
         surface.targetFrame = frame
         surface.hasLayout = true
@@ -338,11 +343,13 @@ final class NotchPanelController: NSObject {
             } completionHandler: { [weak self, weak surface] in
                 Task { @MainActor in
                     guard let self, let surface, surface.layoutRevision == revision, self.started else { return }
+                    surface.content.hosting.isHidden = hideContent
                     self.reconcileHover()
                 }
             }
         } else {
             surface.panel.setFrame(frame, display: true)
+            surface.content.hosting.isHidden = hideContent
         }
     }
 

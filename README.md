@@ -10,7 +10,7 @@ An independent, MIT-licensed macOS notch app, written in SwiftUI and AppKit.
 
 ## What it does
 
-- Shows Now Playing metadata, readable long titles and artists, supported media controls, and playback speeds advertised by the source.
+- Shows Now Playing metadata, readable long titles and artists, supported media controls, playback speeds advertised by the source, and optional paused-media idle hiding.
 - Shows calendar events, meeting links, and event countdowns.
 - Shows volume, brightness, battery, Bluetooth, and shared Focus status when available.
 - Offers optional current weather with a 24-hour and 7-day forecast, time-to-leave alerts, system audio levels, notification-banner mirroring, lock widgets, a file tray, and a persistent timer.

@@ -18,8 +18,9 @@ struct SettingsView: View {
     @State private var showsResetConfirmation = false
     @State private var showsOnboarding = false
 
-    init(store: CoveStore) {
+    init(store: CoveStore, initialPage: CoveSettingsPage = .general) {
         self.store = store
+        self._selection = State(initialValue: initialPage)
         self.activities = store.activities
         self.media = store.media
         self.notificationMirror = store.notificationMirror
@@ -236,6 +237,12 @@ struct SettingsView: View {
                     Text("Spotify").tag("spotify")
                 }
                 CoveSettingsNote("Show the current track and control playback from the panel. Availability depends on the player.")
+                Toggle("Hide paused media from compact view", isOn: preference(\.hidePausedMedia))
+                if store.preferences.hidePausedMedia {
+                    CovePreferenceSlider(title: "Pause delay", value: preference(\.pausedMediaDelay),
+                                         range: 1...300, step: 1, format: "%.0f sec")
+                    CoveSettingsNote("Full playback controls stay available. Playing or changing the item restores the compact media view.")
+                }
                 HStack {
                     Text("System integration")
                     Spacer()
@@ -477,7 +484,7 @@ struct SettingsView: View {
     }
 }
 
-private enum CoveSettingsPage: String, CaseIterable, Identifiable {
+enum CoveSettingsPage: String, CaseIterable, Identifiable {
     case general = "General"
     case appearance = "Appearance"
     case media = "Media"
