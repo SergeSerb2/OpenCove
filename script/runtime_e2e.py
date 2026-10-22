@@ -1290,6 +1290,7 @@ class Runtime:
         try:
             wait_for(lambda: fixture_state.exists(), bool, "Owned silent fixture did not start.")
             directory = self.directory("media-app", preferences={**SAFE, "enableMedia": True, "enablePrivateAPIs": True})
+            write_private(directory / "calendar-settings.json", b'{"excludedCalendarIdentifiers":"damaged"}')
             with self.app(directory) as client:
                 def fixture():
                     require(child.poll() is None, "Owned fixture stopped; no media command sent.")
@@ -1361,6 +1362,77 @@ class Runtime:
                 write_private(directory / "indicator-decorative-lock.png", client.request("/render?surface=lock"))
                 write_private(directory / "indicator-settings.png", client.request("/render?surface=settings-media"))
                 self.record("media: actual indicator off unmounts expanded/compact layers without capture; decorative/lock presentation restores")
+                original_preferences = client.request()["preferences"]
+
+                def indicator_colors(snapshot):
+                    return [tuple(round(value, 5) for value in row["rgba"])
+                            for row in indicators(snapshot) if len(row.get("rgba", [])) == 4]
+
+                def expanded_media_mounted(snapshot):
+                    return (snapshot["expanded"] and snapshot["visibleTab"] == "media"
+                        and len([row for row in snapshot["mediaTextMotion"] if row["visible"]]) >= 2
+                        and any(row["title"] == "OpenCove" and not row.get("contentHidden", True)
+                            and row["height"] > 80 for row in snapshot["nativeWindows"]))
+
+                def compact_media_mounted(snapshot):
+                    return (not snapshot["expanded"] and not snapshot["mediaPeekVisible"]
+                        and snapshot["compactActivity"] == "media"
+                        and not any(row["visible"] for row in snapshot["mediaTextMotion"])
+                        and any(row["title"] == "OpenCove" and not row.get("contentHidden", True)
+                            and row["height"] <= 80 for row in snapshot["nativeWindows"]))
+
+                client.command("preferences", values={"musicColorAccent": False, "accent": "blue"})
+                plain = wait_for(client.request, lambda s: expanded_media_mounted(s)
+                    and s["artworkAvailable"] and bool(indicator_colors(s))
+                    and all(abs(channel - 1) < 0.01 for color in indicator_colors(s) for channel in color[:3]),
+                                 "Own artwork/native fallback color did not settle.")
+                plain_colors = indicator_colors(plain)
+                color_item = plain["media"]["contentItemIdentifier"]
+                write_private(directory / "artwork-color-off-expanded.png", client.request("/render?surface=live-notch"))
+                client.command("preferences", values={"musicColorAccent": True})
+                colored = wait_for(client.request, lambda s: bool(indicator_colors(s))
+                    and indicator_colors(s) != plain_colors,
+                    "Enabling artwork color with the same real cover did not update the native layers.")
+                artwork_colors = indicator_colors(colored)
+                require(colored["artworkAvailable"] and colored["media"]["contentItemIdentifier"] == color_item,
+                        "Color-toggle verification must retain the actual item and artwork.")
+                write_private(directory / "artwork-color-on-expanded.png", client.request("/render?surface=live-notch"))
+                write_private(directory / "artwork-color-lock.png", client.request("/render?surface=lock"))
+                client.command("preferences", values={"expandedLayout": "duo", "enableCalendar": True})
+                require(client.request()["calendarAuthorization"] == "Saved calendar settings need review",
+                        "Color Duo capture must pause calendar queries.")
+                write_private(directory / "artwork-color-duo.png", client.request("/render?surface=live-notch"))
+                client.command("preferences", values={"expandedLayout": "media", "enableCalendar": False})
+                wait_for(client.request, lambda s: expanded_media_mounted(s) and indicator_colors(s) == artwork_colors,
+                         "Returning from Duo lost the unchanged cover color.")
+                client.command("collapse")
+                wait_for(client.request, lambda s: compact_media_mounted(s) and indicator_colors(s) == artwork_colors,
+                         "Compact and expanded media did not share the actual cover color.")
+                write_private(directory / "artwork-color-on-compact.png", client.request("/render?surface=live-notch"))
+                client.command("preferences", values={"musicColorAccent": False})
+                compact_plain = wait_for(client.request, lambda s: compact_media_mounted(s)
+                    and bool(indicator_colors(s)) and all(color[0] < 0.45 and color[1] > 0.65 and color[2] > 0.85
+                        for color in indicator_colors(s)), "Compact did not restore its configured blue/cyan accent.")
+                write_private(directory / "artwork-color-off-compact.png", client.request("/render?surface=live-notch"))
+                client.command("preferences", values={"musicColorAccent": True})
+                wait_for(client.request, lambda s: compact_media_mounted(s) and indicator_colors(s) == artwork_colors,
+                         "Compact did not restore the unchanged cover color.")
+                client.command("preferences", values={"enableMedia": False})
+                require(not client.request()["playbackIndicatorMotion"], "Disabled media retained native playback layers.")
+                client.command("preferences", values={"enableMedia": True})
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and compact_media_mounted(s) and s["artworkAvailable"] and indicator_colors(s) == artwork_colors,
+                    "Re-enabled media failed to restore its actual cover color.", 25)
+                client.command("selectTab", tab="media")
+                wait_for(client.request, lambda s: expanded_media_mounted(s) and indicator_colors(s) == artwork_colors,
+                         "Expanded media lost its cached color after remount.")
+                write_private(directory / "artwork-color-observations.json", json_bytes({
+                    "expandedOff": plain_colors, "expandedOn": artwork_colors,
+                    "compactOff": indicator_colors(compact_plain), "compactOn": artwork_colors}))
+                client.command("preferences", values={"accent": original_preferences["accent"],
+                    "musicColorAccent": original_preferences["musicColorAccent"],
+                    "expandedLayout": original_preferences["expandedLayout"]})
+                self.record("media: real unchanged-cover color toggles, shared native compact/expanded tint, Duo/lock captures and opt-out remount")
                 client.command("preferences", values={"reduceMotion": False})
                 client.command("selectTab", tab="timer")
                 wait_for(client.request, lambda s: not s.get("playbackIndicatorMotion"),
