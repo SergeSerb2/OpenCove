@@ -22,7 +22,7 @@ python3 -B script/smoke.py --app "$OPENCOVE_CHECK_ROOT/bundle/OpenCove.app" \
   --slow --render
 ```
 
-`--app` starts only the supplied built bundle in a new private temporary data directory. It disables permission/network integrations, login registration, haptics, and native notifications before launch. It exercises real HTTP authentication/framing, the actual CLI, file add/deduplication/removal, a real timer, preference persistence, and an actual save failure. It restores its own state and stops only the child it started. `--slow` adds idle/partial connection teardown. `--render` checks four offscreen native surfaces; it does not operate the desktop.
+`--app` starts only the supplied built bundle in new private temporary data directories. It disables permission/network integrations, login registration, haptics, and native notifications before launch. It checks actual occupied/invalid control ports and a descriptor blocked by a real directory: the native app stays alive, startup reports a useful diagnostic, and readiness refuses the failed endpoint. It then exercises real HTTP authentication/framing, the actual CLI, file add/deduplication/removal, a real timer, preference persistence, and an actual save failure. It restores its own state and stops only children it started. `--slow` adds idle/partial connection teardown. `--render` checks four offscreen native surfaces; it does not operate the desktop.
 
 For an existing explicitly enabled API, use the non-mutation mode:
 

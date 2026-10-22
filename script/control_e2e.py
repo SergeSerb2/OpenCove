@@ -23,6 +23,18 @@ import uuid
 from verify_control import ControlClient, ControlFailure, bundle_identity, check_bundle
 
 ROOT = Path(__file__).resolve().parent.parent
+ISOLATED_PREFERENCES = {"enablePrivateAPIs": False, "enableCalendar": False, "enableMedia": False,
+                        "allowAppleScript": False, "enableWeather": False, "showLiveWaveform": False,
+                        "enableHaptics": False, "enableNotifications": False, "mirrorSystemNotifications": False,
+                        "replaceSystemHUDs": False, "launchAtLogin": False, "showOnLockScreen": False,
+                        "showLockScreenPrivateContent": False, "completedOnboarding": True}
+
+
+def isolated_environment(directory):
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("OPENCOVE_", "ALCOVE_"))}
+    environment["OPENCOVE_DATA_DIR"] = str(directory)
+    return environment
 
 
 def require(condition, message):
@@ -239,26 +251,80 @@ def cli_checks(client, passed, stale_bundle=None):
     passed("real CLI proxy bypass, caller errors, private descriptor and FIFO/symlink rejection")
 
 
+def startup_failure_checks(app, passed):
+    bundle, info = bundle_identity(app)
+    cases = [("occupied-port", None), ("zero-port", "0"), ("negative-port", "-1"),
+             ("oversized-port", "65536"), ("nonnumeric-port", "invalid"), ("missing-port", None),
+             ("descriptor-write", None)]
+    for failure, invalid in cases:
+        with tempfile.TemporaryDirectory(prefix="opencove-startup-e2e-") as temporary, socket.socket() as reservation:
+            directory = Path(temporary).resolve()
+            path = directory / "preferences.json"
+            path.write_text(json.dumps(ISOLATED_PREFERENCES))
+            path.chmod(0o600)
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+            if failure == "occupied-port":
+                reservation.listen(1)  # Keep a real conflicting listener alive.
+            else:
+                reservation.close()
+            if failure == "descriptor-write":
+                (directory / "control.json").mkdir(mode=0o700)
+            arguments = [str(bundle / "Contents/MacOS/OpenCove"), "--no-onboarding", "--control-port"]
+            if failure != "missing-port":
+                arguments.append(invalid if invalid is not None else str(port))
+            with (directory / "app.log").open("xb") as log:
+                child = subprocess.Popen(arguments,
+                                         env=isolated_environment(directory), stdout=log, stderr=log, umask=0o077)
+                try:
+                    deadline = time.monotonic() + 8
+                    while time.monotonic() < deadline and child.poll() is None:
+                        if b"Development controls are unavailable:" in (directory / "app.log").read_bytes():
+                            break
+                        time.sleep(0.1)
+                    require(child.poll() is None, f"{failure}: failed controls stopped the whole native app.")
+                    diagnostic = (directory / "app.log").read_bytes()
+                    require(b"Development controls are unavailable:" in diagnostic,
+                            f"{failure}: control startup failed without a useful launch diagnostic.")
+                    require(b"X-OpenCove-Token" not in diagnostic and b"http://" not in diagnostic,
+                            "A startup diagnostic exposed control transport data.")
+                    descriptor = directory / "control.json"
+                    if failure == "descriptor-write":
+                        require(descriptor.is_dir() and not list(descriptor.iterdir()),
+                                "Descriptor publication replaced the blocking directory.")
+                    else:
+                        require(not descriptor.exists(), "Failed control startup published a descriptor.")
+                    result = subprocess.run([sys.executable, str(ROOT / "script/verify_control.py"), str(directory),
+                                             str(info["CFBundleVersion"]), str(bundle), "--timeout", "0.2"],
+                                            capture_output=True, timeout=5)
+                    require(result.returncode != 0 and b"Traceback" not in result.stderr,
+                            "Readiness did not safely reject the failed real control startup.")
+                finally:
+                    if child.poll() is None:
+                        child.terminate()
+                        try:
+                            child.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            child.kill()
+                            child.wait(timeout=5)
+    passed("real occupied/invalid port and descriptor failures report safe diagnostics while the native app stays alive", cases=len(cases))
+
+
 @contextmanager
 def isolated_app(app):
     bundle, info = bundle_identity(app)
     with tempfile.TemporaryDirectory(prefix="opencove-e2e-") as temporary:
         directory = Path(temporary).resolve()
         # Explicitly disable every integration that can need permission or network.
-        preferences = {"enablePrivateAPIs": False, "enableCalendar": False, "enableMedia": False,
-                       "allowAppleScript": False, "enableWeather": False, "showLiveWaveform": False,
-                       "enableHaptics": False, "enableNotifications": False, "mirrorSystemNotifications": False,
-                       "replaceSystemHUDs": False, "launchAtLogin": False, "showOnLockScreen": False,
-                       "showLockScreenPrivateContent": False, "completedOnboarding": True}
         path = directory / "preferences.json"
-        path.write_text(json.dumps(preferences))
+        path.write_text(json.dumps(ISOLATED_PREFERENCES))
         path.chmod(0o600)
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]
         with (directory / "app.log").open("xb") as log:
             child = subprocess.Popen([str(bundle / "Contents/MacOS/OpenCove"), "--control-port", str(port), "--no-onboarding"],
-                                     env={**os.environ, "OPENCOVE_DATA_DIR": str(directory)}, stdout=log, stderr=log)
+                                     env=isolated_environment(directory), stdout=log, stderr=log, umask=0o077)
             try:
                 deadline = time.monotonic() + 15
                 while True:
@@ -414,6 +480,7 @@ def main(argv=None):
 
     try:
         if args.app:
+            startup_failure_checks(args.app, passed)
             with isolated_app(args.app) as client:
                 run(client)
         else:
