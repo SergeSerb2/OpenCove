@@ -29,6 +29,7 @@ jobs:
           xcrun swift --version
           xcrun --sdk macosx --show-sdk-version
           bash -n script/build_and_run.sh
+          node --check script/OpenCoveMediaAdapter.js
           python3 - <<'PY'
           import ast
           from pathlib import Path

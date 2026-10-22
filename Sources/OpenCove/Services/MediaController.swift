@@ -780,6 +780,9 @@ final class MediaController: ObservableObject {
                     // A failed child must not leave apparently live metadata behind.
                     if error != nil { self.adapterSnapshot = nil }
                     self.refresh()
+                    // A normal lease expiry must not wait for the 15-second
+                    // empty-source poll before creating its replacement.
+                    if error == nil { self.scheduleRefresh(after: 1.1) }
                 })
             } else {
                 adapterRetryAfter = now + 60
