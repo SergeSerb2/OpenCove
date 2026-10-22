@@ -36,6 +36,9 @@ struct NotchView: View {
         if store.hud != nil {
             return CGSize(width: max(310, width, cutoutWidth > 0 ? cutoutWidth + 240 : 0), height: max(40, height))
         }
+        if store.showsMediaPeek {
+            return CGSize(width: max(360, width, cutoutWidth + 80), height: max(height, cutoutHeight + 56))
+        }
         if store.compactActivity == .media {
             if store.preferences.enableTimer && store.activities.timer.remaining > 0 ||
                 store.preferences.enableCalendar && store.activities.eventActivity != nil {
@@ -83,6 +86,7 @@ struct NotchView: View {
             .animation(motion, value: store.isExpanded)
             .animation(motion, value: store.hud?.kind)
             .animation(motion, value: store.hidesCompactWhenIdle)
+            .animation(motion, value: store.showsMediaPeek)
             .animation(motion, value: Self.desiredSize(store: store, cutout: cutout))
             .onExitCommand(perform: store.collapse)
     }
@@ -127,6 +131,9 @@ struct NotchView: View {
         } else if let hud = store.hud {
             CoveCompactHUD(hud: hud, accent: CoveNotchStyle.accent(store.preferences.accent), centerGap: compactGap)
                 .padding(.horizontal, 18)
+        } else if store.showsMediaPeek {
+            mediaPeek
+                .transition(.opacity)
         } else if store.compactActivity == .media {
             HStack(spacing: 0) {
                 CoveArtwork(data: media.state.artworkData, size: 23, radius: 6)
@@ -218,6 +225,24 @@ struct NotchView: View {
         }
     }
 
+    private var mediaPeek: some View {
+        HStack(spacing: 10) {
+            CoveArtwork(data: media.state.artworkData, size: 36, radius: 8)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(CoveNotchStyle.metadataLabel(media.state.title.isEmpty ? "Untitled" : media.state.title, limit: 96))
+                    .font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Text(CoveNotchStyle.metadataLabel(media.state.artist.isEmpty ? media.state.source : media.state.artist, limit: 96))
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(CoveNotchStyle.secondary).lineLimit(1)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            CoveAudioBars(isPlaying: media.state.isPlaying,
+                          reduceMotion: systemReduceMotion || store.preferences.reduceMotion,
+                          color: CoveNotchStyle.accent(store.preferences.accent))
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, cutoutHeight + 8)
+        .padding(.bottom, 12)
+    }
+
     private var expanded: some View {
         VStack(spacing: 0) {
             Group {
@@ -290,6 +315,9 @@ struct NotchView: View {
     private var compactAccessibilityLabel: String {
         if let hud = store.hud {
             return [hud.title, hud.subtitle].filter { !$0.isEmpty }.joined(separator: ", ")
+        }
+        if store.showsMediaPeek {
+            return "New playing item, \(media.state.title), \(media.state.artist)"
         }
         if store.compactActivity == .media {
             var label = "\(media.state.isPlaying ? "Playing" : "Paused"), \(media.state.title), \(media.state.artist)"

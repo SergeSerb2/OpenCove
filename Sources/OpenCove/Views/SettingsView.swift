@@ -248,6 +248,12 @@ struct SettingsView: View {
                     Text("Spotify").tag("spotify")
                 }
                 CoveSettingsNote("Show the current track and control playback from the panel. Availability depends on the player.")
+                Toggle("Peek when the song changes", isOn: preference(\.peekOnSongChange))
+                if store.preferences.peekOnSongChange {
+                    CovePreferenceSlider(title: "Peek duration", value: preference(\.mediaPeekDuration),
+                                         range: 1...10, step: 0.5, format: "%.1f sec")
+                    CoveSettingsNote("Briefly show the new playing item, then return to your compact activity. Opening controls, pausing or an alert dismisses it. Duration changes apply to the next peek.")
+                }
                 Toggle("Hide paused media from compact view", isOn: preference(\.hidePausedMedia))
                 if store.preferences.hidePausedMedia {
                     CovePreferenceSlider(title: "Pause delay", value: preference(\.pausedMediaDelay),

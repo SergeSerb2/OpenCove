@@ -710,7 +710,8 @@ class Runtime:
     def preferences(self):
         for name, original in (
             ("field-recovery", json_bytes({**SAFE, "reduceMotion": "damaged", "notchWidth": 999,
-                                            "accent": "bad", "enableCalendar": False, "compactActivity": "bad"})),
+                                            "accent": "bad", "enableCalendar": False, "compactActivity": "bad",
+                                            "peekOnSongChange": "bad", "mediaPeekDuration": 100})),
             ("whole-recovery", b'{"invalid": [\xff\x00\n')):
             directory = self.directory(name, raw=original)
             with self.app(directory) as client:
@@ -725,6 +726,8 @@ class Runtime:
                             "Field recovery did not normalize malformed settings.")
                     require(state["preferences"]["compactActivity"] == "automatic",
                             "Field recovery retained an unknown compact activity.")
+                    require(not state["preferences"]["peekOnSongChange"] and state["preferences"]["mediaPeekDuration"] == 10,
+                            "Field recovery did not disable malformed peek consent or bound its duration.")
                 saved = client.command("preferences", values={"reduceMotion": True})
                 require(saved["preferences"]["reduceMotion"], "Actual recovery save was not applied.")
             self.backup(directory, "preferences.recovery.*.json", original)
@@ -1639,6 +1642,172 @@ class Runtime:
                 require(not returned["media"]["supportsSeek"], "Returning live item retained timed seek support.")
                 write_private(directory / "live-returned.png", client.request("/render?surface=live-notch"))
             self.record("media: real public live flag, unknown duration, rejected seek and timed-item transition")
+        finally:
+            stop(child)
+
+        fixture_state, child = session("song-peek", metadata=125, style="identical", rates=True)
+        try:
+            wait_for(fixture_state.exists, bool, "Own song-peek fixture did not start.")
+            directory = self.directory("media-song-peek", preferences={**SAFE, "enableMedia": True,
+                "enablePrivateAPIs": True, "hideWhenIdle": False, "expandOnHover": False,
+                "hideInFullscreen": False, "reduceMotion": True, "enableNotifications": True,
+                "hudDuration": 0.5, "compactActivity": "timer"})
+            observations = []
+
+            def own_peek(client):
+                require(child.poll() is None and json.loads(fixture_state.read_bytes())["pid"] == child.pid,
+                        "Own peek fixture stopped or changed PID; no command sent.")
+                state = client.request()
+                require(state["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
+                        "Peek app source changed; no command sent.")
+                return state
+
+            def change_item(client, action):
+                before = own_peek(client)
+                require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
+                        "Native peek source changed; no transport command sent.")
+                item = before["media"].get("contentItemIdentifier")
+                require(item, "Own peek source has no opaque item identity.")
+                client.command(action)
+                return wait_for(lambda: own_peek(client), lambda s: bool(s["media"].get("contentItemIdentifier"))
+                    and s["media"]["contentItemIdentifier"] != item,
+                    "Own identical-metadata source did not change its actual item.")
+
+            def peek(client, visible):
+                state = wait_for(lambda: own_peek(client), lambda s: s["mediaPeekVisible"] is visible,
+                                 "Song-change peek did not reach its expected real state.")
+                observations.append({"visible": state["mediaPeekVisible"], "expanded": state["expanded"],
+                    "compact": state["compactActivity"], "tab": state["visibleTab"],
+                    "item": state["media"].get("contentItemIdentifier"), "panels": [w for w in state["nativeWindows"]
+                        if w["title"] == "OpenCove"]})
+                return state
+
+            with self.app(directory) as client:
+                first = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("supportsNext") and bool(s["media"].get("contentItemIdentifier")),
+                    "Own song-peek source did not become available.", 25)
+                require(not first["preferences"]["peekOnSongChange"] and not first["mediaPeekVisible"],
+                        "Legacy preferences enabled automatic song peeks.")
+                client.command("preferences", values={"mediaPeekDuration": 0}, expected=400)
+                client.command("timer.start", seconds=180)
+                client.command("timer.pause")
+                client.command("preferences", values={"peekOnSongChange": True, "mediaPeekDuration": 3})
+                client.command("collapse")
+                base = peek(client, False)
+                require(base["compactActivity"] == "timer", "Peek verification did not preserve its underlying timer.")
+                changed = change_item(client, "media.next")
+                require(changed["media"]["title"] == first["media"]["title"] and
+                    changed["media"]["duration"] == first["media"]["duration"],
+                    "Peek identity flow must use truly identical displayed metadata/duration.")
+                visible = peek(client, True)
+                require(not visible["expanded"] and visible["compactActivity"] == "timer",
+                        "Peek replaced expanded state or the user's compact choice.")
+                write_private(directory / "peek.png", client.request("/render?surface=notch"))
+                write_private(directory / "peek-mounted.png", client.request("/render?surface=live-notch"))
+                client.command("compact.open")
+                opened = peek(client, False)
+                require(opened["expanded"] and opened["visibleTab"] == "media",
+                        "Opening a media peek did not show playback controls.")
+                client.command("collapse")
+                change_item(client, "media.previous")
+                peek(client, True)
+                time.sleep(1.3)
+                client.command("preferences", values={"accent": "blue", "mediaPeekDuration": 10})
+                require(own_peek(client)["mediaPeekVisible"], "Unrelated save dismissed the active peek.")
+                wait_for(lambda: own_peek(client), lambda s: not s["mediaPeekVisible"],
+                         "Metadata or preference updates extended the original peek deadline.", 2.3)
+                client.command("preferences", values={"mediaPeekDuration": 3})
+                change_item(client, "media.next")
+                peek(client, True)
+                old_started = time.monotonic()
+                time.sleep(1.4)
+                change_item(client, "media.previous")
+                peek(client, True)
+                time.sleep(max(0, old_started + 3.25 - time.monotonic()))
+                require(own_peek(client)["mediaPeekVisible"], "An older item deadline dismissed its replacement peek.")
+                wait_for(lambda: own_peek(client), lambda s: not s["mediaPeekVisible"],
+                         "Replacement peek did not retire.", 2.3)
+                wait_for(client.request, lambda s: not s["playbackIndicatorMotion"],
+                         "Expired peek retained native decorative playback layers over the timer.")
+                observed_motion = not client.request()["systemReduceMotion"]
+                motion = []
+                if observed_motion:
+                    client.command("preferences", values={"reduceMotion": False, "animationSpeed": 0.25,
+                                                         "mediaPeekDuration": 5})
+                    change_item(client, "media.next")
+                    peek(client, True)
+                    until = time.monotonic() + 1.05
+                    while time.monotonic() < until:
+                        state = own_peek(client)
+                        motion.append([w for w in state["nativeWindows"] if w["title"] == "OpenCove"])
+                        time.sleep(0.025)
+                    ordinary = {w["displayID"]: w for w in base["nativeWindows"] if w["title"] == "OpenCove"}
+                    target_height = max(base["preferences"]["notchHeight"], base["physicalNotch"]["height"] + 56)
+                    require(any(ordinary[w["displayID"]]["height"] + 1 < w["height"] < target_height - 1
+                                for frame in motion for w in frame), "A real song peek did not show intermediate native geometry.")
+                    require(all(abs((w["y"] + w["height"]) -
+                        (ordinary[w["displayID"]]["y"] + ordinary[w["displayID"]]["height"])) <= 1
+                        for frame in motion for w in frame), "Song peek motion moved away from the native top edge.")
+                    client.command("preferences", values={"reduceMotion": True})
+                    wait_for(client.request, lambda s: s["playbackIndicatorMotion"] and
+                        all(row["animationCount"] == 0 for row in s["playbackIndicatorMotion"]),
+                        "Reduce Motion did not stop the real peek's decorative native layers.")
+                    client.command("collapse")
+                    peek(client, False)
+                    client.command("preferences", values={"animationSpeed": 1, "mediaPeekDuration": 3})
+                write_private(directory / "motion-frames.json", json_bytes({"observedMotion": observed_motion,
+                                                                            "frames": motion}))
+                change_item(client, "media.next")
+                peek(client, True)
+                client.command("notification.post", title="Owned peek interruption", body="Local HUD priority")
+                require(client.request()["hud"] is not None and not client.request()["mediaPeekVisible"],
+                        "A real local HUD did not dismiss the media peek.")
+                wait_for(client.request, lambda s: s["hud"] is None, "Owned interrupting HUD did not retire.")
+                require(not own_peek(client)["mediaPeekVisible"], "The HUD queued an obsolete media peek.")
+                client.command("selectTab", tab="files")
+                change_item(client, "media.previous")
+                require(not own_peek(client)["mediaPeekVisible"], "Expanded controls were replaced by a peek.")
+                client.command("collapse")
+                peek(client, False)
+                change_item(client, "media.next")
+                peek(client, True)
+                require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
+                        "Native source changed; no pause command sent.")
+                client.command("media.playPause")
+                wait_for(lambda: own_peek(client), lambda s: not s["media"]["isPlaying"]
+                    and not s["mediaPeekVisible"], "Pause did not dismiss the actual peek.")
+                require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
+                        "Native source changed; no resume command sent.")
+                client.command("media.playPause")
+                wait_for(lambda: own_peek(client), lambda s: s["media"]["isPlaying"], "Own source did not resume.")
+                peek(client, False)
+                change_item(client, "media.previous")
+                peek(client, True)
+                client.command("preferences", values={"peekOnSongChange": False})
+                peek(client, False)
+                time.sleep(3.2)
+                client.command("preferences", values={"peekOnSongChange": True})
+                peek(client, False)
+                change_item(client, "media.next")
+                peek(client, True)
+                client.command("preferences", values={"enableMedia": False})
+                require(not client.request()["mediaPeekVisible"], "Media opt-out retained a peek.")
+                client.command("preferences", values={"enableMedia": True})
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
+                         "Own source did not return after media re-enable.", 25)
+                peek(client, False)
+                write_private(directory / "settings-media.png", client.request("/render?surface=settings-media"))
+            with self.app(directory) as client:
+                restarted = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
+                                     "Own peek source did not return on restart.", 25)
+                require(restarted["preferences"]["peekOnSongChange"] and
+                    restarted["preferences"]["mediaPeekDuration"] == 3 and not restarted["mediaPeekVisible"]
+                    and restarted["compactActivity"] == "timer",
+                    "Peek settings did not persist or initial rediscovery created a peek.")
+                client.command("timer.cancel")
+            write_private(directory / "observations.json", json_bytes(observations))
+            self.record("media: identical-metadata item peek, bounded expiry/replacement, opening/HUD/pause/opt-out and restart",
+                        observedNativeMotion=observed_motion)
         finally:
             stop(child)
 

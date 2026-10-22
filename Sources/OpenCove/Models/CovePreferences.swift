@@ -67,6 +67,7 @@ struct CovePreferences: Codable, Equatable {
         hudDuration = bounded(hudDuration, 0.5...10, defaults.hudDuration)
         animationSpeed = bounded(animationSpeed, 0.25...2, defaults.animationSpeed)
         pausedMediaDelay = bounded(pausedMediaDelay, 1...300, defaults.pausedMediaDelay)
+        mediaPeekDuration = bounded(mediaPeekDuration, 1...10, defaults.mediaPeekDuration)
         if !selectedDisplayUUID.isEmpty, UUID(uuidString: selectedDisplayUUID) == nil { selectedDisplayUUID = "" }
         if CoveWeatherStyle(rawValue: weatherStyle) == nil { weatherStyle = defaults.weatherStyle }
         if !["automatic", "media", "calendar", "timer"].contains(compactActivity) { compactActivity = defaults.compactActivity }
@@ -96,6 +97,8 @@ struct CovePreferences: Codable, Equatable {
     var enableMedia = true
     var hidePausedMedia = false
     var pausedMediaDelay = 30.0
+    var peekOnSongChange = false
+    var mediaPeekDuration = 3.0
     var enableVolumeHUD = true
     var enableBrightnessHUD = true
     var enableBattery = true

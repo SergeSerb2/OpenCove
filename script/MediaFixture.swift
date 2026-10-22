@@ -11,7 +11,7 @@ enum MediaFixture {
     @MainActor static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
         if args == ["--help"] {
-            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration NONNEGATIVE_SECONDS] [--metadata-style normal|long|oversized] [--rate-controls] [--live-metadata]")
+            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration NONNEGATIVE_SECONDS] [--metadata-style normal|long|oversized|identical] [--rate-controls] [--live-metadata]")
             print("Plays only its own two silent tracks for at most 90 seconds. No arguments and missing/unsafe state paths fail before playback. OPENCOVE_FIXTURE_STATE can supply --state.")
             print("--live-metadata advertises this local fixture's public live flag on its first item; it does not start a network stream. Zero metadata duration represents unavailable timing.")
             return
@@ -32,7 +32,7 @@ enum MediaFixture {
                 guard let value = Double(args[index + 1]), value.isFinite, value >= 0 else { fail() }
                 duration = value
             case "--metadata-style":
-                guard ["normal", "long", "oversized"].contains(args[index + 1]) else { fail() }
+                guard ["normal", "long", "oversized", "identical"].contains(args[index + 1]) else { fail() }
                 metadataStyle = args[index + 1]
             default: fail()
             }
@@ -169,6 +169,9 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         if metadataStyle == "oversized" {
             title = "OpenCove oversized verification \(track) — " + String(repeating: "Original 🔹 title text. ", count: 600)
             artist = String(repeating: "Original 🔹 artist credit. ", count: 600)
+        } else if metadataStyle == "identical" {
+            title = "OpenCove identical metadata verification"
+            artist = "Local silent playback"
         } else {
             title = "OpenCove verification \(track)" + (metadataStyle == "long"
                 ? " — a long original title for checking readable overflow, motion interruption, and native layout" : "")

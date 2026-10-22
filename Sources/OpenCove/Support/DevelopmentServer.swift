@@ -485,6 +485,7 @@ final class DevelopmentServer {
         result["media"] = try encoded(media)
         result["compactMediaVisible"] = store.compactMediaVisible
         result["compactActivity"] = store.compactActivity.rawValue
+        result["mediaPeekVisible"] = store.showsMediaPeek
         result["playbackClock"] = ["receivedSamples": store.media.playback.receivedSamples,
                                    "changeNotifications": store.media.playback.changeNotifications]
         result["artworkAvailable"] = store.media.state.artworkData != nil
