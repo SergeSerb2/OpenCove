@@ -14,7 +14,7 @@ An independent, MIT-licensed macOS notch app, written in SwiftUI and AppKit.
 - Shows calendar events, meeting links, and event countdowns.
 - Shows volume, brightness, battery, Bluetooth, and shared Focus status when available.
 - Offers optional conditions, sun and precipitation weather views with a 24-hour and 7-day forecast, time-to-leave alerts, system audio levels, notification-banner mirroring, lock widgets, a file tray, and a persistent timer.
-- Uses native or simulated notch presentation, a floating pill on notchless displays, native windows, multiple-display policies, reduced motion, and configurable hover behavior. No web wrapper, account, or paid subscription is required.
+- Uses native or simulated notch presentation, a floating pill on notchless displays, native windows, multiple-display policies, preferred compact activities, reduced motion, and configurable hover behavior. No web wrapper, account, or paid subscription is required.
 
 ## Requirements
 

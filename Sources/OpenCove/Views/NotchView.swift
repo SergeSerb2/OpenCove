@@ -36,17 +36,17 @@ struct NotchView: View {
         if store.hud != nil {
             return CGSize(width: max(310, width, cutoutWidth > 0 ? cutoutWidth + 240 : 0), height: max(40, height))
         }
-        if store.preferences.enableMedia && store.compactMediaVisible && store.media.state.available {
+        if store.compactActivity == .media {
             if store.preferences.enableTimer && store.activities.timer.remaining > 0 ||
                 store.preferences.enableCalendar && store.activities.eventActivity != nil {
                 return CGSize(width: max(300, width, cutoutWidth > 0 ? cutoutWidth + 220 : 0), height: height)
             }
             return CGSize(width: max(250, width, cutoutWidth > 0 ? cutoutWidth + 140 : 0), height: height)
         }
-        if store.preferences.enableTimer && store.activities.timer.remaining > 0 {
+        if store.compactActivity == .timer {
             return CGSize(width: max(250, width, cutoutWidth > 0 ? cutoutWidth + 145 : 0), height: height)
         }
-        if store.preferences.enableCalendar && store.activities.eventActivity != nil {
+        if store.compactActivity == .calendar {
             return CGSize(width: max(300, width, cutoutWidth > 0 ? cutoutWidth + 200 : 0), height: height)
         }
         return CGSize(width: max(width, cutoutWidth > 0 ? cutoutWidth + 160 : 0), height: height)
@@ -108,7 +108,7 @@ struct NotchView: View {
                 expanded
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             } else {
-                Button(action: store.toggleExpanded) {
+                Button(action: store.openCompactActivity) {
                     compact
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .contentShape(Rectangle())
@@ -127,7 +127,7 @@ struct NotchView: View {
         } else if let hud = store.hud {
             CoveCompactHUD(hud: hud, accent: CoveNotchStyle.accent(store.preferences.accent), centerGap: compactGap)
                 .padding(.horizontal, 18)
-        } else if store.preferences.enableMedia && store.compactMediaVisible && media.state.available {
+        } else if store.compactActivity == .media {
             HStack(spacing: 0) {
                 CoveArtwork(data: media.state.artworkData, size: 23, radius: 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -164,7 +164,7 @@ struct NotchView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.horizontal, 15)
-        } else if store.preferences.enableTimer && activities.timer.remaining > 0 {
+        } else if store.compactActivity == .timer {
             HStack(spacing: 0) {
                 Image(systemName: activities.timer.running ? "timer" : "pause.fill")
                     .foregroundStyle(CoveNotchStyle.accent(store.preferences.accent))
@@ -176,7 +176,7 @@ struct NotchView: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.horizontal, 18)
-        } else if store.preferences.enableCalendar, let activity = activities.eventActivity {
+        } else if store.compactActivity == .calendar, let activity = activities.eventActivity {
             HStack(spacing: 0) {
                 HStack(spacing: 7) {
                     Image(systemName: activity.phase == .current ? "calendar.badge.clock" : "calendar")
@@ -291,7 +291,7 @@ struct NotchView: View {
         if let hud = store.hud {
             return [hud.title, hud.subtitle].filter { !$0.isEmpty }.joined(separator: ", ")
         }
-        if store.preferences.enableMedia && store.compactMediaVisible && media.state.available {
+        if store.compactActivity == .media {
             var label = "\(media.state.isPlaying ? "Playing" : "Paused"), \(media.state.title), \(media.state.artist)"
             if store.preferences.enableTimer && activities.timer.remaining > 0 {
                 label += ", timer \(CoveNotchStyle.duration(activities.timer.remaining)) remaining"
@@ -301,10 +301,10 @@ struct NotchView: View {
             }
             return label
         }
-        if store.preferences.enableTimer && activities.timer.remaining > 0 {
+        if store.compactActivity == .timer {
             return "Timer, \(CoveNotchStyle.duration(activities.timer.remaining)) remaining"
         }
-        if store.preferences.enableCalendar, let activity = activities.eventActivity {
+        if store.compactActivity == .calendar, let activity = activities.eventActivity {
             return "\(activity.event.title), \(activity.phase == .current ? "ends" : "starts") in \(CoveNotchStyle.duration(Double(activity.remainingSeconds)))"
         }
         return "OpenCove, \(Date.now.formatted(date: .abbreviated, time: .shortened))"
