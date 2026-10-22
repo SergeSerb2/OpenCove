@@ -160,34 +160,6 @@ struct CoveArtwork: View {
     }
 }
 
-struct CoveAudioBars: View {
-    var isPlaying: Bool
-    var reduceMotion: Bool
-    var color: Color
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 0.12, paused: !isPlaying || reduceMotion)) { context in
-            let time = context.date.timeIntervalSinceReferenceDate
-            HStack(alignment: .center, spacing: 2.5) {
-                ForEach(0..<5) { index in
-                    Capsule()
-                        .fill(color.opacity(isPlaying ? 0.95 : 0.5))
-                        .frame(width: 2.5, height: barHeight(index: index, time: time))
-                }
-            }
-            .frame(width: 23, height: 20)
-        }
-        // This is a playback indicator, not a measured audio waveform.
-        .accessibilityLabel(isPlaying ? "Playing" : "Paused")
-    }
-
-    private func barHeight(index: Int, time: Double) -> Double {
-        guard isPlaying else { return 3 }
-        guard !reduceMotion else { return [7, 13, 18, 11, 6][index] }
-        return 4 + (sin(time * (3.4 + Double(index) * 0.45) + Double(index) * 1.6) + 1) * 7
-    }
-}
-
 struct CoveCompactHUD: View {
     let hud: CoveHUD
     let accent: Color
@@ -356,9 +328,21 @@ struct CovePlaybackTimeline<Content: View>: View {
     @ViewBuilder var content: (Double) -> Content
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.5, paused: !clock.isAdvancing)) { _ in
+        TimelineView(CovePlaybackSchedule(paused: !clock.isAdvancing)) { _ in
             content(clock.elapsed)
         }
+    }
+}
+
+/// A finite paused sequence stops scheduling without replacing the progress
+/// subtree. Periodic entries avoid a display link for twice-per-second labels.
+private struct CovePlaybackSchedule: TimelineSchedule {
+    var paused: Bool
+
+    func entries(from startDate: Date, mode: Mode) -> AnySequence<Date> {
+        if paused { return AnySequence([startDate]) }
+        return AnySequence(PeriodicTimelineSchedule(from: startDate, by: 0.5)
+            .entries(from: startDate, mode: mode))
     }
 }
 

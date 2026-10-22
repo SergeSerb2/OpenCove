@@ -9,6 +9,11 @@ enum CoveMotion {
     static let mediaTextPointsPerSecond = 26.0
     static let mediaTextPause = 1.6
 
+    // Keep the existing decorative bar range/rates. This is independent of
+    // panel transition speed and is never presented as a measured waveform.
+    static let audioBarRestHeights = [7.0, 13, 18, 11, 6]
+    static func audioBarPeriod(index: Int) -> Double { 2 * .pi / (3.4 + Double(index) * 0.45) }
+
     static func duration(preferences: CovePreferences, hud: Bool) -> Double {
         let base: Double = hud && preferences.hudSpeed == "instant" ? 0
             : hud && preferences.hudSpeed == "fast" ? 0.12 : 0.22

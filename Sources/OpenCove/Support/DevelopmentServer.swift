@@ -469,6 +469,9 @@ final class DevelopmentServer {
         result["mediaTextMotion"] = NSApp.windows.filter(\.isVisible).flatMap { window in
             window.contentView.map { CoveScrollingMediaTextView.motionSnapshots(in: $0) } ?? []
         }
+        result["playbackIndicatorMotion"] = NSApp.windows.filter(\.isVisible).flatMap { window in
+            window.contentView.map { CovePlaybackIndicatorView.motionSnapshots(in: $0) } ?? []
+        }
         result["system"] = try encoded(store.system.state)
         result["events"] = try encoded(store.activities.events)
         result["calendarAuthorization"] = store.activities.calendarAuthorization
@@ -504,6 +507,20 @@ final class DevelopmentServer {
     }
 
     private func render(surface: String) async throws -> Data {
+        guard !rendererBusy else { throw ControlError.rejected("A native capture is already in progress. Retry after it finishes.") }
+        rendererBusy = true
+        defer { rendererBusy = false }
+        if surface == "live-notch" {
+            guard let window = NSApp.windows.first(where: {
+                $0.isVisible && NotchPanelController.contentIsHidden(in: $0) == false
+            }), let view = window.contentView else {
+                throw ControlError.rejected("No visible native notch content is available.")
+            }
+            // Draw this app's existing view, including its mounted timeline.
+            // This neither orders a window nor reads WindowServer/desktop pixels.
+            view.layoutSubtreeIfNeeded()
+            return try png(from: view)
+        }
         let content: AnyView
         let size: CGSize
         switch surface {
@@ -533,9 +550,6 @@ final class DevelopmentServer {
                 .environment(\.colorScheme, .dark))
         default: throw ControlError.invalid("Unknown render surface.")
         }
-        guard !rendererBusy else { throw ControlError.rejected("A native capture is already in progress. Retry after it finishes.") }
-        rendererBusy = true
-        defer { rendererBusy = false }
         // An unordered window supplies native AppKit rendering context. It never
         // becomes visible/key, reads the desktop, or receives user input.
         let hosting = NSHostingView(rootView: content.frame(width: size.width, height: size.height)
@@ -560,13 +574,17 @@ final class DevelopmentServer {
         hosting.needsDisplay = true
         window.displayIfNeeded()
         hosting.display()
-        guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+        return try png(from: hosting)
+    }
+
+    private func png(from view: NSView) throws -> Data {
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
             throw ControlError.failed("Native rendering failed.")
         }
-        bitmap.size = size
+        bitmap.size = view.bounds.size
         bitmap.bitmapData?.initialize(repeating: 0, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
-        hosting.effectiveAppearance.performAsCurrentDrawingAppearance {
-            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        view.effectiveAppearance.performAsCurrentDrawingAppearance {
+            view.cacheDisplay(in: view.bounds, to: bitmap)
         }
         guard let png = bitmap.representation(using: .png, properties: [:]) else { throw ControlError.failed("Native rendering failed.") }
         return png
