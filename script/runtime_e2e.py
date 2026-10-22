@@ -1250,7 +1250,9 @@ class Runtime:
         for extra, code in ((["--help"], 0), ([], 2), (["--state", "relative.json"], 2),
                             (["--state", str(work / "invalid.json"), "--metadata-duration", "nan"], 2),
                             (["--state", str(work / "invalid.json"), "--metadata-duration", "-1"], 2),
-                            (["--state", str(work / "invalid.json"), "--metadata-style", "unknown"], 2)):
+                            (["--state", str(work / "invalid.json"), "--metadata-style", "unknown"], 2),
+                            (["--state", str(work / "invalid.json"), "--explicit-metadata", "--live-metadata"], 2),
+                            (["--state", str(work / "invalid.json"), "--explicit-metadata", "--rate-controls"], 2)):
             result = subprocess.run([str(executable), *extra], env=environment, capture_output=True, timeout=5)
             require(result.returncode == code, "Fixture help/default/invalid options did not fail safely before playback.")
         self.record("silent fixture actual CLI: help, absent env, relative path and nonfinite duration safety")
@@ -1268,7 +1270,7 @@ class Runtime:
             payload = plistlib.loads(base64.b64decode(json.loads(result.stdout)["snapshot"]))
             return result.returncode, payload
 
-        def session(name, metadata=None, style=None, rates=False, live=False):
+        def session(name, metadata=None, style=None, rates=False, live=False, explicit=False):
             state_path = work / (name + ".json")
             arguments = [str(executable), "--state", str(state_path)]
             if metadata is not None:
@@ -1279,6 +1281,8 @@ class Runtime:
                 arguments += ["--rate-controls"]
             if live:
                 arguments += ["--live-metadata"]
+            if explicit:
+                arguments += ["--explicit-metadata"]
             return state_path, subprocess.Popen(arguments, env=environment, stdout=subprocess.DEVNULL,
                                                 stderr=subprocess.DEVNULL, umask=0o077)
 
@@ -1446,12 +1450,16 @@ class Runtime:
                     "Native playback layers did not resume.")
                 state = wait_for(client.request, lambda s: s["media"].get("supportsSeek"),
                                  "Fixture did not expose safe seek capability.")
-                selected()
+                before_playing_seek = selected()
+                # Choose a real discontinuity. A fixed target can coincide with
+                # normally advancing playback and correctly need no correction.
+                playing_seek = 60 if before_playing_seek["elapsed"] < 40 else 15
                 clock_before_seek = client.request()["playbackClock"]["changeNotifications"]
-                client.command("media.seek", seconds=17)
-                wait_for(fixture, lambda s: 16 <= s["elapsed"] <= 23, "Actual native seek did not reach the fixture.")
+                client.command("media.seek", seconds=playing_seek)
+                wait_for(fixture, lambda s: playing_seek - 1 <= s["elapsed"] <= playing_seek + 6,
+                         "Actual native seek did not reach the fixture.")
                 wait_for(client.request, lambda s: s["playbackClock"]["changeNotifications"] > clock_before_seek
-                         and 16 <= s["media"]["elapsed"] <= 23,
+                         and playing_seek - 1 <= s["media"]["elapsed"] <= playing_seek + 6,
                          "The real playing seek did not notify progress observers.")
                 native = read_adapter("--read")[1]
                 require(native.get("bundleID") == FIXTURE_ID, "Fixture lost selection before stale-item check.")
@@ -1739,6 +1747,119 @@ class Runtime:
         finally:
             stop(child)
 
+        fixture_state, child = session("explicit", metadata=125, style="identical", explicit=True)
+        try:
+            wait_for(fixture_state.exists, bool, "Owned explicit-metadata source did not start.")
+            directory = self.directory("media-explicit", preferences={**SAFE, "enableMedia": True,
+                "enablePrivateAPIs": True, "enableCalendar": True, "hideWhenIdle": False, "expandOnHover": False,
+                "hideInFullscreen": False, "reduceMotion": True})
+            write_private(directory / "calendar-settings.json", b'{"excludedCalendarIdentifiers":"damaged"}')
+            with self.app(directory) as client:
+                native_observations = []
+
+                def explicit_sample():
+                    require(child.poll() is None, "Own explicit source stopped; no command sent.")
+                    actual = json.loads(fixture_state.read_bytes())
+                    require(actual["pid"] == child.pid, "Own explicit source PID changed; no command sent.")
+                    state = client.request()
+                    code, native = read_adapter("--read")
+                    native_owned = code == 0 and native.get("bundleID") == FIXTURE_ID
+                    native_observations.append({"fixtureTrack": actual["track"], "exit": code,
+                        "appOwned": state["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
+                        "nativeOwned": native_owned, "nativeInfoPresent": bool(native.get("info")),
+                        "nativeErrorPresent": bool(native.get("error")),
+                        "nativeExplicit": native.get("info", {}).get("kMRMediaRemoteNowPlayingInfoIsExplicitTrack")
+                            if native_owned else None,
+                        "sourceItemChangedDuringRead": native.get("error") ==
+                            "The current media source or item changed during the read."})
+                    observation_path = directory / "native-observations.json"
+                    observation_path.write_bytes(json_bytes(native_observations))
+                    observation_path.chmod(0o600)
+                    return state, actual, native
+
+                def owned_explicit():
+                    value = explicit_sample()
+                    require(value[0]["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
+                            "Explicit-metadata app source changed; no command sent.")
+                    require(native_observations[-1]["nativeOwned"] and value[2].get("bundleID") == FIXTURE_ID,
+                            "Native explicit source changed; no command sent.")
+                    return value
+
+                def coherent(value):
+                    return (native_observations[-1]["nativeOwned"]
+                        and value[0]["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                        and value[2].get("bundleID") == FIXTURE_ID
+                        and isinstance(value[2].get("info"), dict) and bool(value[2]["info"])
+                        and not value[2].get("error"))
+
+                def marked(value):
+                    state, actual, native = value
+                    return (coherent(value) and actual.get("publishedExplicit") is True
+                        and native.get("info", {}).get("kMRMediaRemoteNowPlayingInfoIsExplicitTrack") is True
+                        and state["media"].get("isExplicit") is True)
+
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
+                         "Own explicit source did not reach the app.", 25)
+                initial = wait_for(explicit_sample, marked, "Actual native explicit flag did not reach shared media state.")
+                require(initial[0]["calendarAuthorization"] == "Saved calendar settings need review",
+                        "Explicit Duo render must pause real calendar queries; actual status: " + initial[0]["calendarAuthorization"])
+                title = initial[0]["media"]["title"]
+                client.command("selectTab", tab="media")
+                write_private(directory / "explicit-notch.png", client.request("/render?surface=notch"))
+                write_private(directory / "explicit-lock.png", client.request("/render?surface=lock"))
+                client.command("preferences", values={"expandedLayout": "duo"})
+                write_private(directory / "explicit-duo.png", client.request("/render?surface=notch"))
+                client.command("preferences", values={"expandedLayout": "media"})
+                owned_explicit()
+                client.command("media.next")
+                # A read during the actual item transition can legitimately
+                # return an incoherent snapshot. Settling only reads; commands
+                # still require the separate fresh owned_explicit guard.
+                unmarked = wait_for(explicit_sample, lambda v: coherent(v) and v[1]["track"] == 2
+                    and v[1].get("publishedExplicit") is False
+                    and v[2].get("info", {}).get("kMRMediaRemoteNowPlayingInfoIsExplicitTrack") is False
+                    and v[0]["media"].get("isExplicit") is False,
+                    "Explicit false did not replace the old true flag.")
+                require(unmarked[0]["media"]["title"] == title,
+                        "Explicit transition verification must retain identical visible metadata.")
+                write_private(directory / "false-notch.png", client.request("/render?surface=notch"))
+                write_private(directory / "false-lock.png", client.request("/render?surface=lock"))
+                client.command("preferences", values={"expandedLayout": "duo"})
+                write_private(directory / "false-duo.png", client.request("/render?surface=notch"))
+                client.command("preferences", values={"expandedLayout": "media"})
+                owned_explicit()
+                client.command("media.previous")
+                wait_for(explicit_sample, marked, "Returning to the actual explicit item lost its flag.")
+                client.command("preferences", values={"enableMedia": False})
+                cleared = client.request()
+                require(not cleared["media"]["available"] and cleared["media"].get("isExplicit") is None,
+                        "Disabling media retained explicit metadata.")
+                write_private(directory / "disabled.png", client.request("/render?surface=notch"))
+                client.command("preferences", values={"enableMedia": True})
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("isExplicit") is True, "Restored own media lost its actual explicit flag.", 25)
+            with self.app(directory) as client:
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("isExplicit") is True, "Restart did not recover the real native explicit flag.", 25)
+                app_pid = client.request()["pid"]
+                stop(child)
+                fixture_state, child = session("explicit-to-unmarked", metadata=125, style="identical", rates=True)
+                wait_for(fixture_state.exists, bool, "Own unmarked replacement source did not start.")
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
+                         "Own unmarked source did not reach the running app.", 25)
+                absent = wait_for(explicit_sample, lambda v: coherent(v) and
+                    "kMRMediaRemoteNowPlayingInfoIsExplicitTrack" not in v[2].get("info", {})
+                    and v[0]["media"]["available"] and v[0]["media"].get("isExplicit") is None,
+                    "The running app retained an explicit flag absent from its actual new source.", 25)
+                require(absent[0]["pid"] == app_pid and absent[0]["media"]["title"] == title,
+                        "Unmarked transition must preserve the app process and identical visible title.")
+                client.command("selectTab", tab="media")
+                write_private(directory / "unmarked-notch.png", client.request("/render?surface=notch"))
+                write_private(directory / "unmarked-lock.png", client.request("/render?surface=lock"))
+            self.record("media: real own native explicit publisher, marked/false/absent identical-title transitions in one app, shared captures, opt-out and restart")
+        finally:
+            stop(child)
+
         fixture_state, child = session("song-peek", metadata=125, style="identical", rates=True)
         try:
             wait_for(fixture_state.exists, bool, "Own song-peek fixture did not start.")
@@ -1784,6 +1905,13 @@ class Runtime:
                 first = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
                     and s["media"].get("supportsNext") and bool(s["media"].get("contentItemIdentifier")),
                     "Own song-peek source did not become available.", 25)
+                code, native_unmarked = read_adapter("--read")
+                require(code == 0 and native_unmarked.get("bundleID") == FIXTURE_ID
+                    and isinstance(native_unmarked.get("info"), dict) and bool(native_unmarked["info"])
+                    and not native_unmarked.get("error")
+                    and "kMRMediaRemoteNowPlayingInfoIsExplicitTrack" not in native_unmarked.get("info", {})
+                    and first["media"].get("isExplicit") is None,
+                    "The next independent unmarked source inherited explicit metadata.")
                 require(not first["preferences"]["peekOnSongChange"] and not first["mediaPeekVisible"],
                         "Legacy preferences enabled automatic song peeks.")
                 client.command("preferences", values={"mediaPeekDuration": 0}, expected=400)

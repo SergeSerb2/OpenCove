@@ -490,6 +490,17 @@ struct CoveMediaSurface: View {
                                    reduceMotion: reduceMotion || systemReduceMotion || media.lastError != nil,
                                    helpText: locked ? nil : media.lastError)
             HStack(spacing: 6) {
+                if media.state.isExplicit == true {
+                    Text("E")
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 3).padding(.vertical, 1)
+                        .background(.white.opacity(0.12),
+                                    in: RoundedRectangle(cornerRadius: 2))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .fixedSize()
+                        .accessibilityLabel("Explicit content")
+                        .help("The player marks this item as explicit.")
+                }
                 if let format = media.state.audioFormat, !format.isEmpty {
                     Text(CoveNotchStyle.metadataLabel(format))
                         .font(.system(size: 8, weight: .semibold)).foregroundStyle(CoveNotchStyle.secondary)

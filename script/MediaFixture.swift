@@ -11,9 +11,10 @@ enum MediaFixture {
     @MainActor static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
         if args == ["--help"] {
-            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration NONNEGATIVE_SECONDS] [--metadata-style normal|long|oversized|identical] [--rate-controls] [--live-metadata]")
+            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration NONNEGATIVE_SECONDS] [--metadata-style normal|long|oversized|identical] [--rate-controls] [--live-metadata] [--explicit-metadata]")
             print("Plays only its own two silent tracks for at most 90 seconds. No arguments and missing/unsafe state paths fail before playback. OPENCOVE_FIXTURE_STATE can supply --state.")
             print("--live-metadata advertises this local fixture's public live flag on its first item; it does not start a network stream. Zero metadata duration represents unavailable timing.")
+            print("--explicit-metadata uses an opt-in native publisher for this fixture only: first item explicit, second item false. It never overrides another app or sends another player a command. Cannot combine with --live-metadata or --rate-controls.")
             return
         }
         var state = ProcessInfo.processInfo.environment["OPENCOVE_FIXTURE_STATE"]
@@ -21,10 +22,12 @@ enum MediaFixture {
         var metadataStyle = "normal"
         var rateControls = false
         var liveMetadata = false
+        var explicitMetadata = false
         var index = 0
         while index < args.count {
             if args[index] == "--rate-controls" { rateControls = true; index += 1; continue }
             if args[index] == "--live-metadata" { liveMetadata = true; index += 1; continue }
+            if args[index] == "--explicit-metadata" { explicitMetadata = true; index += 1; continue }
             guard index + 1 < args.count else { fail() }
             switch args[index] {
             case "--state": state = args[index + 1]
@@ -38,6 +41,8 @@ enum MediaFixture {
             }
             index += 2
         }
+        guard !(explicitMetadata && (liveMetadata || rateControls)) else { fail() }
+        guard !explicitMetadata || FixtureExplicitPublisher.isAvailable else { fail() }
         guard let state, state.hasPrefix("/"), !state.contains("\0") else { fail() }
         let url = URL(fileURLWithPath: state)
         var info = stat()
@@ -46,7 +51,7 @@ enum MediaFixture {
               lstat(url.path, &info) != 0, errno == ENOENT else { fail() }
         umask(0o077)
         let app = NSApplication.shared
-        let delegate = FixtureDelegate(statusURL: url, metadataDuration: duration, metadataStyle: metadataStyle, rateControls: rateControls, liveMetadata: liveMetadata)
+        let delegate = FixtureDelegate(statusURL: url, metadataDuration: duration, metadataStyle: metadataStyle, rateControls: rateControls, liveMetadata: liveMetadata, explicitMetadata: explicitMetadata)
         app.delegate = delegate
         app.setActivationPolicy(.prohibited)
         app.run()
@@ -70,6 +75,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
     private let metadataStyle: String
     private let rateControls: Bool
     private let liveMetadata: Bool
+    private let explicitMetadata: Bool
     private var players: [AVAudioPlayer] = []
     // Original, local fixture pixels. A large source exercises the app's real
     // artwork transfer and thumbnail path without contacting an image service.
@@ -86,12 +92,13 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }()
 
-    init(statusURL: URL, metadataDuration: Double?, metadataStyle: String, rateControls: Bool, liveMetadata: Bool) {
+    init(statusURL: URL, metadataDuration: Double?, metadataStyle: String, rateControls: Bool, liveMetadata: Bool, explicitMetadata: Bool) {
         self.statusURL = statusURL
         self.metadataDuration = metadataDuration
         self.metadataStyle = metadataStyle
         self.rateControls = rateControls
         self.liveMetadata = liveMetadata
+        self.explicitMetadata = explicitMetadata
         super.init()
     }
 
@@ -195,9 +202,15 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]
         if liveMetadata { metadata[MPNowPlayingInfoPropertyIsLiveStream] = isLive }
+        if explicitMetadata { metadata[MPMediaItemPropertyIsExplicit] = track == 1 }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = metadata
         MPNowPlayingInfoCenter.default().playbackState = player.isPlaying ? .playing : .paused
-        let state: [String: Any] = ["track": track, "playing": player.isPlaying, "elapsed": player.currentTime, "duration": player.duration, "rate": player.rate, "pid": ProcessInfo.processInfo.processIdentifier, "publishedDuration": publishedDuration, "liveMetadata": isLive]
+        if explicitMetadata {
+            FixtureExplicitPublisher.publish(title: title, artist: artist, duration: publishedDuration,
+                elapsed: player.currentTime, rate: player.isPlaying ? Double(player.rate) : 0,
+                track: track)
+        }
+        let state: [String: Any] = ["track": track, "playing": player.isPlaying, "elapsed": player.currentTime, "duration": player.duration, "rate": player.rate, "pid": ProcessInfo.processInfo.processIdentifier, "publishedDuration": publishedDuration, "liveMetadata": isLive, "publishedExplicit": explicitMetadata ? (track == 1) as Any : NSNull()]
         if let data = try? JSONSerialization.data(withJSONObject: state) { try? data.write(to: statusURL, options: .atomic) }
     }
 
@@ -219,5 +232,39 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         value(sampleRate); value(sampleRate * 2); value(UInt16(2)); value(UInt16(16)); text("data"); value(dataBytes)
         data.append(Data(count: Int(dataBytes)))
         return data
+    }
+}
+
+/// Real own-process metadata publishing, not an injected reader response. The
+/// public MP metadata key is not forwarded on some macOS versions. Only the
+/// explicit opt-in uses this path; ordinary fixture/publication stays unchanged.
+/// C ABI reference (WebKit):
+/// https://chromium.googlesource.com/external/github.com/WebKit/webkit/+/79061826083bb948cd1e42522f7218c225bcdaba%5E%21/
+@MainActor
+private enum FixtureExplicitPublisher {
+    private typealias Publish = @convention(c) (CFDictionary) -> Void
+    private static let framework = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_LAZY)
+    private static let publishInfo: Publish? = framework.flatMap { handle in
+        dlsym(handle, "MRMediaRemoteSetNowPlayingInfo").map { unsafeBitCast($0, to: Publish.self) }
+    }
+    private static let fields = ["Title", "Artist", "Album", "Duration", "ElapsedTime", "PlaybackRate",
+                                 "Timestamp", "UniqueIdentifier", "ContentItemIdentifier", "IsExplicitTrack"]
+    private static let keys: [String: String] = Dictionary(uniqueKeysWithValues: fields.map { suffix in
+        let name = "kMRMediaRemoteNowPlayingInfo" + suffix
+        let value = framework.flatMap { dlsym($0, name) }?.assumingMemoryBound(to: NSString?.self).pointee
+        return (suffix, value.map { $0 as String } ?? name)
+    })
+    static var isAvailable: Bool { publishInfo != nil }
+
+    static func publish(title: String, artist: String, duration: Double, elapsed: Double, rate: Double, track: Int) {
+        guard let publishInfo else { return }
+        let values: [String: Any] = ["Title": title, "Artist": artist, "Album": "End-to-end fixture",
+            "Duration": duration, "ElapsedTime": elapsed, "PlaybackRate": rate, "Timestamp": Date(),
+            "UniqueIdentifier": UInt64(track), "ContentItemIdentifier": "org.opencove.MediaFixture.track.\(track)",
+            "IsExplicitTrack": track == 1]
+        let own = Dictionary(uniqueKeysWithValues: values.map { (keys[$0.key] ?? "kMRMediaRemoteNowPlayingInfo" + $0.key, $0.value) })
+        // The native API publishes only this process's own metadata. No parent
+        // application override, global source selection or remote command.
+        publishInfo(own as CFDictionary)
     }
 }

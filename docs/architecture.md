@@ -76,3 +76,5 @@ Expanded media text scrolls only when it exceeds its available width. A native l
 Calendar activity ticks run only around actual event phases; an empty or unauthorized calendar has no second ticker. The independent timer uses whole-second updates plus its exact final deadline.
 
 These are implementation limits, not a cross-machine performance guarantee. See [quality](quality.md) for real-interface checks and manual gates.
+
+The shared media surface renders a static explicit-content badge only for `isExplicit == true`. It uses the existing source-coherent state; it adds no timer, process, metadata inference or extra read. False and unknown states omit the badge. The label says Explicit content for accessibility and identifies the player as the source of the marking.
