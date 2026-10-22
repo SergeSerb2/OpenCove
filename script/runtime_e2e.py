@@ -800,33 +800,98 @@ class Runtime:
                                  "Actual native media labels did not mount.")
                 require(all(not row["animating"] for row in short["mediaTextMotion"]),
                         "Short native media text started unnecessary motion.")
+                indicator_animated = not short["systemReduceMotion"]
+                def indicators(state):
+                    return [row for row in state.get("playbackIndicatorMotion", []) if row["visible"]]
+
+                native = wait_for(client.request, lambda s: indicators(s) and
+                    all(row["animationCount"] == (5 if indicator_animated else 0)
+                        and row["accessibilityLabel"] == "Playing" for row in indicators(s)),
+                    "Actual native playback indicator did not appear.")
+                time.sleep(1.1)
+                advanced = client.request()
+                if indicator_animated:
+                    require(any(abs(a - b) > 0.1 for a, b in zip(indicators(native)[0]["heights"],
+                                indicators(advanced)[0]["heights"])), "Native playback layers did not move.")
+                client.command("preferences", values={"reduceMotion": True})
+                reduced = wait_for(client.request, lambda s: indicators(s) and
+                    all(row["animationCount"] == 0 and row["reduceMotion"] for row in indicators(s)),
+                    "Reduced motion did not stop native playback layers.")
+                time.sleep(0.25)
+                require([r["heights"] for r in indicators(reduced)] ==
+                        [r["heights"] for r in indicators(client.request())],
+                        "Reduced native playback indicator kept moving.")
+                client.command("preferences", values={"reduceMotion": False})
+                client.command("selectTab", tab="timer")
+                wait_for(client.request, lambda s: not s.get("playbackIndicatorMotion"),
+                         "Departed media section retained native playback layers.")
+                client.command("selectTab", tab="media")
+                wait_for(client.request, lambda s: indicators(s) and
+                         all(row["animationCount"] == (5 if indicator_animated else 0) for row in indicators(s)),
+                         "Returning media section did not restore its playback indicator.")
                 client.command("collapse")
                 baseline = client.request()
                 before = selected()["elapsed"]
-                time.sleep(4)
+                observed_at = time.monotonic()
+                updated = wait_for(client.request, lambda s:
+                    s["playbackClock"]["receivedSamples"] - baseline["playbackClock"]["receivedSamples"] >= 3,
+                    "Too few actual source samples arrived for clock-observer verification.", 18)
                 after = selected()["elapsed"]
-                require(3 < after - before < 6,
+                observed_seconds = time.monotonic() - observed_at
+                require(abs(after - before - observed_seconds) < 1,
                         "Actual API playback position stopped advancing with the compact panel.")
-                updated = client.request()
                 samples = updated["playbackClock"]["receivedSamples"] - baseline["playbackClock"]["receivedSamples"]
                 notifications = updated["playbackClock"]["changeNotifications"] - baseline["playbackClock"]["changeNotifications"]
+                write_private(directory / "clock-observation.json", json_bytes({
+                    "before": baseline["playbackClock"], "after": updated["playbackClock"],
+                    "elapsedBefore": before, "elapsedAfter": after, "observedSeconds": observed_seconds,
+                    "samples": samples, "notifications": notifications}))
                 require(samples >= 2 and notifications < samples,
                         "Stable real playback still notified clock observers for every source sample.")
                 client.command("selectTab", tab="media")
+                # With decorative motion and hardware indicators disabled,
+                # render the existing native view, not a newly mounted preview.
+                # This checks the real mounted progress schedule independently
+                # of /state's always-projected clock.
+                client.command("preferences", values={"reduceMotion": True, "enableBattery": False,
+                                                       "enableFocus": False, "enableBluetooth": False})
+                def live_frame(name):
+                    data = client.request("/render?surface=live-notch")
+                    require(data.startswith(b"\x89PNG"), "Live native view did not render a PNG.")
+                    write_private(directory / (name + ".png"), data)
+                    return hashlib.sha256(data).hexdigest()
+
+                time.sleep(0.3)
+                playing_first = live_frame("mounted-playing-first")
+                time.sleep(1.1)
+                require(live_frame("mounted-playing-later") != playing_first,
+                        "Actual mounted progress view did not change while playing.")
                 client.command("media.playPause")
                 wait_for(fixture, lambda s: not s["playing"], "Actual fixture pause was not delivered.")
                 wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID and
                          not s["media"].get("isPlaying"), "The actual app kept stale playing state after pause.")
                 paused = selected()["elapsed"]
+                wait_for(client.request, lambda s: indicators(s) and
+                    all(row["animationCount"] == 0 and row["heights"] == [3] * 5
+                        and row["accessibilityLabel"] == "Paused" for row in indicators(s)),
+                    "Paused native playback indicator did not settle.")
+                time.sleep(0.3)
+                paused_frame = live_frame("mounted-paused-first")
                 time.sleep(0.75)
                 require(abs(selected()["elapsed"] - paused) < 0.25,
                         "Actual paused API playback position kept advancing.")
-                client.command("media.seek", seconds=9)
-                wait_for(fixture, lambda s: not s["playing"] and abs(s["elapsed"] - 9) < 0.25,
+                require(live_frame("mounted-paused-later") == paused_frame,
+                        "Actual mounted paused view kept changing.")
+                seek_position = 9 if abs(paused - 9) > 2 else 15
+                client.command("media.seek", seconds=seek_position)
+                wait_for(fixture, lambda s: not s["playing"] and abs(s["elapsed"] - seek_position) < 0.25,
                          "Actual paused seek did not reach the fixture.")
                 wait_for(client.request, lambda s: not s["media"].get("isPlaying") and
-                         abs(s["media"].get("elapsed", -1) - 9) < 0.25,
+                         abs(s["media"].get("elapsed", -1) - seek_position) < 0.25,
                          "The actual app did not publish the new paused playback position.")
+                time.sleep(0.3)
+                require(live_frame("mounted-paused-seek") != paused_frame,
+                        "Paused seek did not refresh the actual mounted progress view.")
                 for surface in ("notch", "lock"):
                     write_private(directory / ("paused-" + surface + ".png"),
                                   client.request("/render?surface=" + surface))
@@ -835,6 +900,14 @@ class Runtime:
                 wait_for(fixture, lambda s: s["playing"], "Actual fixture play was not delivered.")
                 wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID and
                          s["media"].get("isPlaying"), "The actual app kept stale paused state after play.")
+                resumed_frame = live_frame("mounted-resumed-first")
+                time.sleep(1.1)
+                require(live_frame("mounted-resumed-later") != resumed_frame,
+                        "The paused finite timeline failed to restart the actual mounted progress view.")
+                client.command("preferences", values={"reduceMotion": False})
+                wait_for(client.request, lambda s: indicators(s) and
+                    all(row["animationCount"] == (5 if indicator_animated else 0) for row in indicators(s)),
+                    "Native playback layers did not resume.")
                 state = wait_for(client.request, lambda s: s["media"].get("supportsSeek"),
                                  "Fixture did not expose safe seek capability.")
                 selected()
@@ -878,6 +951,7 @@ class Runtime:
                 self.record("media: owned real fixture readback, pause/play, normal app seek, next, stale adapter item rejection",
                             metadataBackend=state["media"]["metadataBackend"], originalArtwork=True,
                             compactPlaybackClock=True, pausedSeek=True,
+                            nativePlaybackIndicator=indicator_animated, actualMountedProgress=True,
                             stableClockSamples=samples, stableClockNotifications=notifications)
         finally:
             stop(child)
@@ -1108,6 +1182,7 @@ class Runtime:
                 wait_for(client.request, lambda s: panels(s) and
                          all(w["height"] <= 3 and w["contentHidden"] for w in panels(s)),
                          "Idle-hidden native panel did not reduce to its edge target.")
+                client.request("/render?surface=live-notch", expected=409)
                 client.command("selectTab", tab="media")
                 expanded = client.request()
                 require(expanded["expanded"] and expanded["media"]["supportsPlayPause"]

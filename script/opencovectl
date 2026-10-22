@@ -21,7 +21,7 @@ def main():
     command = commands.add_parser("command")
     command.add_argument("json", help="JSON object, or - to read at most 65536 bytes from standard input")
     render = commands.add_parser("render")
-    render.add_argument("--surface", choices=["notch", "lock", "onboarding", "settings", "weather"], default="notch")
+    render.add_argument("--surface", choices=["notch", "live-notch", "lock", "onboarding", "settings", "weather"], default="notch")
     render.add_argument("--output", type=Path, required=True, help="New PNG path; existing files are never overwritten")
     args = parser.parse_args()
     try:

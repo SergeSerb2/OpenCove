@@ -77,6 +77,8 @@ If the explicitly enabled control listener or its descriptor cannot start, the a
 
 `opencovectl command` sends real app actions. `opencovectl render --surface notch --output NEW.png` creates an offscreen native capture at a new path. `opencovectl url` prints a token-bearing browser URL; keep it private. An offscreen capture does not prove desktop placement, native menu interaction, or secure-screen visibility. See [quality](quality.md) for the complete workflow and manual gates.
 
+`opencovectl render --surface live-notch --output NEW.png` draws the existing visible native notch view. It checks mounted UI state without creating another preview. It reads only the app's own view drawing, not the desktop; hidden or unavailable content returns HTTP 409.
+
 ## Non-launch validation
 
 ```sh
