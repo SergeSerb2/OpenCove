@@ -107,9 +107,11 @@ final class CovePlaybackIndicatorView: NSView {
             // playback changes remove the render-server animation.
             guard bar.animation(forKey: Self.animationKey) == nil else { continue }
             let animation = CAKeyframeAnimation(keyPath: "bounds.size.height")
-            animation.values = (0...32).map { sample in
-                4 + (sin(Double(sample) / 32 * 2 * .pi + Double(index) * 1.6) + 1) * 7
+            let heights: [Double] = (0...32).map { sample -> Double in
+                let phase = Double(sample) / 32.0 * 2.0 * Double.pi + Double(index) * 1.6
+                return 4.0 + (sin(phase) + 1.0) * 7.0
             }
+            animation.values = heights
             animation.duration = CoveMotion.audioBarPeriod(index: index)
             animation.calculationMode = .linear
             animation.repeatCount = .infinity
