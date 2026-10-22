@@ -7,7 +7,7 @@ import ServiceManagement
 @MainActor
 final class CoveStore: ObservableObject {
     @Published var preferences: CovePreferences
-    @Published var selectedTab: CoveTab = .media
+    @Published private(set) var selectedTab: CoveTab = .media
     @Published var isExpanded = false
     @Published private(set) var compactMediaVisible = false
     @Published var hud: CoveHUD?
@@ -27,6 +27,43 @@ final class CoveStore: ObservableObject {
     lazy var hardwareKeys = HardwareKeyController(system: system)
     var onOpenSettings: (() -> Void)?
     var onPreferencesChange: (() -> Void)?
+
+    var enabledTabs: [CoveTab] {
+        CoveTab.allCases.filter { tab in
+            switch tab {
+            case .media: return preferences.enableMedia
+            case .calendar: return preferences.enableCalendar
+            case .files: return preferences.enableFileTray
+            case .timer: return preferences.enableTimer
+            }
+        }
+    }
+
+    private var defaultTab: CoveTab { preferences.expandedLayout == "calendar" ? .calendar : .media }
+
+    var visibleTab: CoveTab? {
+        let enabled = enabledTabs
+        if enabled.contains(selectedTab) { return selectedTab }
+        return enabled.contains(defaultTab) ? defaultTab : enabled.first
+    }
+
+    @discardableResult func selectTab(_ tab: CoveTab, expand: Bool = false) -> Bool {
+        guard enabledTabs.contains(tab) else { return false }
+        if selectedTab != tab { selectedTab = tab }
+        if expand { self.expand() }
+        return true
+    }
+
+    /// Defaults belong to app state, not view mounting. A preview or another
+    /// display must not undo a user's explicit section selection.
+    private func reconcileActivitySelection(resetToDefault: Bool) {
+        let enabled = enabledTabs
+        let requested = resetToDefault ? defaultTab : selectedTab
+        let next = enabled.contains(requested) ? requested
+            : enabled.contains(defaultTab) ? defaultTab : enabled.first ?? defaultTab
+        if selectedTab != next { selectedTab = next }
+    }
+
     func updateDisplaySelection(_ value: CoveDisplaySelection) {
         if displaySelection != value { displaySelection = value }
     }
@@ -130,6 +167,7 @@ final class CoveStore: ObservableObject {
         appliedPreferences = loaded
         lastError = loadError
         needsPreferencesBackup = needsBackup
+        reconcileActivitySelection(resetToDefault: true)
         media.onHUD = { [weak self] in self?.showHUD($0) }
         media.$state.map { CompactMediaInput($0) }.removeDuplicates()
             .receive(on: RunLoop.main).sink { [weak self] observed in
@@ -422,6 +460,7 @@ final class CoveStore: ObservableObject {
             if let hud, !isHUDEnabled(hud) { hudDismiss?.cancel(); self.hud = nil }
         }
         appliedPreferences = preferences
+        reconcileActivitySelection(resetToDefault: preferences.expandedLayout != previous.expandedLayout)
         reconcileCompactMedia()
         onPreferencesChange?()
         var success = true

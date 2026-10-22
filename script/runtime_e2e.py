@@ -147,6 +147,132 @@ class Runtime:
         require(backups[0].read_bytes() == original, "Recovery backup changed original bytes.")
         require(stat.S_IMODE(backups[0].stat().st_mode) == 0o600, "Recovery backup is not mode 0600.")
 
+    def activity_selection(self):
+        """Read-only native renders must preserve the user's real section choice."""
+        preferences = {**SAFE, "enableMedia": True, "enableCalendar": True,
+                       "expandedLayout": "calendar", "hideWhenIdle": False,
+                       "expandOnHover": False, "hideInFullscreen": False, "reduceMotion": True}
+        directory = self.directory("activity-selection", preferences=preferences)
+        calendar_policy = b'{"excludedCalendarIdentifiers":"damaged"}'
+        write_private(directory / "calendar-settings.json", calendar_policy)
+        source = directory / "owned-source.txt"
+        write_private(source, b"OpenCove activity-selection verification\n")
+        source_bytes = source.read_bytes()
+        observations = []
+
+        def selected(client, tab):
+            state = wait_for(client.request, lambda s: s["visibleTab"] == tab and
+                             (tab is None or s["tab"] == tab), "Visible and selected sections did not agree.")
+            observations.append({key: state[key] for key in ("tab", "visibleTab", "enabledTabs", "expanded")})
+            return state
+
+        def capture(client, name, tab):
+            write_private(directory / (name + ".png"), client.request("/render?surface=notch"))
+            state = selected(client, tab)
+            require(state["expanded"], "Read-only native capture collapsed the selected section.")
+            return state
+
+        with self.app(directory) as client:
+            state = selected(client, "calendar")
+            require(state["calendarAuthorization"] == "Saved calendar settings need review" and
+                    not state["media"]["available"] and not state["preferences"]["enablePrivateAPIs"] and
+                    not state["preferences"]["allowAppleScript"],
+                    "Selection verification must keep calendar reads paused and player integrations off.")
+            require(state["enabledTabs"] == ["media", "calendar", "files", "timer"],
+                    "The enabled-section list did not match actual preferences.")
+            client.command("files.add", paths=[str(source)])
+            client.command("timer.start", seconds=180)
+            client.command("timer.pause")
+            paused = client.request()["timer"]["remaining"]
+            for tab in ("media", "calendar", "files", "timer"):
+                client.command("selectTab", tab=tab)
+                selected(client, tab)
+                capture(client, tab + "-first", tab)
+                capture(client, tab + "-remounted", tab)
+                client.command("collapse")
+                client.command("expand")
+                selected(client, tab)
+            client.command("preferences", values={"accent": "blue"})
+            selected(client, "timer")
+            client.command("preferences", values={"expandedLayout": "media"})
+            selected(client, "media")
+            client.command("selectTab", tab="files")
+            client.command("preferences", values={"expandedLayout": "duo"})
+            selected(client, "media")
+            capture(client, "duo", "media")
+            client.command("preferences", values={"expandedLayout": "calendar"})
+            selected(client, "calendar")
+            client.command("selectTab", tab="media")
+            client.command("preferences", values={"expandedLayout": "calendar"})
+            # An unchanged default is not a fresh instruction to abandon the
+            # user's choice, even when a new native view mounts afterward.
+            capture(client, "same-default-explicit-media", "media")
+
+            client.command("selectTab", tab="files")
+            client.command("preferences", values={"enableFileTray": False})
+            selected(client, "calendar")
+            client.command("selectTab", tab="files", expected=409)
+            selected(client, "calendar")
+            client.command("preferences", values={"enableCalendar": False})
+            selected(client, "media")
+            client.command("preferences", values={"enableMedia": False})
+            selected(client, "timer")
+            client.command("preferences", values={"enableTimer": False})
+            require(selected(client, None)["enabledTabs"] == [], "Disabled sections remained available.")
+            capture(client, "all-disabled", None)
+            for tab in ("media", "calendar", "files", "timer"):
+                client.command("selectTab", tab=tab, expected=409)
+                selected(client, None)
+            client.command("selectTab", tab="missing-section", expected=400)
+            client.command("preferences", values={"enableFileTray": True})
+            selected(client, "files")
+            client.command("preferences", values={"enableTimer": True, "enableMedia": True, "enableCalendar": True})
+            selected(client, "files")
+            state = client.request()
+            require(len(state["files"]) == 1 and not state["timer"]["running"] and
+                    abs(state["timer"]["remaining"] - paused) < 0.25,
+                    "Selection changes lost the tray or paused timer state.")
+
+            destination, held = directory / "preferences.json", directory / "held-preferences.json"
+            original = destination.read_bytes()
+            destination.rename(held)
+            destination.mkdir(mode=0o700)
+            try:
+                client.command("preferences", values={"expandedLayout": "duo"}, expected=500)
+                state = capture(client, "failed-save-runtime-default", "media")
+                require(state["errors"] and held.read_bytes() == original,
+                        "A failed default-layout save hid its error or replaced the original settings.")
+            finally:
+                destination.rmdir()
+                held.rename(destination)
+        with self.app(directory) as client:
+            state = selected(client, "calendar")
+            require(state["preferences"]["expandedLayout"] == "calendar" and len(state["files"]) == 1 and
+                    not state["timer"]["running"] and abs(state["timer"]["remaining"] - paused) < 0.25,
+                    "Restart did not apply the persisted default and preserve independent activity state.")
+            client.command("timer.cancel")
+        require(source.read_bytes() == source_bytes and
+                (directory / "calendar-settings.json").read_bytes() == calendar_policy,
+                "Section selection changed its source file or paused calendar policy.")
+        write_private(directory / "selection-observations.json", json_bytes(observations))
+        self.record("activity selection: explicit choices survive native remounts, defaults/fallbacks, failures and restart")
+
+        directory = self.directory("activity-empty", preferences={**SAFE, "enableFileTray": False,
+            "enableTimer": False, "expandedLayout": "duo", "hideWhenIdle": False,
+            "expandOnHover": False, "hideInFullscreen": False, "reduceMotion": True})
+        with self.app(directory) as client:
+            state = selected(client, None)
+            require(state["enabledTabs"] == [], "Fresh all-disabled startup offered a section.")
+            client.command("expand")
+            write_private(directory / "empty.png", client.request("/render?surface=notch"))
+            selected(client, None)
+            client.command("preferences", values={"enableTimer": True})
+            selected(client, "timer")
+        with self.app(directory) as client:
+            state = selected(client, "timer")
+            require(state["enabledTabs"] == ["timer"], "Unavailable startup default did not choose the enabled section.")
+        self.record("activity selection: real empty startup and available-section fallback survive restart")
+
     def displays(self):
         """Use real NSScreen discovery and native window placement; no virtual displays."""
         # Deliberately omit selectedDisplayUUID to exercise the legacy file.
@@ -1426,7 +1552,7 @@ def main():
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
     parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
-    parser.add_argument("--only", choices=("storage", "storage-alias", "media", "weather", "motion", "displays", "preferences", "timers", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--only", choices=("storage", "storage-alias", "media", "weather", "motion", "displays", "activities", "preferences", "timers", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
@@ -1452,6 +1578,7 @@ def main():
         if args.only != "storage":
             groups.append(("motion", runtime.motion))
             groups.append(("displays", runtime.displays))
+            groups.append(("activities", runtime.activity_selection))
         if args.media_fixture and args.only != "storage":
             groups.append(("media", lambda: runtime.media(args.pathological_duration)))
         if args.weather_service and args.only != "storage":
