@@ -90,7 +90,14 @@ async function command(action,values={}){
  const generation=epoch;
  return enqueue(async()=>{
   if(!state||unauthorized||!token)throw Error('Wait for a fresh authenticated app state before sending a command.');
-  try{errorBox.textContent='';const response=await request('/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...values,action})});const next=await response.json();if(generation!==epoch||closed)throw connectionChanged();if(action==='preferences')for(const [key,value] of drafts)if(Object.hasOwn(values.values||{},key)&&(document.getElementById(key)?.type==='number'?Number(value):value)===values.values[key])drafts.delete(key);state=next;paint();await renderPreview(true)}
+  try{errorBox.textContent='';const response=await request('/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...values,action})});const next=await response.json();if(generation!==epoch||closed)throw connectionChanged();if(action==='preferences'){
+   const changes=values.values||{};
+   for(const [key,value] of drafts)if(Object.hasOwn(changes,key)&&(document.getElementById(key)?.type==='number'?Number(value):value)===changes[key])drafts.delete(key);
+   if(Object.hasOwn(changes,'showPlaybackIndicator')&&Object.hasOwn(changes,'showLiveWaveform')){
+    const submittedMode=changes.showPlaybackIndicator===false?'none':changes.showLiveWaveform?'live':'decorative';
+    if(drafts.get('playbackIndicator')===submittedMode)drafts.delete('playbackIndicator');
+   }
+  }state=next;paint();await renderPreview(true)}
   catch(error){if(generation===epoch&&!closed&&error.name!=='AbortError'){errorBox.textContent=error.message;if(!unauthorized){try{await readState()}catch(readError){if(generation===epoch&&!closed&&readError.name!=='AbortError')disconnected(readError.message)}}}throw error}
  });
 }
