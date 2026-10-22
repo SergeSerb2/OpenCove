@@ -125,18 +125,36 @@ struct NotchView: View {
         }
     }
 
-    @ViewBuilder private var compact: some View {
+    private var compactArtworkData: Data? {
+        guard !store.hidesCompactWhenIdle, store.hud == nil,
+              store.preferences.enableMedia, media.state.available,
+              store.showsMediaPeek || store.compactActivity == .media else { return nil }
+        return media.state.artworkData
+    }
+
+    private var compact: some View {
+        CoveArtworkReader(data: compactArtworkData) { artwork in
+            compactContent(artwork: artwork)
+        }
+    }
+
+    private func mediaAccent(artwork: CoveArtworkThumbnail?) -> Color {
+        (store.preferences.musicColorAccent ? artwork?.tint : nil)
+            ?? CoveNotchStyle.accent(store.preferences.accent)
+    }
+
+    @ViewBuilder private func compactContent(artwork: CoveArtworkThumbnail?) -> some View {
         if store.hidesCompactWhenIdle {
             Color.clear
         } else if let hud = store.hud {
             CoveCompactHUD(hud: hud, accent: CoveNotchStyle.accent(store.preferences.accent), centerGap: compactGap)
                 .padding(.horizontal, 18)
         } else if store.showsMediaPeek {
-            mediaPeek
+            mediaPeek(artwork: artwork)
                 .transition(.opacity)
         } else if store.compactActivity == .media {
             HStack(spacing: 0) {
-                CoveArtwork(data: media.state.artworkData, size: 23, radius: 6)
+                CoveArtwork(thumbnail: artwork, size: 23, radius: 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Color.clear.frame(width: compactGap)
                 HStack(spacing: 8) {
@@ -148,11 +166,11 @@ struct NotchView: View {
                 if store.preferences.showPlaybackIndicator {
                     if store.preferences.showLiveWaveform {
                         LiveWaveformView(controller: waveform, isPlaying: media.state.isPlaying,
-                                         color: CoveNotchStyle.accent(store.preferences.accent))
+                                         color: mediaAccent(artwork: artwork))
                     } else {
                         CoveAudioBars(isPlaying: media.state.isPlaying,
                                       reduceMotion: systemReduceMotion || store.preferences.reduceMotion,
-                                      color: CoveNotchStyle.accent(store.preferences.accent))
+                                      color: mediaAccent(artwork: artwork))
                     }
                 }
                 if store.preferences.enableTimer && activities.timer.remaining > 0 ||
@@ -227,9 +245,9 @@ struct NotchView: View {
         }
     }
 
-    private var mediaPeek: some View {
+    private func mediaPeek(artwork: CoveArtworkThumbnail?) -> some View {
         HStack(spacing: 10) {
-            CoveArtwork(data: media.state.artworkData, size: 36, radius: 8)
+            CoveArtwork(thumbnail: artwork, size: 36, radius: 8)
             VStack(alignment: .leading, spacing: 3) {
                 Text(CoveNotchStyle.metadataLabel(media.state.title.isEmpty ? "Untitled" : media.state.title, limit: 96))
                     .font(.system(size: 12, weight: .semibold)).lineLimit(1)
@@ -239,11 +257,11 @@ struct NotchView: View {
             if store.preferences.showPlaybackIndicator {
                 if store.preferences.showLiveWaveform {
                     LiveWaveformView(controller: waveform, isPlaying: media.state.isPlaying,
-                                     color: CoveNotchStyle.accent(store.preferences.accent))
+                                     color: mediaAccent(artwork: artwork))
                 } else {
                     CoveAudioBars(isPlaying: media.state.isPlaying,
                                   reduceMotion: systemReduceMotion || store.preferences.reduceMotion,
-                                  color: CoveNotchStyle.accent(store.preferences.accent))
+                                  color: mediaAccent(artwork: artwork))
                 }
             }
         }
