@@ -163,7 +163,11 @@ final class LockScreenController {
         panel.animationBehavior = .none
         // Only this bounded card receives pointer events. There is no full-screen
         // input shield, key equivalent, global event monitor, or activation call.
-        panel.contentView = CoveLockHostingView(rootView: LockScreenView(store: store, weather: store.weather))
+        let hosting = CoveLockHostingView(rootView: LockScreenView(store: store, weather: store.weather))
+        // The controller owns the bounded authentication-safe frame. Content
+        // must scroll within it rather than raise the native window minimum.
+        hosting.sizingOptions = []
+        panel.contentView = hosting
         return panel
     }
 

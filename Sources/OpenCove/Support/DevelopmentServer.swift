@@ -478,9 +478,12 @@ final class DevelopmentServer {
         result["timer"] = try encoded(store.activities.timer)
         result["notifications"] = try encoded(store.activities.notifications)
         result["weather"] = try encoded(store.weather.state)
+        result["weatherPresentation"] = try encoded(WeatherWidgetData(state: store.weather.state,
+            style: CoveWeatherStyle(rawValue: store.preferences.weatherStyle) ?? .conditions, at: Date()))
         result["weatherStatus"] = ["hasLocation": store.weather.hasLocation,
                                     "loading": store.weather.isLoading,
-                                    "requestingLocation": store.weather.isRequestingLocation]
+                                    "requestingLocation": store.weather.isRequestingLocation,
+                                    "requestAttempts": store.weather.requestAttempts]
         result["notificationMirror"] = store.mirroringStatus
         result["loginItemStatus"] = store.loginItemStatus
         result["pid"] = ProcessInfo.processInfo.processIdentifier
@@ -516,12 +519,17 @@ final class DevelopmentServer {
         case "settings-media":
             size = CGSize(width: 760, height: 550)
             content = AnyView(SettingsView(store: store, initialPage: .media))
+        case "settings-weather":
+            size = CGSize(width: 760, height: 550)
+            content = AnyView(SettingsView(store: store, initialPage: .weather))
         case "lock":
             size = CGSize(width: 460, height: 250)
             content = AnyView(LockScreenView(store: store, weather: store.weather).environment(\.colorScheme, .dark))
         case "weather":
             size = CGSize(width: 560, height: 760)
-            content = AnyView(ScrollView { WeatherView(controller: store.weather).padding(20) }
+            content = AnyView(ScrollView { WeatherView(controller: store.weather,
+                style: CoveWeatherStyle(rawValue: store.preferences.weatherStyle) ?? .conditions,
+                motion: store.preferences.reduceMotion ? nil : CoveMotion.animation(preferences: store.preferences, hud: false)).padding(20) }
                 .environment(\.colorScheme, .dark))
         default: throw ControlError.invalid("Unknown render surface.")
         }

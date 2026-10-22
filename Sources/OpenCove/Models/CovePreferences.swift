@@ -67,6 +67,7 @@ struct CovePreferences: Codable, Equatable {
         hudDuration = bounded(hudDuration, 0.5...10, defaults.hudDuration)
         animationSpeed = bounded(animationSpeed, 0.25...2, defaults.animationSpeed)
         pausedMediaDelay = bounded(pausedMediaDelay, 1...300, defaults.pausedMediaDelay)
+        if CoveWeatherStyle(rawValue: weatherStyle) == nil { weatherStyle = defaults.weatherStyle }
         if !["media", "calendar", "duo"].contains(expandedLayout) { expandedLayout = defaults.expandedLayout }
         if !["glass", "clear", "frosted"].contains(nowPlayingStyle) { nowPlayingStyle = defaults.nowPlayingStyle }
         if !["smooth", "fast", "instant"].contains(hudSpeed) { hudSpeed = defaults.hudSpeed }
@@ -102,6 +103,7 @@ struct CovePreferences: Codable, Equatable {
     var enableTimer = false
     var enableFocus = true
     var enableWeather = false
+    var weatherStyle = "conditions"
     var enablePrivateAPIs = true
     var replaceSystemHUDs = false
     var allowAppleScript = false

@@ -87,6 +87,7 @@ struct SettingsView: View {
                     case .appearance: appearanceSettings
                     case .media: mediaSettings
                     case .activities: activitySettings
+                    case .weather: weatherSettings
                     case .permissions: permissionSettings
                     case .about: aboutSettings
                     }
@@ -359,11 +360,23 @@ struct SettingsView: View {
             }
 
             Section("Weather") {
-                Toggle("Enable weather", isOn: preference(\.enableWeather))
-                CoveSettingsNote("Choose a location before any weather request. Device location is optional.")
-                if store.preferences.enableWeather {
-                    WeatherView(controller: store.weather)
-                }
+                Button("Weather settings…") { selection = .weather }
+                CoveSettingsNote("Choose a weather widget style and location.")
+            }
+        }
+    }
+
+    private var weatherSettings: some View {
+        Section("Weather widget") {
+            Toggle("Enable weather", isOn: preference(\.enableWeather))
+            Picker("Weather widget style", selection: preference(\.weatherStyle)) {
+                ForEach(CoveWeatherStyle.allCases) { style in Text(style.title).tag(style.rawValue) }
+            }
+            CoveSettingsNote("Choose a location before any weather request. Device location is optional.")
+            if store.preferences.enableWeather {
+                WeatherView(controller: store.weather,
+                            style: CoveWeatherStyle(rawValue: store.preferences.weatherStyle) ?? .conditions,
+                            motion: store.preferences.reduceMotion ? nil : CoveMotion.animation(preferences: store.preferences, hud: false))
             }
         }
     }
@@ -489,6 +502,7 @@ enum CoveSettingsPage: String, CaseIterable, Identifiable {
     case appearance = "Appearance"
     case media = "Media"
     case activities = "Activities"
+    case weather = "Weather"
     case permissions = "Permissions"
     case about = "About"
 
@@ -500,6 +514,7 @@ enum CoveSettingsPage: String, CaseIterable, Identifiable {
         case .appearance: return "paintpalette"
         case .media: return "music.note"
         case .activities: return "square.stack.3d.up"
+        case .weather: return "cloud.sun"
         case .permissions: return "hand.raised"
         case .about: return "info.circle"
         }
@@ -511,6 +526,7 @@ enum CoveSettingsPage: String, CaseIterable, Identifiable {
         case .appearance: return "A small space, made yours."
         case .media: return "Keep playback within reach."
         case .activities: return "Choose what appears in your panel."
+        case .weather: return "Weather for the location you choose."
         case .permissions: return "You choose which access to grant."
         case .about: return "A little more room for what matters."
         }
