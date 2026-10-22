@@ -63,8 +63,8 @@ async function render(force=false){
  image.onload=()=>{if(generation===epoch&&!closed)image.style.width=image.naturalWidth+'px'};image.src=next;
  if(lastImage)URL.revokeObjectURL(lastImage);lastImage=next;lastRender=Date.now();
 }
-async function readState(force=false){
- const generation=epoch,response=await request('/state'),next=await response.json();if(generation!==epoch||closed)return;state=next;if(transportError){errorBox.textContent='';transportError=false}paint();
+async function renderPreview(force=false){
+ const generation=epoch;
  try{await render(force)}catch(error){
   // A busy/failed preview is separate from a fresh authenticated state. A
   // transport failure still retires the complete connection below.
@@ -72,11 +72,12 @@ async function readState(force=false){
   throw error;
  }
 }
+async function readState(force=false){const generation=epoch,response=await request('/state'),next=await response.json();if(generation!==epoch||closed)return;state=next;if(transportError){errorBox.textContent='';transportError=false}paint();await renderPreview(force)}
 async function command(action,values={}){
  const generation=epoch;
  return enqueue(async()=>{
   if(!state||unauthorized||!token)throw Error('Wait for a fresh authenticated app state before sending a command.');
-  try{errorBox.textContent='';const response=await request('/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...values,action})});const next=await response.json();if(generation!==epoch||closed)throw connectionChanged();if(action==='preferences')for(const [key,value] of drafts)if(Object.hasOwn(values.values||{},key)&&(key==='notchWidth'?Number(value):value)===values.values[key])drafts.delete(key);state=next;paint();await render(true)}
+  try{errorBox.textContent='';const response=await request('/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...values,action})});const next=await response.json();if(generation!==epoch||closed)throw connectionChanged();if(action==='preferences')for(const [key,value] of drafts)if(Object.hasOwn(values.values||{},key)&&(key==='notchWidth'?Number(value):value)===values.values[key])drafts.delete(key);state=next;paint();await renderPreview(true)}
   catch(error){if(generation===epoch&&!closed&&error.name!=='AbortError'){errorBox.textContent=error.message;if(!unauthorized){try{await readState()}catch(readError){if(generation===epoch&&!closed&&readError.name!=='AbortError')disconnected(readError.message)}}}throw error}
  });
 }
