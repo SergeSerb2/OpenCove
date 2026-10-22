@@ -31,11 +31,14 @@ jobs:
           bash -n script/build_and_run.sh
           node --check script/OpenCoveMediaAdapter.js
           python3 - <<'PY'
-          import ast
+          import ast, os, re
           from pathlib import Path
           for path in sorted(Path('script').glob('*.py')) + [Path('script/opencovectl')]:
               ast.parse(path.read_text(), filename=str(path))
+          page = Path('Sources/OpenCove/Support/DevelopmentPage.swift').read_text()
+          Path(os.environ['RUNNER_TEMP'], 'opencove-controls.js').write_text(re.search(r'<script>(.*?)</script>', page, re.S).group(1))
           PY
+          node --check "$RUNNER_TEMP/opencove-controls.js"
           python3 script/validate_release.py version
           python3 script/validate_release.py source
       - name: Exercise the real CLI empty case
