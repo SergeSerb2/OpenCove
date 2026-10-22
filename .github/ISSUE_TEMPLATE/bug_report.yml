@@ -1,0 +1,31 @@
+name: Bug report
+description: Report a reproducible OpenCove defect.
+body:
+  - type: markdown
+    attributes:
+      value: 'For sensitive defects, use [security reporting](https://github.com/SergeSerb2/OpenCove/blob/main/SECURITY.md). Remove tokens, calendar details, banner text, and private paths.'
+  - type: input
+    id: environment
+    attributes:
+      label: Version and environment
+      description: App version/build, macOS version, architecture, install/signing method, and relevant permission state.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use real app or caller steps. Do not attach private state dumps.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Checks and safe evidence
+      description: Include a redacted error or screenshot if useful. State checks you could not run.

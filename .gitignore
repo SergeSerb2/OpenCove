@@ -1,0 +1,21 @@
+.build/
+.swiftpm/
+.local/
+dist/
+.codex/
+.DS_Store
+*.xcuserstate
+__pycache__/
+*.py[cod]
+.env
+.env.*
+*.p12
+*.p8
+*.mobileprovision
+*.keychain
+*.keychain-db
+# Local reference material and review evidence are not public source inputs.
+/docs/research/
+/docs/audits/
+/docs/review-*.md
+/docs/verification.md

@@ -1,0 +1,10 @@
+name: Feature request
+description: Describe a problem OpenCove could solve.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and proposed behavior
+      description: Describe your workflow, the missing behavior, and any relevant Mac or OS constraints. Avoid private data.
+    validations:
+      required: true

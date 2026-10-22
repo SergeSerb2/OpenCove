@@ -1,0 +1,63 @@
+name: Build and source archive
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    # Standard runners are free for public repositories. Never consume a
+    # private repository's paid minutes or use larger/self-hosted runners here.
+    if: github.event.repository.private == false
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3, verified dereferenced upstream commit
+        with:
+          persist-credentials: false
+      - name: Check toolchain and script syntax
+        run: |
+          xcodebuild -version
+          xcrun swift --version
+          xcrun --sdk macosx --show-sdk-version
+          bash -n script/build_and_run.sh
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+          for path in sorted(Path('script').glob('*.py')) + [Path('script/opencovectl')]:
+              ast.parse(path.read_text(), filename=str(path))
+          PY
+          python3 script/validate_release.py version
+          python3 script/validate_release.py source
+      - name: Exercise the real CLI empty case
+        run: |
+          ./script/opencovectl --help
+          if ./script/opencovectl --data-dir "$RUNNER_TEMP/no-running-opencove" state; then
+            echo 'CLI accepted a missing real app descriptor' >&2
+            exit 1
+          fi
+      - name: Export source and build it without Git
+        run: |
+          mkdir -p "$RUNNER_TEMP/opencove-source"
+          SOURCE_LABEL="$(python3 -c 'import json; v=json.load(open("version.json")); print(v["version"] + ("-" + v["prerelease"] if v["prerelease"] else ""))')"
+          ARCHIVE="$RUNNER_TEMP/OpenCove-$SOURCE_LABEL-source.zip"
+          python3 script/package_release.py source-archive --output "$ARCHIVE"
+          ditto -x -k "$ARCHIVE" "$RUNNER_TEMP/opencove-source"
+          EXTRACTED="$RUNNER_TEMP/opencove-source/OpenCove-$SOURCE_LABEL-source"
+          test ! -e "$EXTRACTED/.git"
+          cd "$EXTRACTED"
+          python3 script/validate_release.py source
+          OPENCOVE_OUTPUT_DIR="$RUNNER_TEMP/opencove-bundle" \
+          OPENCOVE_SCRATCH_PATH="$RUNNER_TEMP/opencove-swift" \
+          ./script/build_and_run.sh --build
+          python3 script/validate_release.py bundle "$RUNNER_TEMP/opencove-bundle/OpenCove.app" \
+            --variant development --arch "$(uname -m)" --signing adhoc
+          python3 script/smoke.py --app "$RUNNER_TEMP/opencove-bundle/OpenCove.app" --slow --render

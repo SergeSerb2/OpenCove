@@ -1,0 +1,170 @@
+// SPDX-License-Identifier: MIT
+// End-to-end fixture: a real, silent AVAudioPlayer registered with MediaPlayer.
+// It never controls another player and exits after 90 seconds.
+import AppKit
+import AVFoundation
+import MediaPlayer
+import Darwin
+
+@main
+enum MediaFixture {
+    @MainActor static func main() {
+        let args = Array(CommandLine.arguments.dropFirst())
+        if args == ["--help"] {
+            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration FINITE_SECONDS]")
+            print("Plays only its own two silent tracks for at most 90 seconds. No arguments and missing/unsafe state paths fail before playback. OPENCOVE_FIXTURE_STATE can supply --state.")
+            return
+        }
+        var state = ProcessInfo.processInfo.environment["OPENCOVE_FIXTURE_STATE"]
+        var duration: Double?
+        var index = 0
+        while index < args.count {
+            guard index + 1 < args.count else { fail() }
+            switch args[index] {
+            case "--state": state = args[index + 1]
+            case "--metadata-duration":
+                guard let value = Double(args[index + 1]), value.isFinite, value > 0 else { fail() }
+                duration = value
+            default: fail()
+            }
+            index += 2
+        }
+        guard let state, state.hasPrefix("/"), !state.contains("\0") else { fail() }
+        let url = URL(fileURLWithPath: state)
+        var info = stat()
+        guard lstat(url.deletingLastPathComponent().path, &info) == 0,
+              (info.st_mode & S_IFMT) == S_IFDIR, info.st_uid == geteuid(), info.st_mode & 0o077 == 0,
+              lstat(url.path, &info) != 0, errno == ENOENT else { fail() }
+        umask(0o077)
+        let app = NSApplication.shared
+        let delegate = FixtureDelegate(statusURL: url, metadataDuration: duration)
+        app.delegate = delegate
+        app.setActivationPolicy(.prohibited)
+        app.run()
+        withExtendedLifetime(delegate) {}
+    }
+
+    private static func fail() -> Never {
+        fputs("MediaFixture needs a fresh state path in an owned private directory. Use --help.\n", stderr)
+        exit(2)
+    }
+}
+
+@MainActor
+final class FixtureDelegate: NSObject, NSApplicationDelegate {
+    private var player: AVAudioPlayer!
+    private var track = 1
+    private var timer: Timer?
+    private var targets: [(MPRemoteCommand, Any)] = []
+    private let statusURL: URL
+    private let metadataDuration: Double?
+    private var players: [AVAudioPlayer] = []
+    // Original, local fixture pixels. A large source exercises the app's real
+    // artwork transfer and thumbnail path without contacting an image service.
+    private lazy var artwork: MPMediaItemArtwork = {
+        let image = NSImage(size: NSSize(width: 2048, height: 2048), flipped: false) { bounds in
+            NSColor.systemTeal.setFill()
+            bounds.fill()
+            NSColor.systemIndigo.setFill()
+            NSRect(x: 0, y: 0, width: bounds.width / 2, height: bounds.height).fill()
+            NSColor.systemOrange.setFill()
+            NSRect(x: bounds.width / 2, y: 0, width: bounds.width / 2, height: bounds.height / 2).fill()
+            return true
+        }
+        return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+    }()
+
+    init(statusURL: URL, metadataDuration: Double?) {
+        self.statusURL = statusURL
+        self.metadataDuration = metadataDuration
+        super.init()
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        do {
+            players = try [120, 125].map { try AVAudioPlayer(data: Self.silence(seconds: $0)) }
+            player = players[0]
+            player.prepareToPlay()
+            player.play()
+            let commands = MPRemoteCommandCenter.shared()
+            register(commands.playCommand) { self.player.play() }
+            register(commands.pauseCommand) { self.player.pause() }
+            register(commands.togglePlayPauseCommand) { if self.player.isPlaying { self.player.pause() } else { self.player.play() } }
+            register(commands.nextTrackCommand) { self.changeTrack() }
+            register(commands.previousTrackCommand) { self.changeTrack() }
+            let seek = commands.changePlaybackPositionCommand
+            seek.isEnabled = true
+            targets.append((seek, seek.addTarget { event in
+                guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+                let position = event.positionTime
+                Task { @MainActor in self.player.currentTime = min(max(0, position), self.player.duration); self.publish() }
+                return .success
+            }))
+            timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+                Task { @MainActor in self?.publish() }
+            }
+            publish()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 90) { NSApp.terminate(nil) }
+        } catch {
+            fputs("Media fixture could not create silent audio.\n", stderr)
+            NSApp.terminate(nil)
+        }
+    }
+
+    private func changeTrack() {
+        let playing = player.isPlaying
+        player.stop()
+        track = track == 1 ? 2 : 1
+        player = players[track - 1]
+        player.currentTime = 0
+        if playing { player.play() }
+    }
+
+    private func register(_ command: MPRemoteCommand, action: @escaping @MainActor () -> Void) {
+        command.isEnabled = true
+        targets.append((command, command.addTarget { _ in
+            Task { @MainActor in action(); self.publish() }
+            return .success
+        }))
+    }
+
+    private func publish() {
+        guard let player else { return }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [
+            MPMediaItemPropertyTitle: "OpenCove verification \(track)",
+            MPMediaItemPropertyArtist: "Local silent playback",
+            MPMediaItemPropertyAlbumTitle: "End-to-end fixture",
+            MPMediaItemPropertyArtwork: artwork,
+            MPMediaItemPropertyPlaybackDuration: metadataDuration ?? player.duration,
+            MPMediaItemPropertyPersistentID: UInt64(track),
+            MPNowPlayingInfoPropertyExternalContentIdentifier: "org.opencove.MediaFixture.track.\(track)",
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: player.currentTime,
+            MPNowPlayingInfoPropertyPlaybackRate: player.isPlaying ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
+        ]
+        MPNowPlayingInfoCenter.default().playbackState = player.isPlaying ? .playing : .paused
+        let state: [String: Any] = ["track": track, "playing": player.isPlaying, "elapsed": player.currentTime, "duration": player.duration, "pid": ProcessInfo.processInfo.processIdentifier]
+        if let data = try? JSONSerialization.data(withJSONObject: state) { try? data.write(to: statusURL, options: .atomic) }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        timer?.invalidate()
+        player?.stop()
+        for (command, target) in targets { command.removeTarget(target) }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        MPNowPlayingInfoCenter.default().playbackState = .stopped
+    }
+
+    private static func silence(seconds: UInt32) -> Data {
+        let sampleRate: UInt32 = 8000
+        let dataBytes: UInt32 = sampleRate * 2 * seconds
+        var data = Data()
+        func text(_ string: String) { data.append(Data(string.utf8)) }
+        func value<T: FixedWidthInteger>(_ number: T) { var n = number.littleEndian; withUnsafeBytes(of: &n) { data.append(contentsOf: $0) } }
+        text("RIFF"); value(dataBytes + 36); text("WAVEfmt "); value(UInt32(16)); value(UInt16(1)); value(UInt16(1))
+        value(sampleRate); value(sampleRate * 2); value(UInt16(2)); value(UInt16(16)); text("data"); value(dataBytes)
+        data.append(Data(count: Int(dataBytes)))
+        return data
+    }
+}

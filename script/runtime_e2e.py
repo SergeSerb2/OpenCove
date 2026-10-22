@@ -1,0 +1,615 @@
+#!/usr/bin/env python3
+"""Real packaged-app restart/recovery checks. No mocks, desktop input, or grants.
+
+Requires an existing uniquely built development --app. Uses fresh private data
+only. --media-fixture explicitly opts into playing/controlling our own silent
+MediaPlayer fixture; the default never starts or controls a media player.
+Evidence is private and excludes descriptors, tokens, and personal media data.
+"""
+import argparse
+import base64
+from contextlib import contextmanager
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import plistlib
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+
+from verify_control import ControlClient, ControlFailure, bundle_identity, check_bundle
+
+ROOT = Path(__file__).resolve().parent.parent
+SAFE = {key: False for key in (
+    "enablePrivateAPIs", "enableCalendar", "enableMedia", "allowAppleScript",
+    "enableWeather", "showLiveWaveform", "enableHaptics", "enableNotifications",
+    "mirrorSystemNotifications", "replaceSystemHUDs", "launchAtLogin",
+    "showOnLockScreen", "showLockScreenPrivateContent")}
+SAFE.update(completedOnboarding=False, enableFileTray=True, enableTimer=True)
+FIXTURE_ID = "org.opencove.MediaFixture"
+
+
+def require(value, message):
+    if not value:
+        raise ControlFailure(message)
+
+
+def write_private(path, data):
+    with path.open("xb") as file:
+        os.chmod(path, 0o600)
+        file.write(data)
+
+
+def json_bytes(value):
+    return json.dumps(value, separators=(",", ":"), allow_nan=False).encode()
+
+
+def wait_for(read, predicate, message, timeout=12):
+    deadline = time.monotonic() + timeout
+    while True:
+        value = read()
+        if predicate(value):
+            return value
+        if time.monotonic() >= deadline:
+            raise ControlFailure(message)
+        time.sleep(0.15)
+
+
+def stop(child):
+    if child is not None and child.poll() is None:
+        child.terminate()
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait(timeout=5)
+
+
+class Runtime:
+    def __init__(self, app, evidence):
+        self.bundle, self.info = bundle_identity(app)
+        require(self.info["CFBundleIdentifier"] == "org.opencove.OpenCove.dev",
+                "Use a development bundle; release login-item state is out of scope.")
+        self.evidence = evidence
+        self.results = []
+        self.owners = []
+        self.launches = 0
+
+    def record(self, flow, **details):
+        self.results.append(dict(flow=flow, passed=True, **details))
+        self.flush()
+        print("PASS " + flow, flush=True)
+
+    def flush(self):
+        value = {"bundlePath": str(self.bundle), "sourceTreeSHA256": self.info["OpenCoveSourceTreeSHA256"],
+                 "callerSHA256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                 "launches": self.launches, "results": self.results, "actualSnapshotOwners": self.owners}
+        (self.evidence / "results.json").write_bytes(json_bytes(value))
+        (self.evidence / "results.json").chmod(0o600)
+
+    def directory(self, name, *, preferences=None, raw=None):
+        path = self.evidence / name
+        path.mkdir(mode=0o700)
+        write_private(path / "preferences.json", raw if raw is not None else json_bytes(
+            SAFE if preferences is None else preferences))
+        write_private(path / "activity-settings.json", b'{"nativeNotificationsEnabled":false}')
+        return path
+
+    @contextmanager
+    def app(self, directory, *, launch_directory=None):
+        self.launches += 1
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+        # No inherited fixture/data/server controls can select another owner.
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith(("OPENCOVE_", "ALCOVE_"))}
+        environment["OPENCOVE_DATA_DIR"] = str(launch_directory or directory)
+        with (directory / ("app-%02d.log" % self.launches)).open("xb") as log:
+            child = subprocess.Popen([str(self.bundle / "Contents/MacOS/OpenCove"),
+                                      "--control-port", str(port), "--no-onboarding"],
+                                     env=environment, stdout=log, stderr=log, umask=0o077)
+            try:
+                deadline = time.monotonic() + 15
+                while True:
+                    require(child.poll() is None, "Owned app exited before readiness; see its private app log.")
+                    try:
+                        client = ControlClient(directory)
+                        state = client.request(timeout=1)
+                        require(state["pid"] == child.pid, "Another process answered for the owned data directory.")
+                        check_bundle(state, self.bundle, self.info, self.info["CFBundleVersion"])
+                        self.owners.append({key: state[key] for key in (
+                            "pid", "bundlePath", "sourceTreeSHA256", "bundleIdentifier", "build", "dataDirectory")})
+                        self.flush()
+                        break
+                    except (ControlFailure, OSError, urllib.error.URLError):
+                        if time.monotonic() >= deadline:
+                            raise ControlFailure("Owned app readiness timed out; see its private app log.") from None
+                        time.sleep(0.15)
+                yield client
+            finally:
+                stop(child)
+                # The only retained caller location is this path, never its contents.
+                (directory / "control.json").unlink(missing_ok=True)
+
+    def backup(self, directory, pattern, original):
+        backups = list(directory.glob(pattern))
+        require(len(backups) == 1, "Expected exactly one original recovery backup.")
+        require(backups[0].read_bytes() == original, "Recovery backup changed original bytes.")
+        require(stat.S_IMODE(backups[0].stat().st_mode) == 0o600, "Recovery backup is not mode 0600.")
+
+    def preferences(self):
+        for name, original in (
+            ("field-recovery", json_bytes({**SAFE, "reduceMotion": "damaged", "notchWidth": 999,
+                                            "accent": "bad", "enableCalendar": False})),
+            ("whole-recovery", b'{"invalid": [\xff\x00\n')):
+            directory = self.directory(name, raw=original)
+            with self.app(directory) as client:
+                state = client.request()
+                for key, value in SAFE.items():
+                    if value is False and key not in ("enableNotifications", "enableHaptics"):
+                        require(state["preferences"][key] is False, "Recovery re-enabled an integration.")
+                require(not state["preferences"]["allowAppleScript"] and state["errors"], "Recovery did not retain opt-out/error.")
+                require((directory / "preferences.json").read_bytes() == original, "Startup overwrote damaged preferences.")
+                if name == "field-recovery":
+                    require(state["preferences"]["notchWidth"] == 400 and not state["preferences"]["reduceMotion"],
+                            "Field recovery did not normalize malformed settings.")
+                saved = client.command("preferences", values={"reduceMotion": True})
+                require(saved["preferences"]["reduceMotion"], "Actual recovery save was not applied.")
+            self.backup(directory, "preferences.recovery.*.json", original)
+            with self.app(directory) as client:
+                restored = client.request()["preferences"]
+                require(restored["reduceMotion"] and not restored["enablePrivateAPIs"] and
+                        not restored["enableCalendar"] and not restored["enableMedia"],
+                        "Recovered settings/opt-outs did not survive restart.")
+            self.backup(directory, "preferences.recovery.*.json", original)
+            self.record(name + ": real save/restart and byte-exact 0600 original backup")
+
+        directory = self.directory("onboarding-save-failure")
+        with self.app(directory) as client:
+            destination = directory / "preferences.json"
+            original = destination.read_bytes()
+            destination.rename(directory / "held-preferences.json")
+            destination.mkdir(mode=0o700)
+            try:
+                client.command("onboarding.complete", expected=500)
+                state = client.request()
+                require(state["preferences"]["completedOnboarding"] is False and state["errors"],
+                        "Failed onboarding save still completed setup.")
+            finally:
+                destination.rmdir()
+                (directory / "held-preferences.json").rename(destination)
+            require(destination.read_bytes() == original, "Failed save replaced original settings.")
+            # A real development login-registration failure can still write JSON.
+            client.command("preferences", expected=500,
+                           values={**SAFE, "completedOnboarding": True, "launchAtLogin": True})
+            state = client.request()
+            require(not state["preferences"]["completedOnboarding"], "Overall save failure completed onboarding.")
+            require(not json.loads(destination.read_bytes())["completedOnboarding"], "Failed completion persisted true.")
+        with self.app(directory) as client:
+            require(not client.request()["preferences"]["completedOnboarding"], "Failed completion survived restart as true.")
+            client.command("onboarding.complete")
+        with self.app(directory) as client:
+            require(client.request()["preferences"]["completedOnboarding"], "Successful completion did not survive restart.")
+        self.record("onboarding: failed destination and login saves stay incomplete; retry/restart succeeds")
+
+    def timers(self):
+        directory = self.directory("timer-restart")
+        with self.app(directory) as client:
+            started = client.command("timer.start", seconds=9)["timer"]
+        with self.app(directory) as client:
+            restored = client.request()["timer"]
+            require(restored["running"] and restored["endsAt"] == started["endsAt"], "Restart replaced the running deadline.")
+            paused = client.command("timer.pause")["timer"]
+        time.sleep(0.4)
+        with self.app(directory) as client:
+            restored = client.request()["timer"]
+            require(not restored["running"] and abs(restored["remaining"] - paused["remaining"]) < 0.05,
+                    "Paused remaining time changed across process restart.")
+            client.command("timer.start", seconds=2)
+        time.sleep(2.2)
+        with self.app(directory) as client:
+            state = wait_for(client.request, lambda s: not s["timer"]["running"] and s["timer"]["remaining"] == 0,
+                             "Overdue timer did not finish after process restart.")
+            require(any(n["title"] == "Timer finished" for n in state["notifications"]),
+                    "Overdue timer did not report completion through activity notification.")
+        self.record("timer: running deadline, pause persistence, completion while process stopped")
+
+    def timer_corruption(self):
+        directory = self.directory("timer-corruption")
+        original = b'{"running":true,"duration":-9,"remaining":-2,"endsAt":1}\n'
+        write_private(directory / "activity-timer.json", original)
+        with self.app(directory) as client:
+            state = client.request()
+            require(not state["timer"]["running"] and state["timer"]["remaining"] == 0,
+                    "Corrupt timer was restored as active.")
+            require(any("timer" in e.lower() for e in state["errors"]), "Corrupt timer recovery is invisible.")
+            require((directory / "activity-timer.json").read_bytes() == original, "Startup overwrote corrupt timer.")
+            repaired = client.command("timer.start", seconds=30)
+            require(repaired["timer"]["running"] and repaired["timer"]["duration"] == 30,
+                    "Successful timer recovery did not publish its running timer.")
+            require(any("activity-timer.json" in notice and "preserved" in notice for notice in repaired.get("notices", [])),
+                    "Successful timer recovery did not expose a separate notice.")
+            for surface in ("settings", "onboarding"):
+                write_private(directory / (surface + ".png"), client.request("/render?surface=" + surface))
+            client.command("timer.cancel")
+        self.backup(directory, "activity-timer.json.recovery.*", original)
+        with self.app(directory) as client:
+            require(client.request()["timer"]["remaining"] == 0, "Repaired timer failed restart.")
+        self.record("timer: corrupt persisted input safely recovers and keeps exact private backup")
+
+    def calendar(self):
+        directory = self.directory("calendar-dangling-link", preferences={**SAFE, "enableCalendar": True})
+        link = directory / "calendar-settings.json"
+        target = directory / "never-created-calendar-target.json"
+        link.symlink_to(target)
+        with self.app(directory) as client:
+            state = client.request()
+            require(not state["events"] and not state.get("calendarActivity"), "Paused calendar exposed events.")
+            require(any("Calendar reads are paused" in e for e in state["errors"]), "Dangling policy did not pause calendar recovery.")
+            client.command("calendar.refresh")
+            require(not client.request()["events"], "Calendar refresh bypassed recovery pause.")
+        require(link.is_symlink() and not target.exists(), "Calendar recovery changed the symlink/target.")
+        self.record("calendar: dangling policy link pauses real reads without an authorization request")
+
+    def files(self):
+        directory = self.directory("tray-restart")
+        sources = self.evidence / "owned-source-files"
+        sources.mkdir(mode=0o700)
+        paths = []
+        for number in range(1026):
+            path = sources / ("source-%04d.txt" % number)
+            write_private(path, ("OpenCove source %d\n" % number).encode())
+            paths.append(str(path))
+        digests = {path: hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in paths}
+        with self.app(directory) as client:
+            first = client.command("files.add", paths=paths[:1])["files"]
+            persisted_entry = json.loads((directory / "activity-tray.json").read_bytes())[0]
+            require(client.command("files.add", paths=paths[:1])["files"] == first, "Actual file import failed deduplication.")
+            client.command("files.add", paths=[str(sources / "missing")], expected=400)
+            tray = directory / "activity-tray.json"
+            tray.rename(directory / "held-tray.json")
+            tray.mkdir(mode=0o700)
+            try:
+                messages = []
+                for _ in range(2):
+                    client.command("files.add", paths=paths[1:2], expected=500)
+                    failed = client.request()
+                    require(failed["files"] == first, "Failed tray save published an unsaved import.")
+                    message = next((e for e in failed["errors"] if "activity-tray.json" in e), None)
+                    require(message is not None, "Real tray save failure did not publish its diagnostic.")
+                    messages.append(message)
+                require(messages[0] == messages[1], "Repeated persistence failure did not preserve its same-text diagnostic.")
+                succeeded = client.command("timer.start", seconds=30)
+                require(succeeded["timer"]["running"] and messages[-1] in succeeded["errors"],
+                        "Unrelated success was failed by, or erased, the previous activity diagnostic.")
+                client.command("timer.cancel")
+            finally:
+                tray.rmdir()
+                (directory / "held-tray.json").rename(tray)
+            for start in range(1, 1023, 100):
+                client.command("files.add", paths=paths[start:min(start + 100, 1023)])
+            previous = client.request()["files"]
+            require(len(previous) == 1023, "Real imports did not reach 1023 files.")
+            saved = tray.read_bytes()
+            client.command("files.add", paths=paths[1023:1025], expected=500)
+            require(client.request()["files"] == previous and tray.read_bytes() == saved,
+                    "Cross-limit import did not preserve the complete previous tray.")
+            full = client.command("files.add", paths=paths[1023:1024])["files"]
+            require(len(full) == 1024, "The documented tray capacity was not reachable.")
+            require(len(client.command("files.add", paths=paths[:1])["files"]) == 1024,
+                    "Duplicate repair failed at capacity.")
+            saved = tray.read_bytes()
+            client.command("files.add", paths=paths[1024:1025], expected=500)
+            require(tray.read_bytes() == saved, "Refused capacity import changed saved tray.")
+        with self.app(directory) as client:
+            state = client.request()
+            require(len(state["files"]) == 1024 and all(f["isAvailable"] for f in state["files"]),
+                    "Real bookmarks/files failed process restart.")
+            removed = state["files"][0]["id"]
+            require(len(client.command("files.remove", id=removed)["files"]) == 1023, "Real tray removal failed.")
+            require(not client.command("files.clear")["files"], "Real tray clear failed.")
+        require(all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest for path, digest in digests.items()),
+                "Tray operation changed an owned source file.")
+        self.record("files: real add/deduplication, 1024 limit, rejected batch/save, bookmark restart, remove/clear preserve sources")
+
+        # Real startup input with a damaged oversized bookmark, pointing only at
+        # our real file. The API deliberately omits bookmark bytes from /state.
+        # Keep the complete saved document just below the 16 MiB read bound.
+        directory = self.directory("tray-byte-bound")
+        limit = 16_777_216
+        persisted_entry["bookmarkData"] = ""
+        overhead = len(json_bytes([persisted_entry]))
+        persisted_entry["bookmarkData"] = "A" * (((limit - overhead - 512) // 4) * 4)
+        original = json_bytes([persisted_entry])
+        write_private(directory / "activity-tray.json", original)
+        with self.app(directory) as client:
+            previous = client.request()["files"]
+            require(len(previous) == 1, "Bounded damaged-bookmark tray did not load as real startup input.")
+            saved = (directory / "activity-tray.json").read_bytes()
+            require(len(saved) <= limit, "Startup wrote an oversized tray.")
+            client.command("files.add", paths=paths[1:2], expected=500)
+            require(client.request()["files"] == previous and (directory / "activity-tray.json").read_bytes() == saved,
+                    "Byte-limit rejection changed the previous tray.")
+        with self.app(directory) as client:
+            require(len(client.request()["files"]) == 1, "Bounded tray was unreadable after rejected import/restart.")
+        self.record("files: actual near-16-MiB damaged-bookmark startup rejects ordinary import and remains restart-readable")
+
+        directory = self.directory("tray-unsafe-backup")
+        link = directory / "activity-tray.json"
+        target = directory / "never-created-tray-target.json"
+        link.symlink_to(target)
+        with self.app(directory) as client:
+            for _ in range(2):
+                client.command("files.add", paths=paths[:1], expected=500)
+                require(not client.request()["files"] and link.is_symlink() and not target.exists(),
+                        "Failed safe backup replaced the damaged tray or published an unsaved import.")
+            succeeded = client.command("timer.start", seconds=30)
+            require(succeeded["timer"]["running"] and succeeded["errors"],
+                    "Previous backup failure made a later successful activity fail or lose diagnostics.")
+            client.command("timer.cancel")
+        require(not list(directory.glob("activity-tray.json.recovery.*")), "Unsafe input unexpectedly received a followed backup.")
+        self.record("files: repeated failed safe backup preserves symlink/target/state; unrelated success remains HTTP 200")
+
+    def temp_alias(self):
+        # The documented /tmp path must work as supplied, before canonicalization.
+        with tempfile.TemporaryDirectory(prefix="opencove-runtime-", dir="/tmp") as temporary:
+            directory = Path(temporary)
+            write_private(directory / "preferences.json", json_bytes(SAFE))
+            with self.app(directory) as client:
+                require(Path(client.request()["dataDirectory"]).resolve() == directory.resolve(),
+                        "The /tmp launch selected a different data directory.")
+        self.record("documented /tmp private-directory launch reaches the exact packaged app")
+
+    def storage_alias(self):
+        routing = self.evidence / "storage-routing"
+        routing.mkdir(mode=0o700)
+        for name in ("A", "B"):
+            (routing / name).mkdir(mode=0o700)
+        first = self.directory("storage-routing/A/data")
+        second = self.directory("storage-routing/B/data")
+        write_private(second / "sentinel.txt", b"OpenCove routing B must stay untouched\n")
+        source = routing / "owned-source.txt"
+        write_private(source, b"OpenCove routing source must stay unchanged\n")
+        source_bytes = source.read_bytes()
+
+        def inventory(directory):
+            return {str(path.relative_to(directory)): {
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "mode": stat.S_IMODE(path.stat().st_mode)}
+                for path in directory.rglob("*") if path.is_file()}
+
+        untouched = inventory(second)
+        alias = routing / "current"
+        alias.symlink_to(routing / "A", target_is_directory=True)
+        with self.app(first, launch_directory=alias / "data") as client:
+            before = client.request()
+            require(before["dataDirectory"] == str(first.resolve()),
+                    "Actual snapshot did not publish the physical locked A directory.")
+            require((first / "instance.lock").is_file(), "Physical A has no instance lock.")
+            alias.unlink()
+            alias.symlink_to(routing / "B", target_is_directory=True)
+            require((alias / "data").resolve() == second.resolve(), "Owned intermediate routing alias did not move to B.")
+            preferences = client.command("preferences", values={"reduceMotion": True})
+            require(preferences["dataDirectory"] == str(first.resolve()), "Preferences command moved the published owner to B.")
+            timer = client.command("timer.start", seconds=30)
+            files = client.command("files.add", paths=[str(source)])
+            require(timer["timer"]["running"] and len(files["files"]) == 1,
+                    "Ordinary routing-regression commands did not apply through the actual API.")
+            require(json.loads((first / "preferences.json").read_bytes())["reduceMotion"],
+                    "Preferences write did not stay in A.")
+            require(json.loads((first / "activity-timer.json").read_bytes())["running"],
+                    "Timer write did not stay in A.")
+            require(len(json.loads((first / "activity-tray.json").read_bytes())) == 1,
+                    "File tray write did not stay in A.")
+            require(inventory(second) == untouched and not (second / "instance.lock").exists()
+                    and not (second / "control.json").exists(), "Retargeted B received app state, instance lock or descriptor.")
+            client.command("timer.cancel")
+            client.command("files.clear")
+        require(inventory(second) == untouched and source.read_bytes() == source_bytes,
+                "Routing cleanup changed B or its owned source file.")
+        with self.app(first) as client:
+            require(client.request()["preferences"]["reduceMotion"], "Pinned A settings did not survive process restart.")
+        self.record("storage: actual intermediate alias A-to-B retarget leaves all later writes/lock/control in physical A")
+
+    def media(self, pathological=False):
+        work = self.evidence / "media-fixture"
+        work.mkdir(mode=0o700)
+        bundle = work / "MediaFixture.app"
+        executable = bundle / "Contents/MacOS/MediaFixture"
+        executable.parent.mkdir(parents=True)
+        (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps({
+            "CFBundleIdentifier": FIXTURE_ID, "CFBundleExecutable": "MediaFixture",
+            "CFBundleName": "OpenCove Media Fixture", "CFBundlePackageType": "APPL", "LSUIElement": True}))
+        with (work / "compile.log").open("wb") as log:
+            subprocess.run(["xcrun", "swiftc", "-swift-version", "5", "-parse-as-library",
+                            str(ROOT / "script/MediaFixture.swift"), "-o", str(executable)],
+                           stdout=log, stderr=log, check=True, timeout=90)
+            subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none", str(bundle)],
+                           stdout=log, stderr=log, check=True, timeout=15)
+        environment = {k: v for k, v in os.environ.items() if not k.startswith("OPENCOVE_")}
+        for extra, code in ((["--help"], 0), ([], 2), (["--state", "relative.json"], 2),
+                            (["--state", str(work / "invalid.json"), "--metadata-duration", "nan"], 2)):
+            result = subprocess.run([str(executable), *extra], env=environment, capture_output=True, timeout=5)
+            require(result.returncode == code, "Fixture help/default/invalid options did not fail safely before playback.")
+        self.record("silent fixture actual CLI: help, absent env, relative path and nonfinite duration safety")
+
+        adapter = self.bundle / "Contents/Resources/OpenCoveMediaAdapter.js"
+        runner = ["/usr/bin/osascript", "-l", "JavaScript"]
+        if not adapter.is_file():
+            adapter = self.bundle / "Contents/Resources/OpenCoveMediaAdapter.swift"
+            runner = ["/usr/bin/swift", "-swift-version", "5"]
+
+        def read_adapter(*arguments):
+            result = subprocess.run([*runner, str(adapter), *arguments],
+                                    capture_output=True, timeout=25)
+            # Never persist/print another player's raw metadata.
+            payload = plistlib.loads(base64.b64decode(json.loads(result.stdout)["snapshot"]))
+            return result.returncode, payload
+
+        def session(name, metadata=None):
+            state_path = work / (name + ".json")
+            arguments = [str(executable), "--state", str(state_path)]
+            if metadata is not None:
+                arguments += ["--metadata-duration", str(metadata)]
+            return state_path, subprocess.Popen(arguments, env=environment, stdout=subprocess.DEVNULL,
+                                                stderr=subprocess.DEVNULL, umask=0o077)
+
+        fixture_state, child = session("normal")
+        try:
+            wait_for(lambda: fixture_state.exists(), bool, "Owned silent fixture did not start.")
+            directory = self.directory("media-app", preferences={**SAFE, "enableMedia": True, "enablePrivateAPIs": True})
+            with self.app(directory) as client:
+                def fixture():
+                    require(child.poll() is None, "Owned fixture stopped; no media command sent.")
+                    value = json.loads(fixture_state.read_bytes())
+                    require(value["pid"] == child.pid, "Fixture state PID changed; no media command sent.")
+                    return value
+
+                def selected():
+                    value = client.request()["media"]
+                    require(value.get("sourceBundleIdentifier") == FIXTURE_ID and value.get("available"),
+                            "Selected media is not the owned fixture; no media command sent.")
+                    require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
+                            "Current native source is not the owned fixture; no media command sent.")
+                    fixture()
+                    return value
+
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
+                         "OpenCove did not select the real silent fixture; personal player was not controlled.", 25)
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID and
+                         s["media"].get("supportsPlayPause"), "Fixture transport capability not published.")
+                state = selected()
+                wait_for(client.request, lambda s: s.get("artworkAvailable") and
+                         s["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
+                         "Original fixture artwork did not reach the actual app.", 20)
+                client.command("selectTab", tab="media")
+                write_private(directory / "media-artwork.png", client.request("/render?surface=notch"))
+                client.command("media.playPause")
+                wait_for(fixture, lambda s: not s["playing"], "Actual fixture pause was not delivered.")
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID and
+                         not s["media"].get("isPlaying"), "The actual app kept stale playing state after pause.")
+                selected()
+                client.command("media.playPause")
+                wait_for(fixture, lambda s: s["playing"], "Actual fixture play was not delivered.")
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID and
+                         s["media"].get("isPlaying"), "The actual app kept stale paused state after play.")
+                state = wait_for(client.request, lambda s: s["media"].get("supportsSeek"),
+                                 "Fixture did not expose safe seek capability.")
+                selected()
+                client.command("media.seek", seconds=17)
+                wait_for(fixture, lambda s: 16 <= s["elapsed"] <= 23, "Actual native seek did not reach the fixture.")
+                native = read_adapter("--read")[1]
+                require(native.get("bundleID") == FIXTURE_ID, "Fixture lost selection before stale-item check.")
+                old_item = native.get("info", {}).get("kMRMediaRemoteNowPlayingInfoContentItemIdentifier")
+                require(isinstance(old_item, str) and old_item, "Native fixture has no actual content-item ID.")
+                selected()
+                old_track = fixture()["track"]
+                client.command("media.next")
+                wait_for(fixture, lambda s: s["track"] != old_track, "Actual fixture next command was not delivered.")
+                expected_title = "OpenCove verification " + str(fixture()["track"])
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID and
+                         s["media"].get("title") == expected_title, "The actual app kept the old item after next.")
+                observations = []
+
+                def native_transition():
+                    current = read_adapter("--read")[1]
+                    item = current.get("info", {}).get("kMRMediaRemoteNowPlayingInfoContentItemIdentifier")
+                    observations.append({"sourceIsFixture": current.get("bundleID") == FIXTURE_ID,
+                                         "itemPresent": isinstance(item, str) and bool(item), "itemChanged": item != old_item})
+                    (work / "item-transition-observations.json").write_bytes(json_bytes(observations))
+                    return current
+
+                # Public MediaPlayer publication and MediaRemote observation
+                # are asynchronous. Wait for the real changed item, never a
+                # fixed delay or an assumed identity derived from our title.
+                wait_for(native_transition, lambda current: current.get("bundleID") == FIXTURE_ID and
+                         isinstance(current.get("info", {}).get("kMRMediaRemoteNowPlayingInfoContentItemIdentifier"), str) and
+                         current["info"]["kMRMediaRemoteNowPlayingInfoContentItemIdentifier"] not in ("", old_item),
+                         "Native current-item identifier did not publish the real fixture track transition.", 15)
+                selected()
+                code, _ = read_adapter("--seek", "60", "--source", FIXTURE_ID, "--item", old_item)
+                require(code != 0 and fixture()["elapsed"] < 30, "Stale native item seek was not rejected.")
+                self.record("media: owned real fixture readback, pause/play, normal app seek, next, stale adapter item rejection",
+                            metadataBackend=state["media"]["metadataBackend"], originalArtwork=True)
+        finally:
+            stop(child)
+
+        if pathological:
+            fixture_state, child = session("finite-extreme", 1e300)
+            try:
+                wait_for(lambda: fixture_state.exists(), bool, "Extreme finite fixture did not start.")
+                directory = self.directory("media-finite-render", preferences={**SAFE, "enableMedia": True, "enablePrivateAPIs": True})
+                with self.app(directory) as client:
+                    state = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                                     and s["media"].get("duration", 0) > 1e250,
+                                     "Extreme finite duration did not reach the actual app snapshot.", 25)
+                    require(math.isfinite(state["media"]["duration"]), "Native duration was not finite.")
+                    client.command("selectTab", tab="media")
+                    for surface in ("notch", "lock"):
+                        png = client.request("/render?surface=" + surface)
+                        write_private(directory / (surface + ".png"), png)
+                    require(client.request()["pid"] > 0, "Actual renderer terminated on finite duration.")
+                self.record("media: actual native expanded-notch/lock renderer survives extreme finite duration metadata",
+                            publishedDuration=state["media"]["duration"])
+            finally:
+                stop(child)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--app", required=True, type=Path)
+    parser.add_argument("--evidence-dir", type=Path, help="Fresh private evidence path; defaults to a unique .local directory")
+    parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
+    parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
+    parser.add_argument("--only", choices=("storage", "storage-alias", "media", "preferences", "timers", "timer-corruption", "calendar", "files"),
+                        help="Run one real flow group for targeted follow-up")
+    args = parser.parse_args()
+    if args.pathological_duration and not args.media_fixture:
+        parser.error("--pathological-duration requires --media-fixture")
+    if args.only == "media" and not args.media_fixture:
+        parser.error("--only media requires --media-fixture")
+    os.umask(0o077)
+    runtime = None
+    try:
+        if args.evidence_dir:
+            evidence = args.evidence_dir.expanduser().absolute()
+            evidence.mkdir(mode=0o700, parents=True, exist_ok=False)
+        else:
+            parent = ROOT / ".local/verification/public"
+            parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            evidence = Path(tempfile.mkdtemp(prefix="runtime-", dir=parent))
+        runtime = Runtime(args.app, evidence)
+        groups = [("temp", runtime.temp_alias), ("storage-alias", runtime.storage_alias), ("preferences", runtime.preferences),
+                  ("timers", runtime.timers), ("timer-corruption", runtime.timer_corruption),
+                  ("calendar", runtime.calendar), ("files", runtime.files)]
+        if args.media_fixture and args.only != "storage":
+            groups.append(("media", lambda: runtime.media(args.pathological_duration)))
+        for name, operation in groups:
+            if args.only not in (None, "storage", name):
+                continue
+            try:
+                operation()
+            except (OSError, ValueError, KeyError, ControlFailure, urllib.error.URLError, subprocess.SubprocessError) as error:
+                runtime.results.append({"flow": name, "passed": False, "error": str(error)})
+                runtime.flush()
+                print("FAIL " + name + ": " + str(error), flush=True)
+        runtime.flush()
+        print("Private evidence: " + str(evidence))
+        return int(any(not result["passed"] for result in runtime.results))
+    except (OSError, ValueError, KeyError, ControlFailure, urllib.error.URLError, subprocess.SubprocessError) as error:
+        if runtime:
+            runtime.results.append({"passed": False, "error": str(error)})
+            runtime.flush()
+        print("Runtime verification failed: " + str(error), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

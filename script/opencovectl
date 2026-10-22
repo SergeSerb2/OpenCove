@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Control an explicitly enabled OpenCove loopback API. Only 'url' prints a token."""
+import argparse
+import json
+import os
+from pathlib import Path
+import sys
+import urllib.error
+
+from verify_control import ControlClient, ControlFailure
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data-dir", type=Path, default=Path(os.environ.get("OPENCOVE_DATA_DIR", ROOT / ".local/runtime")))
+    commands = parser.add_subparsers(dest="operation", required=True)
+    commands.add_parser("state")
+    commands.add_parser("url", help="Print the explicit local browser URL, with its private token in the fragment")
+    command = commands.add_parser("command")
+    command.add_argument("json", help="JSON object, or - to read at most 65536 bytes from standard input")
+    render = commands.add_parser("render")
+    render.add_argument("--surface", choices=["notch", "lock", "onboarding", "settings"], default="notch")
+    render.add_argument("--output", type=Path, required=True, help="New PNG path; existing files are never overwritten")
+    args = parser.parse_args()
+    try:
+        client = ControlClient(args.data_dir)
+        # Authenticate the descriptor's actual owner before rendering or sending a mutation.
+        state = client.request()
+        if args.operation == "url":
+            print(client.base + "/#token=" + client.config["token"])
+            return 0
+        if args.operation == "command":
+            raw = sys.stdin.buffer.read(65537) if args.json == "-" else args.json.encode("utf-8")
+            if len(raw) > 65536:
+                raise ControlFailure("The JSON command exceeds 65536 bytes.")
+            try:
+                value = json.loads(raw)
+            except ValueError:
+                raise ControlFailure("Command must be a valid JSON object.") from None
+            if not isinstance(value, dict):
+                raise ControlFailure("Command must be a JSON object.")
+            state = client.request("/command", value)
+        elif args.operation == "render":
+            data = client.request("/render?surface=" + args.surface)
+            output = args.output.expanduser()
+            # Exclusive creation also rejects a final-component symlink.
+            descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            with os.fdopen(descriptor, "wb") as file:
+                file.write(data)
+            print(output)
+            return 0
+        print(json.dumps(state, indent=2, allow_nan=False))
+        return 0
+    except ControlFailure as error:
+        print(f"OpenCove controls: {error}", file=sys.stderr)
+    except FileExistsError:
+        print("OpenCove controls: render output already exists. Choose a new output path; no existing file was overwritten.", file=sys.stderr)
+    except urllib.error.URLError:
+        print("OpenCove controls: the local owner did not answer. Start the intended app with --control-port and check --data-dir.", file=sys.stderr)
+    except OSError as error:
+        location = f" at {os.fsdecode(error.filename)!r}" if error.filename is not None else ""
+        print(f"OpenCove controls: {error.strerror or type(error).__name__}{location}. Check --data-dir or the render output path.", file=sys.stderr)
+    except (ValueError, KeyError, TypeError):
+        print("OpenCove controls: command or response contains invalid values.", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

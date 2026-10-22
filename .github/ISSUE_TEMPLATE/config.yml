@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Sensitive security report
+    url: https://github.com/SergeSerb2/OpenCove/blob/main/SECURITY.md
+    about: Read the private-reporting route before posting sensitive details.
