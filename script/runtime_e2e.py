@@ -188,6 +188,134 @@ class Runtime:
         require(backups[0].read_bytes() == original, "Recovery backup changed original bytes.")
         require(stat.S_IMODE(backups[0].stat().st_mode) == 0o600, "Recovery backup is not mode 0600.")
 
+    def outline(self):
+        """Use real preferences, mounted native rendering and process restarts."""
+        directory = self.directory("contrast-outline", preferences={**SAFE, "hideWhenIdle": False,
+            "expandOnHover": False, "hideInFullscreen": False, "reduceMotion": True})
+
+        def panels(snapshot):
+            return sorted((row for row in snapshot["nativeWindows"] if row["title"] == "OpenCove"
+                and not row.get("contentHidden", True)), key=lambda row: row["displayID"])
+
+        def geometry(snapshot):
+            return [{key: row[key] for key in ("displayID", "x", "y", "width", "height")}
+                    for row in panels(snapshot)]
+
+        # Decode actual mounted PNGs with macOS AppKit, already required by the
+        # app. This adds no image-library dependency or substitute renderer.
+        pixel_reader = r'''
+import AppKit
+import Foundation
+let paths = Array(CommandLine.arguments.dropFirst())
+let images = try paths.map { path -> NSBitmapImageRep in
+    let data = try Data(contentsOf: URL(fileURLWithPath: path))
+    guard let image = NSBitmapImageRep(data: data) else { exit(1) }
+    return image
+}
+guard images.count == 3, let first = images.first,
+    images.allSatisfy({ $0.pixelsWide == first.pixelsWide && $0.pixelsHigh == first.pixelsHigh }) else { exit(1) }
+let width = first.pixelsWide, height = first.pixelsHigh
+guard width >= 80, height >= 16, width * height <= 5_000_000 else { exit(2) }
+func rgba(_ image: NSBitmapImageRep, _ x: Int, _ y: Int) -> [Double] {
+    guard let color = image.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { exit(3) }
+    return [color.redComponent, color.greenComponent, color.blueComponent, color.alphaComponent]
+}
+func differs(_ a: [Double], _ b: [Double]) -> Bool { zip(a,b).contains { abs($0.0 - $0.1) > 3.0 / 255 } }
+var changedBorder = 0, changedInterior = 0, restoredBorderMismatch = 0
+let insetX = min(40, width / 4), insetY = min(6, height / 4)
+for y in 0..<height { for x in 0..<width {
+    let a = rgba(images[0],x,y), b = rgba(images[1],x,y), c = rgba(images[2],x,y)
+    let interior = x >= insetX && x < width-insetX && y >= insetY && y < height-insetY
+    if differs(a,b) { if interior { changedInterior += 1 } else { changedBorder += 1 } }
+    if !interior && differs(a,c) { restoredBorderMismatch += 1 }
+} }
+let result: [String: Any] = ["width":width,"height":height,"changedBorder":changedBorder,
+    "changedInterior":changedInterior,"restoredBorderMismatch":restoredBorderMismatch,
+    "onBottomRGBA":rgba(images[1],width/2,height-1),
+    "systemIncreaseContrast":NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast]
+let data = try JSONSerialization.data(withJSONObject:result,options:[.sortedKeys])
+print(String(decoding:data,as:UTF8.self))
+'''
+
+        def capture_cycle(client, prefix):
+            baseline = geometry(client.request())
+            require(bool(baseline), "Outline surface has no mounted panel.")
+            for mode, enabled in (("off", False), ("on", True), ("restored", False)):
+                client.command("preferences", values={"showContrastOutline": enabled})
+                require(geometry(client.request()) == baseline, "Outline changed native panel geometry.")
+                write_private(directory / (prefix + "-" + mode + ".png"), client.request("/render?surface=live-notch"))
+            pixels = subprocess.run(["xcrun", "swift", "-e", pixel_reader,
+                *[str(directory / (prefix + "-" + mode + ".png")) for mode in ("off", "on", "restored")]],
+                capture_output=True, text=True, timeout=45)
+            require(pixels.returncode == 0, "Actual outline PNG decoding failed: " + pixels.stderr[:1000])
+            values = json.loads(pixels.stdout)
+            require(values["changedInterior"] == 0 and values["restoredBorderMismatch"] == 0,
+                    "Outline changed interior content or failed to restore the original border.")
+            if values["systemIncreaseContrast"]:
+                require(values["changedBorder"] == 0 and min(values["onBottomRGBA"][:3]) > 0.85,
+                        "Increase Contrast did not retain an opaque outline with the preference off.")
+            else:
+                require(values["changedBorder"] >= values["width"] // 4
+                    and min(values["onBottomRGBA"][:3]) > 0.25,
+                    "Enabling the outline did not visibly change the mounted native border.")
+            write_private(directory / (prefix + "-pixels.json"), json_bytes(values))
+            return {"surface": prefix, "geometry": baseline, "pixels": values}
+
+        observations = []
+        with self.app(directory) as client:
+            state = wait_for(client.request, lambda s: bool(panels(s)), "Outline panel is missing.")
+            require(state["preferences"]["showContrastOutline"] is False,
+                    "Legacy preferences enabled the optional outline.")
+            client.command("timer.start", seconds=180)
+            client.command("timer.pause")
+            client.command("collapse")
+            wait_for(client.request, lambda s: not s["expanded"] and bool(panels(s))
+                and all(row["height"] <= 80 for row in panels(s)), "Compact outline surface did not settle.")
+            observations.append(capture_cycle(client, "compact"))
+            client.command("selectTab", tab="timer")
+            wait_for(client.request, lambda s: s["expanded"] and bool(panels(s))
+                and all(row["height"] > 150 for row in panels(s)), "Expanded outline did not settle.")
+            observations.append(capture_cycle(client, "expanded"))
+            client.command("preferences", values={"simulateNotch": True})
+            time.sleep(0.2)
+            observations.append(capture_cycle(client, "attached-expanded"))
+            client.command("collapse")
+            wait_for(client.request, lambda s: not s["expanded"] and bool(panels(s))
+                and all(row["height"] <= 80 for row in panels(s)), "Attached compact outline did not settle.")
+            observations.append(capture_cycle(client, "attached-compact"))
+            client.command("preferences", values={"showContrastOutline": True})
+            write_private(directory / "appearance.png", client.request("/render?surface=settings-appearance"))
+            saved = (directory / "preferences.json").read_bytes()
+            for invalid in (1, "true", None):
+                client.command("preferences", values={"showContrastOutline": invalid}, expected=400)
+                require((directory / "preferences.json").read_bytes() == saved,
+                        "Malformed outline input changed saved preferences.")
+                require(client.request()["preferences"]["showContrastOutline"] is True,
+                        "Malformed outline input changed the live choice.")
+            require(json.loads(saved)["showContrastOutline"] is True, "Outline choice was not persisted.")
+        with self.app(directory) as client:
+            state = client.request()
+            require(state["preferences"]["showContrastOutline"] and state["preferences"]["simulateNotch"],
+                    "Outline or shape choice did not survive actual process restart.")
+            client.command("preferences", values={"showContrastOutline": False})
+            require(not client.request()["preferences"]["showContrastOutline"], "Outline did not turn off after restart.")
+            client.command("timer.cancel")
+        original = json_bytes({**SAFE, "showContrastOutline": "damaged"})
+        recovery = self.directory("outline-recovery", raw=original)
+        with self.app(recovery) as client:
+            state = client.request()
+            require(state["preferences"]["showContrastOutline"] is False and state["errors"],
+                    "Malformed saved outline choice was not visibly repaired to off.")
+            require((recovery / "preferences.json").read_bytes() == original,
+                    "Startup overwrote malformed outline preferences.")
+            client.command("preferences", values={"showContrastOutline": True})
+        self.backup(recovery, "preferences.recovery.*.json", original)
+        with self.app(recovery) as client:
+            require(client.request()["preferences"]["showContrastOutline"] is True,
+                    "Recovered outline choice did not survive restart.")
+        write_private(directory / "observations.json", json_bytes(observations))
+        self.record("outline: legacy off, compact/expanded/attached pixel restoration, fixed geometry, strict input, recovery backup and restart")
+
     def shape(self):
         """Exercise the actual panel and renderer; never spoof NSScreen geometry."""
         initial = {**SAFE, "hideWhenIdle": False, "expandOnHover": False,
@@ -2450,7 +2578,7 @@ def main():
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
     parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
-    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "weather", "motion", "displays", "activities", "compact", "shape", "preferences", "timers", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "weather", "motion", "displays", "activities", "compact", "shape", "outline", "preferences", "timers", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
@@ -2479,6 +2607,7 @@ def main():
             groups.append(("activities", runtime.activity_selection))
             groups.append(("compact", runtime.compact_activity))
             groups.append(("shape", runtime.shape))
+            groups.append(("outline", runtime.outline))
         if args.media_fixture and args.only != "storage":
             groups.append(("media", lambda: runtime.media(args.pathological_duration)))
         if args.weather_service and args.only != "storage":

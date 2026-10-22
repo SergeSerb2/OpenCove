@@ -82,6 +82,7 @@ struct CovePreferences: Codable, Equatable {
     var preferBuiltInDisplay = true
     var selectedDisplayUUID = ""
     var simulateNotch = false
+    var showContrastOutline = false
     var showOnLockScreen = false
     var showLockScreenPrivateContent = false
     var hideWhenIdle = true
