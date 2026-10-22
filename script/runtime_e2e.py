@@ -147,6 +147,98 @@ class Runtime:
         require(backups[0].read_bytes() == original, "Recovery backup changed original bytes.")
         require(stat.S_IMODE(backups[0].stat().st_mode) == 0o600, "Recovery backup is not mode 0600.")
 
+    def shape(self):
+        """Exercise the actual panel and renderer; never spoof NSScreen geometry."""
+        initial = {**SAFE, "hideWhenIdle": False, "expandOnHover": False,
+                   "hideInFullscreen": False, "reduceMotion": True, "animationSpeed": 0.25,
+                   "notchWidth": 400, "notchHeight": 64}
+        directory = self.directory("notch-shape", preferences=initial)
+        samples = []
+
+        def panels(state):
+            return sorted((w for w in state["nativeWindows"] if w["title"] == "OpenCove"),
+                          key=lambda w: w["displayID"])
+
+        def matches(rows, target):
+            return len(rows) == len(target) and bool(rows) and all(a["displayID"] == b["displayID"] and
+                all(abs(a[k] - b[k]) <= 1 for k in ("x", "y", "width", "height")) for a, b in zip(rows, target))
+
+        def read(client):
+            state = client.request()
+            require(state["physicalNotch"] == physical, "Simulation changed reported physical camera dimensions.")
+            samples.append({"simulation": state["preferences"]["simulateNotch"], "expanded": state["expanded"],
+                            "panels": panels(state)})
+            return state
+
+        def settled(client, predicate):
+            return wait_for(lambda: read(client), lambda s: bool(panels(s)) and predicate(panels(s)),
+                            "Actual notch shape did not settle.", timeout=3)
+
+        with self.app(directory) as client:
+            state = wait_for(client.request, lambda s: bool(panels(s)), "Native shape panel is missing.")
+            physical = state["physicalNotch"]
+            require(state["preferences"]["simulateNotch"] is False, "Legacy preferences did not default to automatic shape.")
+            client.command("collapse")
+            automatic = panels(settled(client, lambda rows: all(w["height"] <= 65 for w in rows)))
+            client.command("preferences", values={"simulateNotch": True})
+            if physical["width"] < 368 and min(d["width"] for d in state["displaySelection"]["available"]) > 640:
+                state = settled(client, lambda rows: any(a["width"] > b["width"] + 20 for a, b in zip(rows, automatic)))
+            else:
+                state = read(client)
+            simulated = panels(state)
+            for row in simulated:
+                display = next(d for d in state["displaySelection"]["available"] if d["id"] == row["displayID"])
+                require(abs(row["y"] + row["height"] - display["y"] - display["height"]) <= 1,
+                        "Simulated notch did not attach to the real screen edge.")
+            write_private(directory / "simulated-compact.png", client.request("/render?surface=live-notch"))
+            client.command("expand")
+            expanded_simulated = panels(settled(client, lambda rows: all(w["height"] > 150 for w in rows)))
+            write_private(directory / "simulated-expanded.png", client.request("/render?surface=live-notch"))
+            write_private(directory / "appearance.png", client.request("/render?surface=settings-appearance"))
+            client.command("preferences", values={"simulateNotch": False})
+            expanded_automatic = panels(settled(client, lambda rows: not matches(rows, expanded_simulated))) if physical["height"] < 64 else panels(read(client))
+            client.command("preferences", values={"simulateNotch": True, "reduceMotion": False})
+            animated = not client.request()["systemReduceMotion"] and not matches(expanded_automatic, expanded_simulated)
+            if animated:
+                settled(client, lambda rows: not matches(rows, expanded_automatic) and not matches(rows, expanded_simulated))
+            client.command("preferences", values={"reduceMotion": True})
+            settled(client, lambda rows: matches(rows, expanded_simulated))
+            for _ in range(3):
+                time.sleep(0.2)
+                require(matches(panels(read(client)), expanded_simulated), "A stale transition moved the settled simulated notch.")
+            client.command("preferences", values={"notchWidth": 120, "notchHeight": 24})
+            client.command("collapse")
+            state = settled(client, lambda rows: all(w["height"] < 100 for w in rows))
+            require(all(w["width"] >= physical["width"] and w["height"] >= physical["height"] for w in panels(state)),
+                    "Small simulated dimensions overlapped the real camera housing.")
+            client.command("preferences", values={"notchWidth": 400, "notchHeight": 64})
+            settled(client, lambda rows: matches(rows, simulated))
+            saved = (directory / "preferences.json").read_bytes()
+            client.command("preferences", values={"simulateNotch": "invalid"}, expected=400)
+            require((directory / "preferences.json").read_bytes() == saved, "Malformed simulation input changed saved preferences.")
+            destination, held = directory / "preferences.json", directory / "held-preferences.json"
+            destination.rename(held)
+            destination.mkdir(mode=0o700)
+            try:
+                client.command("preferences", values={"simulateNotch": False}, expected=500)
+                state = settled(client, lambda rows: matches(rows, automatic))
+                require(state["preferences"]["simulateNotch"] is False and state["errors"] and held.read_bytes() == saved,
+                        "Failed shape save hid its runtime choice/error or changed original bytes.")
+            finally:
+                destination.rmdir()
+                held.rename(destination)
+        with self.app(directory) as client:
+            require(client.request()["preferences"]["simulateNotch"], "Saved simulated shape did not survive restart.")
+            settled(client, lambda rows: matches(rows, simulated))
+            client.command("preferences", values={"simulateNotch": False})
+            settled(client, lambda rows: matches(rows, automatic))
+        with self.app(directory) as client:
+            require(not client.request()["preferences"]["simulateNotch"], "Automatic shape did not survive restart.")
+            settled(client, lambda rows: matches(rows, automatic))
+        write_private(directory / "native-shape-observations.json", json_bytes(samples))
+        self.record("shape: actual camera-safe geometry, interrupted motion, native capture, save failure and restart",
+                    observedAnimation=animated, actualCamera=physical, actualDisplays=len(simulated))
+
     def activity_selection(self):
         """Read-only native renders must preserve the user's real section choice."""
         preferences = {**SAFE, "enableMedia": True, "enableCalendar": True,
@@ -1552,7 +1644,7 @@ def main():
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
     parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
-    parser.add_argument("--only", choices=("storage", "storage-alias", "media", "weather", "motion", "displays", "activities", "preferences", "timers", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--only", choices=("storage", "storage-alias", "media", "weather", "motion", "displays", "activities", "shape", "preferences", "timers", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
@@ -1579,6 +1671,7 @@ def main():
             groups.append(("motion", runtime.motion))
             groups.append(("displays", runtime.displays))
             groups.append(("activities", runtime.activity_selection))
+            groups.append(("shape", runtime.shape))
         if args.media_fixture and args.only != "storage":
             groups.append(("media", lambda: runtime.media(args.pathological_duration)))
         if args.weather_service and args.only != "storage":

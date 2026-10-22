@@ -191,6 +191,11 @@ struct SettingsView: View {
                 CoveSettingsNote("OpenCove follows your Mac’s light or dark appearance.")
             }
 
+            Section("Panel shape") {
+                Toggle("Simulate a notch", isOn: preference(\.simulateNotch))
+                CoveSettingsNote("Use an attached notch with center space from Width and Height. A real camera housing always sets the minimum. Hide when idle still applies.")
+            }
+
             Section("Compact size") {
                 CovePreferenceSlider(
                     title: "Width", value: preference(\.notchWidth),
@@ -202,7 +207,7 @@ struct SettingsView: View {
                 )
                 CovePreferenceSlider(
                     title: "Corner radius", value: preference(\.cornerRadius),
-                    range: 0...40, step: 1, format: "%.0f pt"
+                    range: 8...40, step: 1, format: "%.0f pt"
                 )
                 CoveSettingsNote("The panel also adapts to the display’s camera housing.")
             }
