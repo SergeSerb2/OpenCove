@@ -333,16 +333,32 @@ final class NotchPanelController: NSObject {
         let revision = surface.layoutRevision
         surface.frameAnimationInFlight = duration > 0
         if duration > 0 {
+            let currentFrame = surface.panel.frame
+            let startFrame = CovePanelFrameAnchor(target: frame, screen: surface.screenFrame, scale: surface.scale)
+                .startingFrame(from: currentFrame)
+            if wasAnimating {
+                // Stop the old interpolation at the current size, with its
+                // rounded origin corrected before the next animator samples it.
+                // The revision already changed, so its completion cannot settle
+                // the old target or retire content for the new transition.
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0
+                    surface.panel.animator().setFrame(startFrame, display: true)
+                }
+            } else if currentFrame != startFrame {
+                surface.panel.setFrame(startFrame, display: true)
+            }
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = duration
                 context.timingFunction = CoveMotion.timingFunction
-                // Both frames have the same maxY. Interpolation keeps the top edge
-                // fixed while the panel grows down and out from the camera housing.
+                // Both endpoints share the target anchor. Leave interpolation
+                // to AppKit, with the panel's frame setters inherited unchanged.
                 surface.panel.animator().setFrame(frame, display: true)
             } completionHandler: { [weak self, weak surface] in
                 Task { @MainActor in
                     guard let self, let surface, surface.layoutRevision == revision, self.started else { return }
                     surface.frameAnimationInFlight = false
+                    surface.panel.setFrame(frame, display: true)
                     surface.content.hosting.isHidden = hideContent
                     self.reconcileHover()
                 }
@@ -560,6 +576,29 @@ private final class CoveNotchPanel: NSPanel {
     override func sendEvent(_ event: NSEvent) {
         if onEvent?(event) == true { return }
         super.sendEvent(event)
+    }
+}
+
+private struct CovePanelFrameAnchor {
+    let target: NSRect
+    let screen: NSRect
+    let scale: CGFloat
+
+    // Resolve once before a native animation, never on its intermediate frames.
+    func startingFrame(from current: NSRect) -> NSRect {
+        // Keep settled geometry exactly as resolved by CovePanelGeometry.
+        guard current != target else { return target }
+        let pixel = 1 / scale
+        // Two-pixel width steps retain the target's pixel parity. With the
+        // target center fixed, both horizontal edges then stay on pixel bounds.
+        let widthStep = 2 * pixel
+        let width = min(screen.width, max(pixel,
+            target.width + ((current.width - target.width) / widthStep).rounded() * widthStep))
+        let height = min(screen.height, max(pixel, (current.height * scale).rounded() / scale))
+        // Near a display edge, containment takes precedence over centering an
+        // intermediate frame that is wider than the current target.
+        let x = min(screen.maxX - width, max(screen.minX, target.midX - width / 2))
+        return NSRect(x: x, y: target.maxY - height, width: width, height: height)
     }
 }
 

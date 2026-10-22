@@ -131,11 +131,38 @@ struct CovePillButtonStyle: ButtonStyle {
     }
 }
 
-struct CoveArtwork: View {
+/// Each surface shares one cache request for its cover and color. Match the
+/// result to the rendered bytes before the replacement task has even started.
+@MainActor
+struct CoveArtworkReader<Content: View>: View {
     var data: Data?
+    @ViewBuilder var content: (CoveArtworkThumbnail?) -> Content
+    @State private var resolved: ResolvedArtwork?
+
+    private struct ResolvedArtwork {
+        let data: Data
+        let thumbnail: CoveArtworkThumbnail?
+    }
+
+    var body: some View {
+        content(resolved?.data == data ? resolved?.thumbnail : nil)
+            .task(id: data) {
+                guard !Task.isCancelled else { return }
+                guard let data else {
+                    resolved = nil
+                    return
+                }
+                let thumbnail = await CoveArtworkCache.shared.thumbnail(data)
+                guard !Task.isCancelled else { return }
+                resolved = ResolvedArtwork(data: data, thumbnail: thumbnail)
+            }
+    }
+}
+
+struct CoveArtwork: View {
+    var thumbnail: CoveArtworkThumbnail?
     var size: Double
     var radius: Double = 12
-    @State private var thumbnail: CoveArtworkThumbnail?
 
     var body: some View {
         Group {
@@ -158,13 +185,6 @@ struct CoveArtwork: View {
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: radius).stroke(.white.opacity(0.08), lineWidth: 0.5))
         .accessibilityHidden(true)
-        .task(id: data) {
-            thumbnail = nil
-            guard let data else { return }
-            let decoded = await CoveArtworkCache.shared.thumbnail(data)
-            guard !Task.isCancelled else { return }
-            thumbnail = decoded
-        }
     }
 }
 
@@ -370,7 +390,6 @@ struct CoveMediaSurface: View {
     @State private var scrubTime = 0.0
     @State private var scrubIdentity: CoveMediaScrubIdentity?
     @State private var acceptsSliderChanges = false
-    @State private var artworkTint: Color?
     @State private var showsOutput = false
 
     private var duration: Double {
@@ -382,33 +401,28 @@ struct CoveMediaSurface: View {
 
     var body: some View {
         if media.state.available {
-            VStack(spacing: condensed ? 6 : 8) {
-                header
-                progress
-                HStack(spacing: 12) {
-                    Spacer(minLength: 0)
-                    transport
-                    Spacer(minLength: 0)
-                    if !condensed && !locked {
-                        CoveIconButton(symbol: "hifispeaker", label: "Audio output and volume") { showsOutput.toggle() }
-                            .popover(isPresented: $showsOutput, arrowEdge: .bottom) {
-                                CoveOutputControls(system: system)
-                                    .padding(14).frame(width: 330)
-                                    .preferredColorScheme(.dark)
-                            }
+            CoveArtworkReader(data: media.state.artworkData) { artwork in
+                VStack(spacing: condensed ? 6 : 8) {
+                    header(artwork: artwork)
+                    progress
+                    HStack(spacing: 12) {
+                        Spacer(minLength: 0)
+                        transport
+                        Spacer(minLength: 0)
+                        if !condensed && !locked {
+                            CoveIconButton(symbol: "hifispeaker", label: "Audio output and volume") { showsOutput.toggle() }
+                                .popover(isPresented: $showsOutput, arrowEdge: .bottom) {
+                                    CoveOutputControls(system: system)
+                                        .padding(14).frame(width: 330)
+                                        .preferredColorScheme(.dark)
+                                }
+                        }
                     }
                 }
+                .tint(musicColorAccent ? artwork?.tint : nil)
             }
-            .tint(musicColorAccent ? artworkTint : nil)
             .onAppear {
                 acceptsSliderChanges = true
-            }
-            .task(id: media.state.artworkData) {
-                artworkTint = nil
-                guard let data = media.state.artworkData, musicColorAccent else { return }
-                let thumbnail = await CoveArtworkCache.shared.thumbnail(data)
-                guard !Task.isCancelled else { return }
-                artworkTint = thumbnail?.tint
             }
             .onChange(of: identity) { _, _ in cancelScrubbing() }
             .onChange(of: canSeek) { _, available in if !available { cancelScrubbing() } }
@@ -429,13 +443,14 @@ struct CoveMediaSurface: View {
         }
     }
 
-    private var header: some View {
-        HStack(alignment: .center, spacing: condensed ? 9 : 15) {
+    private func header(artwork: CoveArtworkThumbnail?) -> some View {
+        let artworkTint = musicColorAccent ? artwork?.tint : nil
+        return HStack(alignment: .center, spacing: condensed ? 9 : 15) {
             if locked {
-                CoveArtwork(data: media.state.artworkData, size: 54, radius: 12)
+                CoveArtwork(thumbnail: artwork, size: 54, radius: 12)
             } else {
                 Button(action: media.openPlayer) {
-                    CoveArtwork(data: media.state.artworkData, size: condensed ? 46 : 54,
+                    CoveArtwork(thumbnail: artwork, size: condensed ? 46 : 54,
                                 radius: condensed ? 9 : 12)
                 }
                 .buttonStyle(.plain)
@@ -445,11 +460,11 @@ struct CoveMediaSurface: View {
             if !condensed && showPlaybackIndicator {
                 if showLiveWaveform {
                     LiveWaveformView(controller: waveform, isPlaying: media.state.isPlaying,
-                                     color: musicColorAccent ? artworkTint ?? .mint : .mint)
+                                     color: artworkTint ?? .mint)
                 } else {
                     CoveAudioBars(isPlaying: media.state.isPlaying,
                                   reduceMotion: reduceMotion || systemReduceMotion,
-                                  color: musicColorAccent ? artworkTint ?? .white : .white)
+                                  color: artworkTint ?? .white)
                 }
             }
             if !condensed && !locked {
@@ -490,6 +505,17 @@ struct CoveMediaSurface: View {
                                    reduceMotion: reduceMotion || systemReduceMotion || media.lastError != nil,
                                    helpText: locked ? nil : media.lastError)
             HStack(spacing: 6) {
+                if media.state.isExplicit == true {
+                    Text("E")
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 3).padding(.vertical, 1)
+                        .background(.white.opacity(0.12),
+                                    in: RoundedRectangle(cornerRadius: 2))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .fixedSize()
+                        .accessibilityLabel("Explicit content")
+                        .help("The player marks this item as explicit.")
+                }
                 if let format = media.state.audioFormat, !format.isEmpty {
                     Text(CoveNotchStyle.metadataLabel(format))
                         .font(.system(size: 8, weight: .semibold)).foregroundStyle(CoveNotchStyle.secondary)

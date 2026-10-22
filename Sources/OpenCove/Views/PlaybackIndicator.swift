@@ -130,10 +130,15 @@ final class CovePlaybackIndicatorView: NSView {
     /// Read-only diagnostics from real native layers; no metadata or per-frame
     /// publication is added to the app's normal state path.
     private var motionSnapshot: [String: Any] {
-        ["visible": isPresented, "playing": playing, "reduceMotion": reduceMotion,
+        var value: [String: Any] = ["visible": isPresented, "playing": playing, "reduceMotion": reduceMotion,
          "animationCount": bars.filter { $0.animation(forKey: Self.animationKey) != nil }.count,
          "heights": bars.map { $0.presentation()?.bounds.height ?? $0.bounds.height },
          "accessibilityLabel": accessibilityLabel() ?? ""]
+        if let fill = bars.first?.backgroundColor,
+           let color = NSColor(cgColor: fill)?.usingColorSpace(.sRGB) {
+            value["rgba"] = [color.redComponent, color.greenComponent, color.blueComponent, color.alphaComponent]
+        }
+        return value
     }
 
     static func motionSnapshots(in view: NSView) -> [[String: Any]] {

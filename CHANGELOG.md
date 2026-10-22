@@ -15,5 +15,8 @@ Initial independent MIT implementation of a native macOS notch app:
 - Smaller media layout, per-display pill/notch shapes, compact event countdowns, shared motion timing, and a bounded artwork thumbnail cache.
 - A low-memory system JavaScript media host, item-bound artwork, stopped idle playback clocks, and deadline-based activity timers.
 - Structured signing validation and builds from verified source snapshots, with real restart/recovery tooling.
+- Source-supplied explicit badges and shared artwork colors that respond to preference changes without new cover data.
+- Media-reader lifecycle wakeups instead of fixed idle polling, and no travel heartbeat while alerts are disabled.
+- Pixel-aligned native panel anchors during interrupted expand/collapse animations.
 
 This entry describes source under development. It does not mean a binary has been published, notarized, or verified on every supported target. See [compatibility](docs/compatibility.md) and [release gates](docs/releasing.md).

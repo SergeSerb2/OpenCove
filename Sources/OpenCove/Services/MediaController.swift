@@ -1509,17 +1509,31 @@ private final class CoveMediaAdapterWatch: @unchecked Sendable {
     private var receivedFrame = false
     private var pendingPayload: [String: Any]?
     private var deliveryScheduled = false
+    // The reader queue owns both ends. Writers borrow this descriptor only
+    // under lock; it is unpublished under that lock before either end closes.
+    private var readerWake: (token: Int, descriptor: Int32)?
 
     var isRunning: Bool { lock.lock(); defer { lock.unlock() }; return active }
 
     func stop() {
         lock.lock(); defer { lock.unlock() }
+        wakeReaderLocked(token: epoch)
+        readerWake = nil
         epoch += 1
         active = false
         pendingPayload = nil
         deliveryScheduled = false
         if let process, process.isRunning { kill(process.processIdentifier, SIGKILL) }
         process = nil
+    }
+
+    private func wakeReaderLocked(token: Int) {
+        guard let readerWake, readerWake.token == token else { return }
+        // Nonblocking, one-byte writes cannot wait for a busy reader. EAGAIN
+        // means a wake is already pending. The read end stays open under lock.
+        var byte: UInt8 = 1
+        var count: Int
+        repeat { count = Darwin.write(readerWake.descriptor, &byte, 1) } while count < 0 && errno == EINTR
     }
 
     static func payload(from line: Data) -> [String: Any]? {
@@ -1545,7 +1559,38 @@ private final class CoveMediaAdapterWatch: @unchecked Sendable {
                 exited(token: token, error: "The optional Swift media adapter requires installed Xcode or Command Line Tools.", callback: onExit)
                 return
             }
+            var wakeDescriptors = [Int32](repeating: -1, count: 2)
+            guard Darwin.pipe(&wakeDescriptors) == 0 else {
+                exited(token: token, error: "Could not create the system media adapter wake pipe.", callback: onExit)
+                return
+            }
+            let wakeRead = wakeDescriptors[0], wakeWrite = wakeDescriptors[1]
+            defer {
+                lock.lock()
+                if readerWake?.token == token { readerWake = nil }
+                lock.unlock()
+                Darwin.close(wakeWrite)
+                Darwin.close(wakeRead)
+            }
+            // Neither end may survive exec. Configure before publishing the
+            // writer or launching the child; only the reader queue closes them.
+            for descriptor in wakeDescriptors {
+                let flags = fcntl(descriptor, F_GETFD)
+                guard flags >= 0, fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) == 0 else {
+                    exited(token: token, error: "Could not configure the system media adapter wake pipe.", callback: onExit)
+                    return
+                }
+            }
+            let wakeFlags = fcntl(wakeWrite, F_GETFL)
+            guard wakeFlags >= 0, fcntl(wakeWrite, F_SETFL, wakeFlags | O_NONBLOCK) == 0 else {
+                exited(token: token, error: "Could not configure the system media adapter wake pipe.", callback: onExit)
+                return
+            }
             let task = Process(), output = Pipe()
+            defer {
+                try? output.fileHandleForReading.close()
+                try? output.fileHandleForWriting.close()
+            }
             let javaScript = url.pathExtension == "js"
             task.executableURL = URL(fileURLWithPath: javaScript ? "/usr/bin/osascript" : "/usr/bin/swift")
             task.arguments = (javaScript ? ["-l", "JavaScript", url.path] : ["-swift-version", "5", url.path]) + ["--watch"]
@@ -1553,8 +1598,14 @@ private final class CoveMediaAdapterWatch: @unchecked Sendable {
             task.standardInput = FileHandle.nullDevice
             task.standardOutput = output
             task.standardError = FileHandle.nullDevice
+            task.terminationHandler = { [weak self] _ in
+                guard let self else { return }
+                self.lock.lock(); defer { self.lock.unlock() }
+                self.wakeReaderLocked(token: token)
+            }
             lock.lock()
             guard epoch == token, active else { lock.unlock(); return }
+            readerWake = (token, wakeWrite)
             do { try task.run() } catch {
                 lock.unlock()
                 exited(token: token, error: "Could not start the system media adapter.", callback: onExit)
@@ -1571,19 +1622,24 @@ private final class CoveMediaAdapterWatch: @unchecked Sendable {
             if flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0 {
                 failure = "Could not configure the system media adapter response pipe."
             }
-            // Nonblocking reads bound cancellation even if a compiler descendant
-            // inherits the pipe. Never wait for an inherited writer to close it.
+            // Wait for data, cancellation/child exit, or the watchdog deadline.
+            // Child exit also wakes the reader if a descendant retains stdout.
+            // Nonblocking reads drain available output without awaiting that writer.
             while true {
                 if failure != nil { break }
                 lock.lock()
                 let current = epoch == token && active
                 let limit = receivedFrame ? 45.0 : 12.0
-                let expired = ProcessInfo.processInfo.systemUptime - lastFrameAt > limit
+                let remaining = lastFrameAt + limit - ProcessInfo.processInfo.systemUptime
                 lock.unlock()
                 guard current else { break }
-                if expired { failure = "The system media adapter stopped answering before the timeout."; break }
-                var descriptor = pollfd(fd: fd, events: Int16(POLLIN | POLLHUP), revents: 0)
-                let ready = Darwin.poll(&descriptor, 1, 1_000)
+                if remaining <= 0 { failure = "The system media adapter stopped answering before the timeout."; break }
+                let timeout = task.isRunning ? Int32(min(ceil(remaining * 1_000), Double(Int32.max))) : 0
+                var descriptors = [pollfd(fd: fd, events: Int16(POLLIN | POLLHUP), revents: 0),
+                                   pollfd(fd: wakeRead, events: Int16(POLLIN | POLLHUP), revents: 0)]
+                let ready = descriptors.withUnsafeMutableBufferPointer {
+                    Darwin.poll($0.baseAddress, nfds_t($0.count), timeout)
+                }
                 if ready < 0 {
                     if errno == EINTR { continue }
                     failure = "Could not poll the system media adapter response."
@@ -1591,6 +1647,20 @@ private final class CoveMediaAdapterWatch: @unchecked Sendable {
                 }
                 if ready == 0 {
                     if !task.isRunning { break }
+                    continue
+                }
+                lock.lock()
+                let stillCurrent = epoch == token && active
+                lock.unlock()
+                guard stillCurrent else { break }
+                if descriptors.contains(where: { $0.revents & Int16(POLLERR | POLLNVAL) != 0 }) {
+                    failure = "Could not poll the system media adapter response."
+                    break
+                }
+                // A current-epoch wake means child exit. Leave that byte pending
+                // while draining stdout, so an inherited writer cannot delay exit.
+                if descriptors[0].revents == 0 {
+                    if descriptors[1].revents != 0 { break }
                     continue
                 }
                 let count = bytes.withUnsafeMutableBytes {
@@ -1634,7 +1704,6 @@ private final class CoveMediaAdapterWatch: @unchecked Sendable {
             }
             if task.isRunning { kill(task.processIdentifier, SIGKILL) }
             task.waitUntilExit()
-            try? output.fileHandleForReading.close()
             lock.lock()
             let current = epoch == token
             if current { process = nil }
