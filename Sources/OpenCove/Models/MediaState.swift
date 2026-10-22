@@ -76,6 +76,9 @@ struct MediaState: Codable, Equatable {
     var sourceBundleIdentifier = ""
     /// Opaque source-provided identity for item-bound command submissions.
     var contentItemIdentifier: String? = nil
+    /// Ephemeral identity for delayed seek submissions. Renewed on item/source
+    /// changes and media restarts; callers must read a new target after them.
+    var seekTarget: String? = nil
     var audioFormat: String? = nil
     var isExplicit: Bool? = nil
     var isLive: Bool? = nil
@@ -114,6 +117,7 @@ extension MediaState {
         repeatMode = try c.decodeIfPresent(String.self, forKey: .repeatMode)
         sourceBundleIdentifier = try c.decodeIfPresent(String.self, forKey: .sourceBundleIdentifier) ?? ""
         contentItemIdentifier = try c.decodeIfPresent(String.self, forKey: .contentItemIdentifier)
+        seekTarget = try c.decodeIfPresent(String.self, forKey: .seekTarget)
         audioFormat = try c.decodeIfPresent(String.self, forKey: .audioFormat)
         isExplicit = try c.decodeIfPresent(Bool.self, forKey: .isExplicit)
         isLive = try c.decodeIfPresent(Bool.self, forKey: .isLive)

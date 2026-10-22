@@ -142,9 +142,16 @@ final class CoveStore: ObservableObject {
     private var mediaPeekInput: CompactMediaInput?
     private var mediaPeekTask: Task<Void, Never>?
     private var mediaPeekRevision: UInt64 = 0
+    private var mediaPeekDeadline: ContinuousClock.Instant?
 
     var showsMediaPeek: Bool {
         mediaPeekVisible && mayPresentMediaPeek && media.state.available && media.state.isPlaying
+    }
+
+    var mediaPeekRemaining: Double? {
+        guard showsMediaPeek, let mediaPeekDeadline else { return nil }
+        let remaining = mediaIdleClock.now.duration(to: mediaPeekDeadline).components
+        return max(0, Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18)
     }
 
     private var mayPresentMediaPeek: Bool {
@@ -378,6 +385,7 @@ final class CoveStore: ObservableObject {
         mediaPeekRevision &+= 1
         mediaPeekTask?.cancel()
         mediaPeekTask = nil
+        mediaPeekDeadline = nil
         if mediaPeekVisible { mediaPeekVisible = false }
     }
 
@@ -411,10 +419,12 @@ final class CoveStore: ObservableObject {
         mediaPeekVisible = true
         let revision = mediaPeekRevision, clock = mediaIdleClock
         let deadline = clock.now.advanced(by: .seconds(preferences.mediaPeekDuration))
+        mediaPeekDeadline = deadline
         mediaPeekTask = Task { @MainActor [weak self] in
             do { try await clock.sleep(until: deadline) } catch { return }
             guard !Task.isCancelled, let self, self.mediaPeekRevision == revision else { return }
             self.mediaPeekTask = nil
+            self.mediaPeekDeadline = nil
             if self.mediaPeekVisible { self.mediaPeekVisible = false }
         }
     }

@@ -83,6 +83,7 @@ class Runtime:
         self.results = []
         self.owners = []
         self.launches = 0
+        self.startup_retries = []
 
     def record(self, flow, **details):
         self.results.append(dict(flow=flow, passed=True, **details))
@@ -92,7 +93,8 @@ class Runtime:
     def flush(self):
         value = {"bundlePath": str(self.bundle), "sourceTreeSHA256": self.info["OpenCoveSourceTreeSHA256"],
                  "callerSHA256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-                 "launches": self.launches, "results": self.results, "actualSnapshotOwners": self.owners}
+                 "launches": self.launches, "results": self.results, "actualSnapshotOwners": self.owners,
+                 "startupRetries": self.startup_retries}
         (self.evidence / "results.json").write_bytes(json_bytes(value))
         (self.evidence / "results.json").chmod(0o600)
 
@@ -105,41 +107,80 @@ class Runtime:
         return path
 
     @contextmanager
-    def app(self, directory, *, launch_directory=None):
-        self.launches += 1
-        with socket.socket() as reservation:
-            reservation.bind(("127.0.0.1", 0))
-            port = reservation.getsockname()[1]
+    def app(self, directory, *, launch_directory=None, initial_port=None):
         # No inherited fixture/data/server controls can select another owner.
         environment = {key: value for key, value in os.environ.items()
                        if not key.startswith(("OPENCOVE_", "ALCOVE_"))}
         environment["OPENCOVE_DATA_DIR"] = str(launch_directory or directory)
-        with (directory / ("app-%02d.log" % self.launches)).open("xb") as log:
-            child = subprocess.Popen([str(self.bundle / "Contents/MacOS/OpenCove"),
-                                      "--control-port", str(port), "--no-onboarding"],
-                                     env=environment, stdout=log, stderr=log, umask=0o077)
-            try:
-                deadline = time.monotonic() + 15
-                while True:
-                    require(child.poll() is None, "Owned app exited before readiness; see its private app log.")
-                    try:
-                        client = ControlClient(directory)
-                        state = client.request(timeout=1)
-                        require(state["pid"] == child.pid, "Another process answered for the owned data directory.")
-                        check_bundle(state, self.bundle, self.info, self.info["CFBundleVersion"])
-                        self.owners.append({key: state[key] for key in (
-                            "pid", "bundlePath", "sourceTreeSHA256", "bundleIdentifier", "build", "dataDirectory")})
+        for attempt in range(3):
+            self.launches += 1
+            if attempt == 0 and initial_port is not None:
+                port = initial_port
+            else:
+                with socket.socket() as reservation:
+                    reservation.bind(("127.0.0.1", 0))
+                    port = reservation.getsockname()[1]
+            log_path = directory / ("app-%02d.log" % self.launches)
+            collision = None
+            with log_path.open("xb") as log:
+                child = subprocess.Popen([str(self.bundle / "Contents/MacOS/OpenCove"),
+                                          "--control-port", str(port), "--no-onboarding"],
+                                         env=environment, stdout=log, stderr=log, umask=0o077)
+                try:
+                    deadline = time.monotonic() + 15
+                    while True:
+                        with log_path.open("rb") as startup_log:
+                            startup = startup_log.read(4096).decode("utf-8", errors="replace")
+                        if ("OpenCove: Development controls are unavailable:" in startup and
+                            ("POSIXErrorCode(rawValue: 48)" in startup or "Address already in use" in startup)
+                            and not os.path.lexists(directory / "control.json")):
+                            collision = {"pid": child.pid, "port": port, "log": log_path.name,
+                                         "reason": "confirmed occupied control port"}
+                            self.startup_retries.append(collision)
+                            break
+                        require(child.poll() is None, "Owned app exited before readiness; see its private app log.")
+                        try:
+                            client = ControlClient(directory)
+                            state = client.request(timeout=1)
+                            require(state["pid"] == child.pid, "Another process answered for the owned data directory.")
+                            check_bundle(state, self.bundle, self.info, self.info["CFBundleVersion"])
+                            self.owners.append({key: state[key] for key in (
+                                "pid", "bundlePath", "sourceTreeSHA256", "bundleIdentifier", "build", "dataDirectory")})
+                            self.flush()
+                            break
+                        except (ControlFailure, OSError, urllib.error.URLError):
+                            if time.monotonic() >= deadline:
+                                raise ControlFailure("Owned app readiness timed out; see its private app log.") from None
+                            time.sleep(0.15)
+                    if collision is not None:
+                        require(attempt < 2, "Owned app exhausted its confirmed occupied-port startup retries.")
+                        print("RETRY confirmed occupied control port; stopping owned failed app before relaunch", flush=True)
+                        continue
+                    yield client
+                    return
+                finally:
+                    stop(child)
+                    # Never touch a competing listener. Only this Popen owner
+                    # and its private descriptor are retired before a new attempt.
+                    (directory / "control.json").unlink(missing_ok=True)
+                    if collision is not None:
+                        collision["stoppedExitCode"] = child.poll()
                         self.flush()
-                        break
-                    except (ControlFailure, OSError, urllib.error.URLError):
-                        if time.monotonic() >= deadline:
-                            raise ControlFailure("Owned app readiness timed out; see its private app log.") from None
-                        time.sleep(0.15)
-                yield client
-            finally:
-                stop(child)
-                # The only retained caller location is this path, never its contents.
-                (directory / "control.json").unlink(missing_ok=True)
+
+    def startup_port_collision(self):
+        directory = self.directory("startup-port-collision")
+        before = len(self.startup_retries)
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            occupied = listener.getsockname()[1]
+            with self.app(directory, initial_port=occupied) as client:
+                require(client.config["port"] != occupied, "A ready app reused the actual occupied listener port.")
+                require(len(self.startup_retries) == before + 1 and
+                    self.startup_retries[-1].get("stoppedExitCode") is not None,
+                    "The owned failed app was not stopped before the successful retry.")
+                require(listener.getsockname()[1] == occupied, "Retry changed the independent owned listener.")
+        self.record("startup: real occupied listener triggers bounded retry after stopping only the owned failed app")
 
     def backup(self, directory, pattern, original):
         backups = list(directory.glob(pattern))
@@ -1325,7 +1366,7 @@ class Runtime:
                 require(live_frame("mounted-paused-later") == paused_frame,
                         "Actual mounted paused view kept changing.")
                 seek_position = 9 if abs(paused - 9) > 2 else 15
-                client.command("media.seek", seconds=seek_position)
+                client.command("media.seek", seconds=seek_position, target=selected()["seekTarget"])
                 wait_for(fixture, lambda s: not s["playing"] and abs(s["elapsed"] - seek_position) < 0.25,
                          "Actual paused seek did not reach the fixture.")
                 wait_for(client.request, lambda s: not s["media"].get("isPlaying") and
@@ -1678,8 +1719,12 @@ class Runtime:
                                  "Song-change peek did not reach its expected real state.")
                 observations.append({"visible": state["mediaPeekVisible"], "expanded": state["expanded"],
                     "compact": state["compactActivity"], "tab": state["visibleTab"],
+                    "observedAt": time.monotonic(), "remaining": state["mediaPeekRemaining"],
                     "item": state["media"].get("contentItemIdentifier"), "panels": [w for w in state["nativeWindows"]
                         if w["title"] == "OpenCove"]})
+                progress = directory / "observations-progress.json"
+                progress.write_bytes(json_bytes(observations))
+                progress.chmod(0o600)
                 return state
 
             with self.app(directory) as client:
@@ -1710,23 +1755,45 @@ class Runtime:
                         "Opening a media peek did not show playback controls.")
                 client.command("collapse")
                 change_item(client, "media.previous")
-                peek(client, True)
-                time.sleep(1.3)
+                active = peek(client, True)
+                initial_remaining = active["mediaPeekRemaining"]
+                observed_at = time.monotonic()
+                time.sleep(min(1.3, initial_remaining / 2))
                 client.command("preferences", values={"accent": "blue", "mediaPeekDuration": 10})
-                require(own_peek(client)["mediaPeekVisible"], "Unrelated save dismissed the active peek.")
+                saved = own_peek(client)
+                elapsed = time.monotonic() - observed_at
+                require((saved["mediaPeekRemaining"] or 0) <= max(0, initial_remaining - elapsed) + 0.35,
+                        "A preference update extended the actual monotonic peek deadline.")
+                if elapsed < initial_remaining - 0.35:
+                    require(saved["mediaPeekVisible"], "Unrelated save dismissed the active peek before its deadline.")
                 wait_for(lambda: own_peek(client), lambda s: not s["mediaPeekVisible"],
-                         "Metadata or preference updates extended the original peek deadline.", 2.3)
-                client.command("preferences", values={"mediaPeekDuration": 3})
+                         "Metadata or preference updates extended the original peek deadline.", max(0.5, initial_remaining - elapsed + 0.75))
+                client.command("preferences", values={"mediaPeekDuration": 6})
                 change_item(client, "media.next")
-                peek(client, True)
-                old_started = time.monotonic()
+                old = peek(client, True)
+                old_deadline = time.monotonic() + old["mediaPeekRemaining"]
                 time.sleep(1.4)
                 change_item(client, "media.previous")
-                peek(client, True)
-                time.sleep(max(0, old_started + 3.25 - time.monotonic()))
-                require(own_peek(client)["mediaPeekVisible"], "An older item deadline dismissed its replacement peek.")
+                replacement = peek(client, True)
+                replacement_at = time.monotonic()
+                require(old_deadline > replacement_at + 0.1 and
+                        replacement_at + replacement["mediaPeekRemaining"] > old_deadline + 0.5,
+                        "Actual command latency prevented observing overlapping peek deadlines.")
+                time.sleep(max(0, old_deadline + 0.15 - time.monotonic()))
+                retained = own_peek(client)
+                require(retained["mediaPeekVisible"] and
+                        retained["media"]["contentItemIdentifier"] == replacement["media"]["contentItemIdentifier"],
+                        "An older item deadline dismissed or replaced its replacement peek.")
+                require(retained["mediaPeekRemaining"] <= replacement["mediaPeekRemaining"] -
+                        (time.monotonic() - replacement_at) + 0.35,
+                        "Repeated metadata restarted the replacement's actual deadline.")
+                write_private(directory / "deadline-observations.json", json_bytes({"firstRemaining": initial_remaining,
+                    "afterSaveRemaining": saved["mediaPeekRemaining"], "oldDeadline": old_deadline,
+                    "replacementObservedAt": replacement_at, "replacementRemaining": replacement["mediaPeekRemaining"],
+                    "retainedRemaining": retained["mediaPeekRemaining"], "overlapObserved": True}))
                 wait_for(lambda: own_peek(client), lambda s: not s["mediaPeekVisible"],
-                         "Replacement peek did not retire.", 2.3)
+                         "Replacement peek did not retire.", retained["mediaPeekRemaining"] + 0.75)
+                client.command("preferences", values={"mediaPeekDuration": 3})
                 wait_for(client.request, lambda s: not s["playbackIndicatorMotion"],
                          "Expired peek retained native decorative playback layers over the timer.")
                 observed_motion = not client.request()["systemReduceMotion"]
@@ -1808,6 +1875,102 @@ class Runtime:
             write_private(directory / "observations.json", json_bytes(observations))
             self.record("media: identical-metadata item peek, bounded expiry/replacement, opening/HUD/pause/opt-out and restart",
                         observedNativeMotion=observed_motion)
+        finally:
+            stop(child)
+
+        fixture_state, child = session("bound-seek", metadata=125, style="identical")
+        try:
+            wait_for(fixture_state.exists, bool, "Own bound-seek fixture did not start.")
+            directory = self.directory("media-bound-seek", preferences={**SAFE, "enableMedia": True,
+                "enablePrivateAPIs": True, "hideWhenIdle": False, "expandOnHover": False,
+                "hideInFullscreen": False, "reduceMotion": True})
+            observations = []
+
+            def source(client):
+                require(child.poll() is None and json.loads(fixture_state.read_bytes())["pid"] == child.pid,
+                        "Owned bound-seek fixture stopped or changed PID; no command sent.")
+                value = client.request()
+                require(value["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
+                        "Bound-seek app source changed; no command sent.")
+                require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
+                        "Native source changed; no command sent.")
+                return value
+
+            def position(expected):
+                wait_for(lambda: json.loads(fixture_state.read_bytes()), lambda s: not s["playing"]
+                         and abs(s["elapsed"] - expected) < 0.25, "The real paused source has the wrong seek position.")
+
+            def ready(client):
+                return wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("supportsSeek") and bool(s["media"].get("seekTarget")),
+                    "The real source did not expose an item-bound seek target.", 25)
+
+            with self.app(directory) as client:
+                first = ready(client)
+                target = first["media"]["seekTarget"]
+                wait_for(client.request, lambda s: s["playbackClock"]["receivedSamples"] >=
+                    first["playbackClock"]["receivedSamples"] + 2, "Real source samples did not arrive.")
+                require(source(client)["media"]["seekTarget"] == target, "Unchanged metadata samples rotated the seek target.")
+                client.command("media.playPause")
+                wait_for(client.request, lambda s: not s["media"]["isPlaying"], "Own bound-seek source did not pause.")
+                require(source(client)["media"]["seekTarget"] == target, "Pause changed the same item's seek target.")
+                client.command("media.seek", seconds=17, target=target)
+                position(17)
+                for invalid in ("", 7, None, "x" * 129):
+                    client.command("media.seek", seconds=40, target=invalid, expected=400)
+                client.command("media.seek", seconds=40, target="unrecognized-target", expected=409)
+                client.command("media.seek", seconds=126, target=target, expected=400)
+                position(17)
+                old_item = source(client)["media"]["contentItemIdentifier"]
+                client.command("media.next")
+                changed = wait_for(client.request, lambda s: s["media"].get("contentItemIdentifier") != old_item
+                    and s["media"].get("seekTarget") != target, "An actual new item did not replace the seek target.")
+                for key in ("sourceBundleIdentifier", "title", "artist", "album", "duration"):
+                    require(changed["media"][key] == first["media"][key],
+                            "Bound-seek regression must use identical source/text/duration metadata.")
+                source(client)
+                position(0)
+                client.command("media.seek", seconds=41, target=target, expected=409)
+                time.sleep(0.3)
+                position(0)
+                current = source(client)["media"]["seekTarget"]
+                client.command("media.seek", seconds=23, target=current)
+                position(23)
+                client.command("selectTab", tab="media")
+                write_private(directory / "bound-notch.png", client.request("/render?surface=notch"))
+                write_private(directory / "bound-lock.png", client.request("/render?surface=lock"))
+                source(client)
+                client.command("media.previous")
+                returned = wait_for(client.request, lambda s: s["media"].get("seekTarget") not in (target, current),
+                                    "Returning to an earlier item reused a retired seek target.")
+                require(returned["media"]["title"] == first["media"]["title"], "Own identical metadata changed unexpectedly.")
+                source(client)
+                client.command("media.seek", seconds=45, target=target, expected=409)
+                position(0)
+                # Immediate callers retain the documented legacy semantics.
+                client.command("media.seek", seconds=5)
+                position(5)
+                retired = source(client)["media"]["seekTarget"]
+                client.command("preferences", values={"enableMedia": False})
+                client.command("preferences", values={"enableMedia": True})
+                renewed = ready(client)["media"]["seekTarget"]
+                require(renewed != retired, "Media restart reused an earlier seek target.")
+                source(client)
+                client.command("media.seek", seconds=42, target=retired, expected=409)
+                position(5)
+                observations.append({"first": target, "next": current, "renewed": renewed,
+                                     "identicalMetadata": True, "staleRejected": True})
+            with self.app(directory) as client:
+                fresh = ready(client)["media"]["seekTarget"]
+                require(fresh != renewed, "Process restart reused an earlier seek target.")
+                source(client)
+                client.command("media.seek", seconds=43, target=renewed, expected=409)
+                position(5)
+                client.command("media.seek", seconds=11, target=fresh)
+                position(11)
+                observations.append({"restarted": fresh, "staleRestartRejected": True})
+            write_private(directory / "observations.json", json_bytes(observations))
+            self.record("media: identical-metadata seek targets, stale/malformed rejection, current seek and media/process restart")
         finally:
             stop(child)
 
@@ -2029,7 +2192,7 @@ def main():
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
     parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
-    parser.add_argument("--only", choices=("storage", "storage-alias", "media", "weather", "motion", "displays", "activities", "compact", "shape", "preferences", "timers", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--only", choices=("storage", "startup", "storage-alias", "media", "weather", "motion", "displays", "activities", "compact", "shape", "preferences", "timers", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
@@ -2049,7 +2212,7 @@ def main():
             parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             evidence = Path(tempfile.mkdtemp(prefix="runtime-", dir=parent))
         runtime = Runtime(args.app, evidence)
-        groups = [("temp", runtime.temp_alias), ("storage-alias", runtime.storage_alias), ("preferences", runtime.preferences),
+        groups = [("startup", runtime.startup_port_collision), ("temp", runtime.temp_alias), ("storage-alias", runtime.storage_alias), ("preferences", runtime.preferences),
                   ("timers", runtime.timers), ("timer-corruption", runtime.timer_corruption),
                   ("calendar", runtime.calendar), ("files", runtime.files)]
         if args.only != "storage":

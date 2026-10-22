@@ -69,6 +69,7 @@ final class MediaController: ObservableObject {
     private var sourceBundleID: String?
     private var sourcePID: pid_t?
     private var trackIdentity = ""
+    private var selectedSeekTarget: String?
     private var artworkDownload: CoveMediaArtworkDownload?
     private var artworkDownloadID = UUID()
     private var remoteArtworkData: Data?
@@ -187,14 +188,20 @@ final class MediaController: ObservableObject {
     func next() { command(.next) }
     func previous() { command(.previous) }
 
-    func seek(to seconds: Double) {
-        guard seconds.isFinite else { lastError = "The seek time must be finite."; return }
-        guard running, state.available else { lastError = "No media source is available."; return }
-        guard state.supportsSeek else { lastError = "This source does not enable seeking."; return }
+    @discardableResult
+    func seek(to seconds: Double, target: String? = nil) -> Bool {
+        guard seconds.isFinite else { lastError = "The seek time must be finite."; return false }
+        guard running, state.available else { lastError = "No media source is available."; return false }
+        if let target {
+            guard target == state.seekTarget else {
+                lastError = "The media item changed. Choose a position on the current item."; return false
+            }
+        }
+        guard state.supportsSeek else { lastError = "This source does not enable seeking."; return false }
         let position = min(max(0, seconds), state.duration)
         if backend == .adapter {
             guard remoteSeekSupported, adapterItemID != nil else {
-                lastError = "This source cannot safely identify the item for seeking."; return
+                lastError = "This source cannot safely identify the item for seeking."; return false
             }
             adapterCommand(["--seek", String(position)])
         } else if backend == .remote {
@@ -205,13 +212,14 @@ final class MediaController: ObservableObject {
                 state.supportsSeek = false
                 lastError = "The current item changed or cannot be safely identified for seeking. Refresh before trying again."
                 scheduleRefresh(after: 0.1)
-                return
+                return false
             }
             lastError = nil
             scheduleRefresh()
         } else {
             scriptCommand("app.playerPosition = \(position)", requireTrack: true)
         }
+        return true // Submission; the source reports the actual result later.
     }
 
     func toggleShuffle() {
@@ -374,6 +382,7 @@ final class MediaController: ObservableObject {
         adapterItemID = nil
         remoteItemID = nil
         trackIdentity = ""
+        selectedSeekTarget = nil
         scripts.selectItem("")
         playback.update(elapsed: 0, duration: 0, rate: 0)
         artworkDownload?.cancel()
@@ -393,6 +402,10 @@ final class MediaController: ObservableObject {
             value.sourceDiagnostic = "Reading system media with the isolated system adapter."
         }
         if identity == trackIdentity, value.artworkData == nil { value.artworkData = state.artworkData }
+        if identity != trackIdentity || sourceBundleID != bundleID || self.backend != backend || selectedSeekTarget == nil {
+            selectedSeekTarget = UUID().uuidString
+        }
+        value.seekTarget = selectedSeekTarget
         if identity != trackIdentity {
             scriptTrackID = nil
             artworkDownload?.cancel()

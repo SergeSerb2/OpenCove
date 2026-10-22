@@ -374,7 +374,7 @@ struct CoveMediaSurface: View {
         return seconds.isFinite && seconds > 0 && seconds < Double(Int.max / 2) ? seconds : 0
     }
     private var identity: CoveMediaScrubIdentity { CoveMediaScrubIdentity(state: media.state) }
-    private var canSeek: Bool { media.state.available && media.state.supportsSeek && duration > 0 }
+    private var canSeek: Bool { media.state.available && media.state.supportsSeek && media.state.seekTarget != nil && duration > 0 }
 
     var body: some View {
         if media.state.available {
@@ -506,26 +506,30 @@ struct CoveMediaSurface: View {
     }
 
     private func progressControls(elapsed: Double) -> some View {
+        // Capture this rendered control's target, including keyboard callbacks
+        // that can arrive after its source item has already changed.
+        let target = media.state.seekTarget
         let displayedPosition = scrubbing && scrubIdentity == identity
             ? min(duration, max(0, scrubTime)) : min(duration, max(0, elapsed))
         return VStack(spacing: 1) {
             Slider(value: Binding(get: { displayedPosition }, set: { value in
-                guard acceptsSliderChanges, canSeek, value.isFinite,
+                guard acceptsSliderChanges, canSeek, value.isFinite, let target, target == media.state.seekTarget,
                       !scrubbing || scrubIdentity == identity else { return }
                 scrubTime = min(duration, max(0, value))
-                if !scrubbing { media.seek(to: scrubTime) }
+                if !scrubbing { media.seek(to: scrubTime, target: target) }
             }),
                    in: 0...max(1, duration), onEditingChanged: { editing in
                 if editing {
-                    guard acceptsSliderChanges, canSeek else { return }
+                    guard acceptsSliderChanges, canSeek, let target, target == media.state.seekTarget else { return }
                     scrubTime = min(duration, max(0, media.playback.elapsed))
                     scrubIdentity = identity
                     scrubbing = true
                 } else {
                     let shouldSeek = acceptsSliderChanges && scrubbing && canSeek && scrubIdentity == identity
+                        && target != nil && target == media.state.seekTarget
                     scrubbing = false
                     scrubIdentity = nil
-                    if shouldSeek { media.seek(to: min(duration, max(0, scrubTime))) }
+                    if shouldSeek { media.seek(to: min(duration, max(0, scrubTime)), target: target) }
                 }
             })
             .controlSize(.mini)
@@ -582,6 +586,7 @@ struct CoveMediaSurface: View {
 
 private struct CoveMediaScrubIdentity: Equatable {
     let source: String
+    let target: String?
     let title: String
     let artist: String
     let album: String
@@ -589,6 +594,7 @@ private struct CoveMediaScrubIdentity: Equatable {
 
     init(state: MediaState) {
         source = state.sourceBundleIdentifier
+        target = state.seekTarget
         title = state.title
         artist = state.artist
         album = state.album
