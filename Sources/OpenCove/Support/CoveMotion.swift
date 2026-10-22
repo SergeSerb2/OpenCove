@@ -5,6 +5,10 @@ import SwiftUI
 /// One timing policy for the native window and its SwiftUI content. Both can
 /// retarget an in-flight transition; reduced motion is resolved by each owner.
 enum CoveMotion {
+    // Reading speed and rest time, independent of panel transition speed.
+    static let mediaTextPointsPerSecond = 26.0
+    static let mediaTextPause = 1.6
+
     static func duration(preferences: CovePreferences, hud: Bool) -> Double {
         let base: Double = hud && preferences.hudSpeed == "instant" ? 0
             : hud && preferences.hudSpeed == "fast" ? 0.12 : 0.22

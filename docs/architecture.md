@@ -33,7 +33,7 @@ The public models describe availability and capabilities. Empty or denied data d
 
 `CovePaths` separates development and release data. `OPENCOVE_DATA_DIR` selects an explicit directory. A data directory must be private and owned by the current user; unsafe existing paths fail instead of receiving a silent permission change. The instance lock and optional `control.json` descriptor use owner-only access.
 
-The development HTTP server starts only with `--control-port`, binds to loopback, and requires an ephemeral token. Its state includes bundle path and source-tree identity. The checked-in CLI validates the descriptor and responding owner. Read [privacy](privacy.md) before enabling this interface and [quality](quality.md) for the real integration workflow.
+The development HTTP server starts only with `--control-port`, binds to loopback, and requires an ephemeral token. Its state includes bundle path and source-tree identity, current projected playback position, and native text-layer motion diagnostics. The checked-in CLI validates the descriptor and responding owner. Read [privacy](privacy.md) before enabling this interface and [quality](quality.md) for the real integration workflow.
 
 ## Media and rendering resource limits
 
@@ -41,6 +41,12 @@ Direct MediaRemote reads are preferred. On systems that deny them, one app-owned
 
 JXA property proxies are resolved with fresh native KVC getters. Native arrays and image bytes are inserted directly into the property-list payload. These boundaries preserve real command capabilities and prevent stale item data. Artwork requests check source, item, and artwork version before acceptance. Replies and decoded images are bounded; late replies cannot attach artwork to another item.
 
-Artwork decoding runs outside the main actor. An eight-entry cache of 256px, eight-bit RGBA thumbnails retains at most 2 MiB of decoded pixels. Views reuse thumbnails rather than decoding full covers during playback ticks. Unchanged cover bytes are omitted from subsequent pipe frames; the reader merges the bounded artwork delta before coalescing UI deliveries. The playback interpolation timer stops for paused or unavailable media. Calendar activity ticks run only around actual event phases; an empty or unauthorized calendar has no second ticker. The independent timer uses whole-second updates plus its exact final deadline.
+Artwork decoding runs outside the main actor. An eight-entry cache of 256px, eight-bit RGBA thumbnails retains at most 2 MiB of decoded pixels. Views reuse thumbnails rather than decoding full covers during playback ticks. Unchanged cover bytes are omitted from subsequent pipe frames; the reader merges the bounded artwork delta before coalescing UI deliveries.
+
+Playback position uses a monotonic anchor with no service-level interpolation timer. Mounted progress controls observe this small clock and schedule their own updates; paused progress schedules stop. Elapsed-only metadata updates do not invalidate artwork, transport, compact panels, or geometry. Waveform observation stays in the waveform leaf view.
+
+Expanded media text scrolls only when it exceeds its available width. A native layer transform supplies linear movement and reading pauses without publishing model state per frame. Hidden/occluded views, reduced motion, and dismantled views stop that animation. Short text stays stationary. Display text and tooltips use at most 1,024 UTF-16 units plus an ellipsis; larger source values remain available through accessibility and the API. Text wider than the 4,096-pixel animation budget uses static truncation. Measurement does not assign an oversized backing frame. This is independently chosen reading behavior; exact reference-product timing is unmeasured.
+
+Calendar activity ticks run only around actual event phases; an empty or unauthorized calendar has no second ticker. The independent timer uses whole-second updates plus its exact final deadline.
 
 These are implementation limits, not a cross-machine performance guarantee. See [quality](quality.md) for real-interface checks and manual gates.

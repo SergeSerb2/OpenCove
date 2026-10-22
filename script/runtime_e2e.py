@@ -435,7 +435,8 @@ class Runtime:
                            stdout=log, stderr=log, check=True, timeout=15)
         environment = {k: v for k, v in os.environ.items() if not k.startswith("OPENCOVE_")}
         for extra, code in ((["--help"], 0), ([], 2), (["--state", "relative.json"], 2),
-                            (["--state", str(work / "invalid.json"), "--metadata-duration", "nan"], 2)):
+                            (["--state", str(work / "invalid.json"), "--metadata-duration", "nan"], 2),
+                            (["--state", str(work / "invalid.json"), "--metadata-style", "unknown"], 2)):
             result = subprocess.run([str(executable), *extra], env=environment, capture_output=True, timeout=5)
             require(result.returncode == code, "Fixture help/default/invalid options did not fail safely before playback.")
         self.record("silent fixture actual CLI: help, absent env, relative path and nonfinite duration safety")
@@ -453,11 +454,13 @@ class Runtime:
             payload = plistlib.loads(base64.b64decode(json.loads(result.stdout)["snapshot"]))
             return result.returncode, payload
 
-        def session(name, metadata=None):
+        def session(name, metadata=None, style=None):
             state_path = work / (name + ".json")
             arguments = [str(executable), "--state", str(state_path)]
             if metadata is not None:
                 arguments += ["--metadata-duration", str(metadata)]
+            if style is not None:
+                arguments += ["--metadata-style", style]
             return state_path, subprocess.Popen(arguments, env=environment, stdout=subprocess.DEVNULL,
                                                 stderr=subprocess.DEVNULL, umask=0o077)
 
@@ -491,6 +494,10 @@ class Runtime:
                          "Original fixture artwork did not reach the actual app.", 20)
                 client.command("selectTab", tab="media")
                 write_private(directory / "media-artwork.png", client.request("/render?surface=notch"))
+                short = wait_for(client.request, lambda s: len(s.get("mediaTextMotion", [])) >= 2,
+                                 "Actual native media labels did not mount.")
+                require(all(not row["animating"] for row in short["mediaTextMotion"]),
+                        "Short native media text started unnecessary motion.")
                 client.command("collapse")
                 before = selected()["elapsed"]
                 time.sleep(1.25)
@@ -581,6 +588,97 @@ class Runtime:
                             publishedDuration=state["media"]["duration"])
             finally:
                 stop(child)
+
+        fixture_state, child = session("long-text", style="long")
+        try:
+            wait_for(lambda: fixture_state.exists(), bool, "Long-text fixture did not start.")
+            directory = self.directory("media-text", preferences={**SAFE, "enableMedia": True,
+                                       "enablePrivateAPIs": True, "reduceMotion": False,
+                                       "expandOnHover": False, "collapseDelay": 5, "enableCalendar": True})
+            # Real damaged policy exercises the empty combined layout while
+            # ActivityController pauses before any EventKit authorization/read.
+            write_private(directory / "calendar-settings.json", b'{"excludedCalendarIdentifiers":"damaged"}')
+            with self.app(directory) as client:
+                require(client.request()["calendarAuthorization"] == "Saved calendar settings need review",
+                        "Combined-layout calendar reads were not paused by the damaged private policy.")
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                         and "long original title" in s["media"].get("title", ""),
+                         "Actual long fixture metadata did not reach the app.", 25)
+                client.command("selectTab", tab="media")
+                state = wait_for(client.request, lambda s: len(s.get("mediaTextMotion", [])) >= 2
+                                 and all(row["viewportWidth"] > 1 and row["overflowPoints"] > 1
+                                         for row in s["mediaTextMotion"]),
+                                 "Long titles/artists did not overflow real native media labels.")
+                observed_movement = False
+                if not state["systemReduceMotion"]:
+                    wait_for(client.request, lambda s: len(s.get("mediaTextMotion", [])) >= 2 and
+                             all(row["animating"] for row in s["mediaTextMotion"]),
+                             "Visible long media labels did not start their native animations.")
+                    moved = wait_for(client.request, lambda s: len(s.get("mediaTextMotion", [])) >= 2 and
+                                     all(abs(row["offsetPoints"]) > 2 for row in s["mediaTextMotion"]),
+                                     "Native presentation layers did not move for overflowing media text.", 8)
+                    observed_movement = True
+                    write_private(directory / "moving-layer-state.json", json_bytes(moved["mediaTextMotion"]))
+                    state = moved
+                initial_width = min(row["viewportWidth"] for row in state["mediaTextMotion"])
+                client.command("preferences", values={"expandedLayout": "duo"})
+                wait_for(client.request, lambda s: len(s.get("mediaTextMotion", [])) >= 2 and
+                         all(0 < row["viewportWidth"] < initial_width - 40 for row in s["mediaTextMotion"]),
+                         "Native text viewport did not follow the actual combined layout.")
+                write_private(directory / "duo.png", client.request("/render?surface=notch"))
+                client.command("preferences", values={"expandedLayout": "media"})
+                wait_for(client.request, lambda s: len(s.get("mediaTextMotion", [])) >= 2 and
+                         all(abs(row["viewportWidth"] - initial_width) < 1 for row in s["mediaTextMotion"]),
+                         "Native text viewport did not restore after leaving the combined layout.")
+                client.command("preferences", values={"reduceMotion": True})
+                reduced = wait_for(client.request, lambda s: len(s.get("mediaTextMotion", [])) >= 2
+                                   and all(not row["animating"] and abs(row["offsetPoints"]) < 0.1
+                                           for row in s["mediaTextMotion"]),
+                                   "Reduced motion did not stop and reset real native text layers.")
+                require("long original title" in reduced["media"]["title"],
+                        "Reduced motion changed the actual source title.")
+                write_private(directory / "reduced-motion.png", client.request("/render?surface=notch"))
+                client.command("selectTab", tab="files")
+                wait_for(client.request, lambda s: not s.get("mediaTextMotion"),
+                         "Departed media section retained native text views/animations.")
+                client.command("preferences", values={"reduceMotion": False})
+                client.command("selectTab", tab="media")
+                wait_for(client.request, lambda s: len(s.get("mediaTextMotion", [])) >= 2,
+                         "Native media labels did not return after section navigation.")
+                client.command("collapse")
+                wait_for(client.request, lambda s: not s.get("mediaTextMotion"),
+                         "Compact panel retained an unused expanded text animation.")
+                self.record("media: real long text/native layer movement, reduced-motion reset, section/collapse cleanup",
+                            nativeMovementObserved=observed_movement,
+                            systemReduceMotion=state["systemReduceMotion"])
+        finally:
+            stop(child)
+
+        fixture_state, child = session("oversized-text", style="oversized")
+        try:
+            wait_for(lambda: fixture_state.exists(), bool, "Oversized-text fixture did not start.")
+            directory = self.directory("media-text-bounds", preferences={**SAFE, "enableMedia": True,
+                                       "enablePrivateAPIs": True, "reduceMotion": False})
+            with self.app(directory) as client:
+                source = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                                  and s["media"].get("title", "").startswith("OpenCove oversized verification"),
+                                  "Actual oversized source metadata did not reach the app.", 25)
+                require(len(source["media"]["title"]) > 10_000,
+                        "The real source did not supply oversized metadata for this check.")
+                source_lengths = {len(source["media"][key].encode("utf-16-le")) // 2 for key in ("title", "artist")}
+                client.command("selectTab", tab="media")
+                bounded = wait_for(client.request, lambda s: len(s.get("mediaTextMotion", [])) >= 2 and
+                         all(not row["animating"] and row["displayUTF16Units"] <= 1_025
+                             and 0 < row["layerPixelWidth"] <= 4_096 for row in s["mediaTextMotion"])
+                         and {row["accessibilityUTF16Units"] for row in s["mediaTextMotion"]} == source_lengths,
+                         "Oversized native text exceeded its display/layer bound or lost its accessible source.")
+                write_private(directory / "native-text-bounds.json", json_bytes(bounded["mediaTextMotion"]))
+                write_private(directory / "bounded.png", client.request("/render?surface=notch"))
+                self.record("media: real oversized metadata keeps native text/layers bounded and accessible source intact",
+                            sourceUTF16Lengths=sorted(source_lengths),
+                            maximumLayerPixelWidth=max(row["layerPixelWidth"] for row in bounded["mediaTextMotion"]))
+        finally:
+            stop(child)
 
 
 def main():
