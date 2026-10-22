@@ -430,6 +430,10 @@ final class DevelopmentServer {
         media.artworkData = nil
         result["media"] = try encoded(media)
         result["artworkAvailable"] = store.media.state.artworkData != nil
+        result["systemReduceMotion"] = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        result["mediaTextMotion"] = NSApp.windows.filter(\.isVisible).flatMap { window in
+            window.contentView.map { CoveScrollingMediaTextView.motionSnapshots(in: $0) } ?? []
+        }
         result["system"] = try encoded(store.system.state)
         result["events"] = try encoded(store.activities.events)
         result["calendarAuthorization"] = store.activities.calendarAuthorization

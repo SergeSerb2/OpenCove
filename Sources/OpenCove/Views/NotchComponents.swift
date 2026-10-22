@@ -3,7 +3,10 @@ import AppKit
 import UniformTypeIdentifiers
 
 enum CoveNotchStyle {
-    static let secondary = Color.white.opacity(0.52)
+    private static let secondaryTone = 0.52
+    static let secondary = Color.white.opacity(secondaryTone)
+    static let secondaryNative = NSColor(srgbRed: secondaryTone, green: secondaryTone,
+                                         blue: secondaryTone, alpha: 1)
     static let tertiary = Color.white.opacity(0.30)
     static let surface = Color.white.opacity(0.065)
 
@@ -394,14 +397,14 @@ struct CoveMediaSurface: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open media player")
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(media.state.title.isEmpty ? "Untitled" : media.state.title)
-                            .font(.system(size: condensed ? 12 : 15, weight: .semibold))
-                            .lineLimit(1)
-                            .help(media.state.title)
-                        Text(media.lastError != nil ? "Open player to retry controls" : (media.state.artist.isEmpty ? media.state.source : media.state.artist))
-                            .font(.system(size: condensed ? 10 : 11, weight: .medium))
-                            .foregroundStyle(media.lastError != nil ? .orange : CoveNotchStyle.secondary)
-                            .lineLimit(1)
+                        CoveScrollingMediaText(text: media.state.title.isEmpty ? "Untitled" : media.state.title,
+                                               size: condensed ? 12 : 15, weight: .semibold,
+                                               reduceMotion: reduceMotion || systemReduceMotion)
+                        CoveScrollingMediaText(text: media.lastError != nil ? "Open player to retry controls" : (media.state.artist.isEmpty ? media.state.source : media.state.artist),
+                                               size: condensed ? 10 : 11, weight: .medium,
+                                               color: media.lastError != nil ? .systemOrange : CoveNotchStyle.secondaryNative,
+                                               reduceMotion: reduceMotion || systemReduceMotion || media.lastError != nil,
+                                               helpText: media.lastError)
                         if let format = media.state.audioFormat, !format.isEmpty {
                             Text(format).font(.system(size: 8, weight: .semibold)).foregroundStyle(CoveNotchStyle.secondary)
                         }
@@ -410,7 +413,7 @@ struct CoveMediaSurface: View {
                                 .font(.system(size: 8, weight: .bold)).foregroundStyle(.red)
                         }
                     }
-                    Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     if !condensed {
                         if showLiveWaveform {
                             LiveWaveformView(controller: waveform, isPlaying: media.state.isPlaying,

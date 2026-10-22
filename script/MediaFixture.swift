@@ -11,12 +11,13 @@ enum MediaFixture {
     @MainActor static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
         if args == ["--help"] {
-            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration FINITE_SECONDS]")
+            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration FINITE_SECONDS] [--metadata-style normal|long|oversized]")
             print("Plays only its own two silent tracks for at most 90 seconds. No arguments and missing/unsafe state paths fail before playback. OPENCOVE_FIXTURE_STATE can supply --state.")
             return
         }
         var state = ProcessInfo.processInfo.environment["OPENCOVE_FIXTURE_STATE"]
         var duration: Double?
+        var metadataStyle = "normal"
         var index = 0
         while index < args.count {
             guard index + 1 < args.count else { fail() }
@@ -25,6 +26,9 @@ enum MediaFixture {
             case "--metadata-duration":
                 guard let value = Double(args[index + 1]), value.isFinite, value > 0 else { fail() }
                 duration = value
+            case "--metadata-style":
+                guard ["normal", "long", "oversized"].contains(args[index + 1]) else { fail() }
+                metadataStyle = args[index + 1]
             default: fail()
             }
             index += 2
@@ -37,7 +41,7 @@ enum MediaFixture {
               lstat(url.path, &info) != 0, errno == ENOENT else { fail() }
         umask(0o077)
         let app = NSApplication.shared
-        let delegate = FixtureDelegate(statusURL: url, metadataDuration: duration)
+        let delegate = FixtureDelegate(statusURL: url, metadataDuration: duration, metadataStyle: metadataStyle)
         app.delegate = delegate
         app.setActivationPolicy(.prohibited)
         app.run()
@@ -58,6 +62,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
     private var targets: [(MPRemoteCommand, Any)] = []
     private let statusURL: URL
     private let metadataDuration: Double?
+    private let metadataStyle: String
     private var players: [AVAudioPlayer] = []
     // Original, local fixture pixels. A large source exercises the app's real
     // artwork transfer and thumbnail path without contacting an image service.
@@ -74,9 +79,10 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }()
 
-    init(statusURL: URL, metadataDuration: Double?) {
+    init(statusURL: URL, metadataDuration: Double?, metadataStyle: String) {
         self.statusURL = statusURL
         self.metadataDuration = metadataDuration
+        self.metadataStyle = metadataStyle
         super.init()
     }
 
@@ -130,9 +136,21 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
 
     private func publish() {
         guard let player else { return }
+        let title: String
+        let artist: String
+        if metadataStyle == "oversized" {
+            title = "OpenCove oversized verification \(track) — " + String(repeating: "Original 🔹 title text. ", count: 600)
+            artist = String(repeating: "Original 🔹 artist credit. ", count: 600)
+        } else {
+            title = "OpenCove verification \(track)" + (metadataStyle == "long"
+                ? " — a long original title for checking readable overflow, motion interruption, and native layout" : "")
+            artist = metadataStyle == "long"
+                ? "Local silent playback with a deliberately long artist credit for the real media interface"
+                : "Local silent playback"
+        }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = [
-            MPMediaItemPropertyTitle: "OpenCove verification \(track)",
-            MPMediaItemPropertyArtist: "Local silent playback",
+            MPMediaItemPropertyTitle: title,
+            MPMediaItemPropertyArtist: artist,
             MPMediaItemPropertyAlbumTitle: "End-to-end fixture",
             MPMediaItemPropertyArtwork: artwork,
             MPMediaItemPropertyPlaybackDuration: metadataDuration ?? player.duration,
