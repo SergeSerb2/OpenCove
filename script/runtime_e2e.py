@@ -808,6 +808,42 @@ class Runtime:
             require(client.request()["preferences"]["completedOnboarding"], "Successful completion did not survive restart.")
         self.record("onboarding: failed destination and login saves stay incomplete; retry/restart succeeds")
 
+    def indicators(self):
+        # Restored consent must stay dormant when the feature or its view is off.
+        # Never enable live capture or ask for permission in this caller.
+        for name, media, indicator in (("media-off", False, True), ("indicator-off", True, False)):
+            directory = self.directory("indicators-" + name, preferences={**SAFE,
+                "enableMedia": media, "showPlaybackIndicator": indicator, "showLiveWaveform": True})
+            for restart in range(2):
+                with self.app(directory) as client:
+                    def dormant(state):
+                        wave = state["waveform"]
+                        return not any(wave[key] for key in ("enabled", "available", "startAttempts",
+                                       "captureActive", "captureStarting", "meterActive"))
+                    require(dormant(client.request()), "A disabled feature/view attempted waveform capture at startup.")
+                    for value in (True, False, True):
+                        client.command("preferences", values={"reduceMotion": value})
+                        require(dormant(client.request()), "An unrelated save started dormant waveform capture.")
+                    state = client.request()
+                    require(state["preferences"]["showPlaybackIndicator"] == indicator
+                            and state["preferences"]["showLiveWaveform"], "Saved dormant choices did not survive restart.")
+                    if restart == 0:
+                        write_private(directory / "settings-media.png", client.request("/render?surface=settings-media"))
+                        write_private(directory / "lock.png", client.request("/render?surface=lock"))
+        legacy = self.directory("indicators-legacy")
+        with self.app(legacy) as client:
+            require(client.request()["preferences"]["showPlaybackIndicator"] is True,
+                    "A legacy document lost the existing decorative indicator default.")
+        raw = json_bytes({**SAFE, "showPlaybackIndicator": "damaged", "showLiveWaveform": True})
+        damaged = self.directory("indicators-damaged", raw=raw)
+        with self.app(damaged) as client:
+            state = client.request()
+            require(state["preferences"]["showPlaybackIndicator"] is False
+                    and state["waveform"]["startAttempts"] == 0, "Malformed indicator choice enabled capture.")
+            client.command("preferences", values={"reduceMotion": True})
+            self.backup(damaged, "preferences.recovery.*.json", raw)
+        self.record("indicators: dormant saved live choices, repeated saves/restart, legacy default and malformed opt-out recovery")
+
     def timers(self):
         directory = self.directory("timer-restart")
         with self.app(directory) as client:
@@ -1304,6 +1340,23 @@ class Runtime:
                 require([r["heights"] for r in indicators(reduced)] ==
                         [r["heights"] for r in indicators(client.request())],
                         "Reduced native playback indicator kept moving.")
+                client.command("preferences", values={"showPlaybackIndicator": False, "showLiveWaveform": True})
+                disabled = wait_for(client.request, lambda s: not s.get("playbackIndicatorMotion"),
+                                    "Indicator off retained native layers in expanded media.")
+                require(not any(disabled["waveform"][key] for key in ("enabled", "startAttempts", "captureActive",
+                                "captureStarting", "meterActive")), "Off indicator attempted live capture.")
+                write_private(directory / "indicator-off-expanded.png", client.request("/render?surface=notch"))
+                write_private(directory / "indicator-off-lock.png", client.request("/render?surface=lock"))
+                client.command("collapse")
+                wait_for(client.request, lambda s: not s.get("playbackIndicatorMotion"),
+                         "Indicator off retained native layers in compact media.")
+                write_private(directory / "indicator-off-compact.png", client.request("/render?surface=live-notch"))
+                client.command("selectTab", tab="media")
+                client.command("preferences", values={"showPlaybackIndicator": True, "showLiveWaveform": False})
+                wait_for(client.request, lambda s: indicators(s), "Decorative selection did not restore native layers.")
+                write_private(directory / "indicator-decorative-lock.png", client.request("/render?surface=lock"))
+                write_private(directory / "indicator-settings.png", client.request("/render?surface=settings-media"))
+                self.record("media: actual indicator off unmounts expanded/compact layers without capture; decorative/lock presentation restores")
                 client.command("preferences", values={"reduceMotion": False})
                 client.command("selectTab", tab="timer")
                 wait_for(client.request, lambda s: not s.get("playbackIndicatorMotion"),
@@ -1779,6 +1832,11 @@ class Runtime:
                 require(old_deadline > replacement_at + 0.1 and
                         replacement_at + replacement["mediaPeekRemaining"] > old_deadline + 0.5,
                         "Actual command latency prevented observing overlapping peek deadlines.")
+                client.command("preferences", values={"showPlaybackIndicator": False})
+                off_peek = wait_for(lambda: own_peek(client), lambda s: not s["playbackIndicatorMotion"],
+                                    "Indicator off retained native layers in the actual song peek.")
+                require(off_peek["mediaPeekVisible"], "Indicator opt-out changed the active peek.")
+                write_private(directory / "peek-indicator-off.png", client.request("/render?surface=live-notch"))
                 time.sleep(max(0, old_deadline + 0.15 - time.monotonic()))
                 retained = own_peek(client)
                 require(retained["mediaPeekVisible"] and
@@ -1793,7 +1851,7 @@ class Runtime:
                     "retainedRemaining": retained["mediaPeekRemaining"], "overlapObserved": True}))
                 wait_for(lambda: own_peek(client), lambda s: not s["mediaPeekVisible"],
                          "Replacement peek did not retire.", retained["mediaPeekRemaining"] + 0.75)
-                client.command("preferences", values={"mediaPeekDuration": 3})
+                client.command("preferences", values={"mediaPeekDuration": 3, "showPlaybackIndicator": True})
                 wait_for(client.request, lambda s: not s["playbackIndicatorMotion"],
                          "Expired peek retained native decorative playback layers over the timer.")
                 observed_motion = not client.request()["systemReduceMotion"]
@@ -2192,7 +2250,7 @@ def main():
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
     parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
-    parser.add_argument("--only", choices=("storage", "startup", "storage-alias", "media", "weather", "motion", "displays", "activities", "compact", "shape", "preferences", "timers", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "weather", "motion", "displays", "activities", "compact", "shape", "preferences", "timers", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
@@ -2212,7 +2270,7 @@ def main():
             parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             evidence = Path(tempfile.mkdtemp(prefix="runtime-", dir=parent))
         runtime = Runtime(args.app, evidence)
-        groups = [("startup", runtime.startup_port_collision), ("temp", runtime.temp_alias), ("storage-alias", runtime.storage_alias), ("preferences", runtime.preferences),
+        groups = [("startup", runtime.startup_port_collision), ("temp", runtime.temp_alias), ("storage-alias", runtime.storage_alias), ("preferences", runtime.preferences), ("indicators", runtime.indicators),
                   ("timers", runtime.timers), ("timer-corruption", runtime.timer_corruption),
                   ("calendar", runtime.calendar), ("files", runtime.files)]
         if args.only != "storage":

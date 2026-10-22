@@ -304,7 +304,7 @@ final class CoveStore: ObservableObject {
         if preferences.enableCalendar { travel.start() }
         travel.updateEvents(preferences.enableCalendar ? activities.routingEvents : [])
         if preferences.enableWeather { weather.start() }
-        if preferences.showLiveWaveform { waveform.start() }
+        if preferences.usesLiveWaveform { waveform.start() }
         hardwareKeys.volumeEnabled = preferences.enableVolumeHUD
         hardwareKeys.brightnessEnabled = preferences.enableBrightnessHUD
         hardwareKeys.start(enabled: preferences.replaceSystemHUDs && preferences.enablePrivateAPIs)
@@ -533,6 +533,11 @@ final class CoveStore: ObservableObject {
         }
     }
 
+    func requestWaveformAccess() {
+        guard started, preferences.usesLiveWaveform else { return }
+        waveform.requestAccessAndStart()
+    }
+
     @discardableResult func completeOnboarding() -> Bool {
         preferences.completedOnboarding = true
         return savePreferences()
@@ -560,7 +565,9 @@ final class CoveStore: ObservableObject {
             if preferences.enableCalendar { travel.start(); travel.updateEvents(activities.routingEvents) }
             else { travel.stop(); travel.updateEvents([]) }
             if preferences.enableWeather { weather.start() } else { weather.stop() }
-            if preferences.showLiveWaveform { waveform.start() } else { waveform.stop() }
+            if preferences.usesLiveWaveform != previous.usesLiveWaveform {
+                if preferences.usesLiveWaveform { waveform.start() } else { waveform.stop() }
+            }
             hardwareKeys.volumeEnabled = preferences.enableVolumeHUD
             hardwareKeys.brightnessEnabled = preferences.enableBrightnessHUD
             hardwareKeys.start(enabled: preferences.replaceSystemHUDs && preferences.enablePrivateAPIs)

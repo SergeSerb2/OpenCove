@@ -34,6 +34,12 @@ final class AudioWaveformController: ObservableObject {
     private var generation = UUID()
     private var lastPermissionCheck = 0.0
 
+    // On-demand development diagnostics only; no publication or polling.
+    private(set) var startAttempts: UInt64 = 0
+    var captureActive: Bool { session != nil }
+    var captureStarting: Bool { startTask != nil }
+    var meterActive: Bool { meterTask != nil }
+
     deinit {
         startTask?.cancel()
         meterTask?.cancel()
@@ -50,6 +56,7 @@ final class AudioWaveformController: ObservableObject {
 
     /// Safe for startup and preference restoration: preflight does not prompt.
     func start() {
+        startAttempts &+= 1
         guard session == nil, startTask == nil else { return }
         guard CGPreflightScreenCaptureAccess() else {
             showAccessRequired()
@@ -74,7 +81,7 @@ final class AudioWaveformController: ObservableObject {
     }
 
     func stop() {
-        generation = UUID()
+        if startTask != nil || session != nil || meterTask != nil { generation = UUID() }
         meterTask?.cancel()
         meterTask = nil
         let pendingStart = startTask
@@ -86,14 +93,16 @@ final class AudioWaveformController: ObservableObject {
         // Do not race stopCapture against an in-flight startCapture. New starts
         // await this teardown before creating another stream.
         let previousCleanup = cleanupTask
-        cleanupTask = Task {
-            await previousCleanup?.value
-            await pendingStart?.value
-            await capture?.stop()
+        if pendingStart != nil || capture != nil {
+            cleanupTask = Task {
+                await previousCleanup?.value
+                await pendingStart?.value
+                await capture?.stop()
+            }
         }
         clearLevels()
-        lastError = nil
-        status = "Live waveform is off."
+        if lastError != nil { lastError = nil }
+        if status != "Live waveform is off." { status = "Live waveform is off." }
     }
 
     private var hasUsageDescription: Bool {

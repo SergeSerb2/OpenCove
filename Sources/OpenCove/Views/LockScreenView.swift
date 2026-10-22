@@ -14,7 +14,11 @@ struct LockScreenView: View {
         ScrollView {
             VStack(spacing: 14) {
                 if store.preferences.enableMedia {
-                    CoveLockMediaSection(controller: store.media)
+                    CoveMediaSurface(media: store.media, system: store.system, waveform: store.waveform,
+                                     showPlaybackIndicator: store.preferences.showPlaybackIndicator,
+                                     showLiveWaveform: store.preferences.showLiveWaveform, locked: true,
+                                     musicColorAccent: store.preferences.musicColorAccent,
+                                     reduceMotion: store.preferences.reduceMotion)
                 }
                 if store.preferences.enableCalendar || store.preferences.enableWeather {
                     HStack(alignment: .top, spacing: 18) {
@@ -62,91 +66,6 @@ private struct CoveLockSurfaceStyle: ViewModifier {
                 .background(style == "frosted" ? .regularMaterial : .ultraThinMaterial,
                             in: RoundedRectangle(cornerRadius: 26, style: .continuous))
         }
-    }
-}
-
-@MainActor
-private struct CoveLockMediaSection: View {
-    @ObservedObject var controller: MediaController
-
-    var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                artwork
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(controller.state.available ? nonempty(controller.state.title, fallback: "Untitled") : "No media is playing")
-                        .font(.system(size: 14, weight: .semibold))
-                        .lineLimit(1)
-                    Text(controller.state.available
-                         ? nonempty(controller.state.artist, fallback: controller.state.source)
-                         : "Start playback after unlocking.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if controller.state.available {
-                    HStack(spacing: 4) {
-                        transport("backward.end.fill", label: "Previous track", enabled: controller.state.supportsPrevious, action: controller.previous)
-                        transport(controller.state.isPlaying ? "pause.fill" : "play.fill",
-                                  label: controller.state.isPlaying ? "Pause" : "Play",
-                                  enabled: controller.state.supportsPlayPause,
-                                  action: controller.playPause)
-                        transport("forward.end.fill", label: "Next track", enabled: controller.state.supportsNext, action: controller.next)
-                    }
-                }
-            }
-            if controller.state.available, controller.state.duration.isFinite,
-               controller.state.duration > 0 {
-                CovePlaybackTimeline(clock: controller.playback) { elapsed in
-                    HStack(spacing: 9) {
-                        Text(playbackTime(elapsed))
-                        ProgressView(value: min(max(0, elapsed), controller.state.duration),
-                                     total: controller.state.duration)
-                            .tint(.primary)
-                            .accessibilityLabel("Playback progress")
-                        Text("−" + playbackTime(max(0, controller.state.duration - elapsed)))
-                    }
-                    .font(.system(size: 9, weight: .medium, design: .rounded).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                }
-            }
-            if controller.lastError != nil {
-                Text("Playback could not be updated.")
-                    .font(.caption2).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-
-    private func transport(_ symbol: String, label: String, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: symbol == "play.fill" || symbol == "pause.fill" ? 19 : 13, weight: .semibold))
-                .frame(width: 30, height: 34)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.35)
-        .accessibilityLabel(label)
-    }
-
-    private var artwork: some View {
-        CoveArtwork(data: controller.state.available ? controller.state.artworkData : nil,
-                    size: 56, radius: 12)
-    }
-
-    private func nonempty(_ text: String, fallback: String) -> String {
-        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : text
-    }
-
-    private func playbackTime(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0, seconds < Double(Int.max / 2) else { return "—" }
-        let total = Int(seconds)
-        if total >= 3600 { return "\(total / 3600):" + String(format: "%02d:%02d", total / 60 % 60, total % 60) }
-        return "\(total / 60):" + String(format: "%02d", total % 60)
     }
 }
 
