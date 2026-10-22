@@ -10,6 +10,7 @@ struct NotchView: View {
     @ObservedObject private var activities: ActivityController
     private let waveform: AudioWaveformController
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
 
     init(store: CoveStore, cutout: CGSize? = nil) {
         self.store = store
@@ -98,8 +99,19 @@ struct NotchView: View {
             .background(Color.black, in: surfaceShape)
             .clipShape(surfaceShape)
             .overlay {
-                surfaceShape.stroke(Color.white.opacity(store.isExpanded ? 0.085 : 0.035), lineWidth: 0.6)
-                    .allowsHitTesting(false)
+                // Clip a doubled stroke to keep the full 1 pt outline inside
+                // the existing surface. It adds no window area or input region.
+                let outlined = store.preferences.showContrastOutline || contrast == .increased
+                Group {
+                    if outlined {
+                        surfaceShape.stroke(Color.white.opacity(contrast == .increased ? 1 : 0.45), lineWidth: 2)
+                            .clipShape(surfaceShape)
+                    } else {
+                        surfaceShape.stroke(Color.white.opacity(store.isExpanded ? 0.085 : 0.035), lineWidth: 0.6)
+                    }
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
             .foregroundStyle(Color.white)
             .tint(CoveNotchStyle.accent(store.preferences.accent))
