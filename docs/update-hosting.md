@@ -28,6 +28,18 @@ upload, admin, listing, proxy, or account endpoint.
   and release information. Before publication it says that no feed is present.
   After publication it links to the feed. It never invents an installer link,
   release version, signing status, download count, or compatibility claim.
+- A publisher-controlled `release.json` enables a direct download on `/` and
+  `/download`. The descriptor must have a bounded version and same-origin
+  `/releases/<version>/<archive.zip-or-dmg>` path, a lowercase SHA-256, a positive
+  integer byte count, `architecture: "universal2"`,
+  `minimumSystemVersion: "15.0"`, and `notarized: true`. The referenced R2 object
+  must exist with the same byte count. Invalid or missing descriptors yield no
+  download link; `/download` and `/release.json` return `503`. The descriptor is
+  at most4096bytes. Returned text is escaped. The publisher must verify the
+  actual signature, notarization and remote archive hash before publishing this
+  descriptor; the Worker does not re-sign or hash the archive on each request.
+  `/download` redirects only to that validated relative path. `/release.json`
+  returns only validated public fields.
 - `/health` checks whether a nonempty `appcast.xml` object is readable. It returns
   `200` with `{"status":"feed-present","feedPresent":true}` or `503` with
   `{"status":"awaiting-release","feedPresent":false}` and `Retry-After: 60`.

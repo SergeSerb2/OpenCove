@@ -45,8 +45,8 @@ Every release-variant build, including a local ad-hoc release, needs:
   (exactly 32 decoded bytes). This public value is safe to include in a bundle.
 
 The intended owned-domain endpoint is
-`https://opencove.sergeserbinenko.com/appcast.xml`, subject to the parent's hosting
-and DNS confirmation. It is a deployment target, not a claim that a feed exists.
+`https://opencove.sergeserbinenko.com/appcast.xml`. Hosting and signed release
+publication are separate from building the application.
 Downloads should use immutable versioned paths on the same Cloudflare-backed
 owned domain. The feed URL remains configurable. No hosting, DNS, release
 publication, credential generation, or private key import is done by these tools.

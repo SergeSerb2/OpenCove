@@ -28,8 +28,29 @@ function missing(request) {
   return respond(request, "Not found.\n", 404, { "Content-Type": "text/plain; charset=utf-8" });
 }
 
-function page(feedPresent) {
-  // Every byte is authored here. No request, object metadata, or release JSON is HTML.
+function escaped(value) {
+  return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+}
+
+async function publishedRelease(bucket) {
+  const object = await bucket.get("release.json");
+  if (object === null || object.size > 4096 || !("body" in object)) return null;
+  let release;
+  try { release = JSON.parse(await object.text()); } catch { return null; }
+  if (release === null || typeof release !== "object" || Array.isArray(release)) return null;
+  const match = typeof release.path === "string" && RELEASE_PATH.exec(release.path);
+  if (!match || match[1].includes("..") || match[2].includes("..") ||
+      !/\.(?:zip|dmg)$/.test(match[2]) || release.version !== match[1] ||
+      !/^[a-f0-9]{64}$/.test(release.sha256) || !Number.isSafeInteger(release.bytes) || release.bytes <= 0 ||
+      release.architecture !== "universal2" || release.minimumSystemVersion !== "15.0" || release.notarized !== true) return null;
+  const archive = await bucket.head(release.path.slice(1));
+  if (archive === null || archive.size !== release.bytes) return null;
+  return { version: release.version, path: release.path, sha256: release.sha256, bytes: release.bytes,
+    architecture: release.architecture, minimumSystemVersion: release.minimumSystemVersion, notarized: true };
+}
+
+function page(feedPresent, release) {
+  // Only the publisher's strictly validated release descriptor supplies a link.
   return `<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
@@ -40,7 +61,10 @@ function page(feedPresent) {
 <p>An independent, open-source macOS notch app.</p>
 <p>${feedPresent
     ? "An update feed has been published. OpenCove can use it to check for updates."
-    : "No update feed has been published here yet. There is no installer listed on this page."}</p>
+    : "No update feed has been published here yet."}</p>
+${release ? `<p><a href="${escaped(release.path)}" download>Download OpenCove ${escaped(release.version)}</a></p>
+<p>macOS 15 or later · Apple Silicon and Intel</p>
+<p>SHA-256: <code>${escaped(release.sha256)}</code></p>` : "<p>A signed release download is not available yet.</p>"}
 <p><a href="https://github.com/SergeSerb2/OpenCove">Source and build instructions</a></p>
 <p><a href="https://github.com/SergeSerb2/OpenCove/releases">Release information</a></p>
 ${feedPresent ? '<p><a href="/appcast.xml">Update feed</a></p>' : ""}
@@ -163,7 +187,7 @@ export default {
         const feed = await env.RELEASES.head(FEED);
         const feedPresent = feed !== null && feed.size > 0;
         if (path === "/") {
-          return respond(request, page(feedPresent), 200, { "Content-Type": "text/html; charset=utf-8" });
+          return respond(request, page(feedPresent, await publishedRelease(env.RELEASES)), 200, { "Content-Type": "text/html; charset=utf-8" });
         }
         return respond(request, JSON.stringify({
           status: feedPresent ? "feed-present" : "awaiting-release",
@@ -174,6 +198,12 @@ export default {
         });
       }
       if (path === "/appcast.xml") return await serveObject(request, env.RELEASES, FEED, { feed: true });
+      if (path === "/download" || path === "/release.json") {
+        const release = await publishedRelease(env.RELEASES);
+        if (release === null) return unavailable(request);
+        if (path === "/download") return respond(request, null, 302, { "Location": release.path });
+        return respond(request, JSON.stringify(release) + "\n", 200, { "Content-Type": "application/json; charset=utf-8" });
+      }
       if (path === "/appcast.xml.sig") return await serveObject(request, env.RELEASES, "appcast.xml.sig");
       const release = RELEASE_PATH.exec(path);
       if (release && !release[1].includes("..") && !release[2].includes("..")) {

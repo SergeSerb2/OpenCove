@@ -290,7 +290,11 @@ def package(args):
         if args.notarize:
             upload = work / "notary-submission.zip"
             check.run(["ditto", "-c", "-k", "--keepParent", app, upload])
-            result = json.loads(check.output(["xcrun", "notarytool", "submit", upload, "--keychain-profile", profile, "--wait", "--output-format", "json"]))
+            notary_keychain = check.signing_keychain()
+            result = json.loads(check.output(["xcrun", "notarytool", "submit", upload,
+                                             "--keychain-profile", profile,
+                                             *(["--keychain", notary_keychain] if notary_keychain else []),
+                                             "--wait", "--output-format", "json"]))
             check.require(result.get("status") == "Accepted", "Apple did not accept the notarization submission. No release artifacts were retained.")
             check.run(["xcrun", "stapler", "staple", app])
             check.bundle(app, arch, "release", args.signing, notarized=True)
