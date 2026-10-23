@@ -1,6 +1,41 @@
 import SwiftUI
 import AppKit
 
+private struct CovePanelPresentation {
+    var expanded = false
+    var reduceMotion = false
+}
+
+private struct CovePanelPresentationKey: EnvironmentKey {
+    static let defaultValue = CovePanelPresentation()
+}
+
+private extension EnvironmentValues {
+    var covePanelPresentation: CovePanelPresentation {
+        get { self[CovePanelPresentationKey.self] }
+        set { self[CovePanelPresentationKey.self] = newValue }
+    }
+}
+
+/// Read the current presentation even inside a retained outgoing transition.
+/// Reduce Motion must reveal the active controls and clear departing controls
+/// immediately, rather than waiting for an already scheduled fade or delay.
+private struct CovePanelFade: AnimatableModifier {
+    var opacity: Double
+    let expanded: Bool
+    @Environment(\.covePanelPresentation) private var presentation
+
+    var animatableData: Double {
+        get { opacity }
+        set { opacity = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content.opacity(presentation.reduceMotion ? (expanded == presentation.expanded ? 1 : 0) : opacity)
+            .transaction { $0.animation = nil }
+    }
+}
+
 @MainActor
 struct NotchView: View {
     @ObservedObject var store: CoveStore
@@ -22,13 +57,13 @@ struct NotchView: View {
     }
 
     /// The window owner can use the same dimensions as the rendered surface.
-    static func desiredSize(store: CoveStore, cutout: CGSize? = nil) -> CGSize {
+    static func desiredSize(store: CoveStore, cutout: CGSize? = nil, expanded: Bool? = nil) -> CGSize {
         let width = max(160, store.preferences.notchWidth)
         let clearance = presentationCutout(store: store, physical: cutout)
         let cutoutWidth = Double(clearance.width)
         let cutoutHeight = Double(clearance.height)
         let height = max(32, store.preferences.notchHeight, cutoutHeight)
-        if store.isExpanded {
+        if expanded ?? store.isExpanded {
             let active = store.visibleTab
             let contentHeight: Double = active == .media ? (store.preferences.expandedLayout == "duo" ? 240 : 205)
                 : active == .calendar ? 235 : 260
@@ -61,6 +96,18 @@ struct NotchView: View {
         return CoveMotion.animation(preferences: store.preferences, hud: store.hud != nil)
     }
 
+    private func contentTransition(expanded: Bool) -> AnyTransition {
+        let reduced = systemReduceMotion || store.preferences.reduceMotion
+        guard !reduced else { return .identity }
+        let fade = AnyTransition.modifier(active: CovePanelFade(opacity: 0, expanded: expanded),
+                                         identity: CovePanelFade(opacity: 1, expanded: expanded))
+        return .asymmetric(
+            insertion: fade.animation(CoveMotion.contentAnimation(
+                preferences: store.preferences, hud: store.hud != nil, entering: true)),
+            removal: fade.animation(CoveMotion.contentAnimation(
+                preferences: store.preferences, hud: store.hud != nil, entering: false)))
+    }
+
     private var enabledTabs: [CoveTab] { store.enabledTabs }
     private var visibleTab: CoveTab? { store.visibleTab }
 
@@ -84,45 +131,56 @@ struct NotchView: View {
     var body: some View {
         surface
             .environment(\.colorScheme, .dark)
-            .animation(motion, value: store.isExpanded)
-            .animation(motion, value: store.hud?.kind)
-            .animation(motion, value: store.hidesCompactWhenIdle)
-            .animation(motion, value: store.showsMediaPeek)
-            .animation(motion, value: Self.desiredSize(store: store, cutout: cutout))
+            .environment(\.covePanelPresentation, CovePanelPresentation(expanded: store.isExpanded,
+                reduceMotion: systemReduceMotion || store.preferences.reduceMotion))
             .onExitCommand(perform: store.collapse)
     }
 
     private var surface: some View {
         let size = Self.desiredSize(store: store, cutout: cutout)
-        return content
-            .frame(maxWidth: size.width, maxHeight: size.height)
-            .background(Color.black, in: surfaceShape)
-            .clipShape(surfaceShape)
-            .overlay {
-                // Clip a doubled stroke to keep the full 1 pt outline inside
-                // the existing surface. It adds no window area or input region.
-                let outlined = store.preferences.showContrastOutline || contrast == .increased
-                Group {
-                    if outlined {
-                        surfaceShape.stroke(Color.white.opacity(contrast == .increased ? 1 : 0.45), lineWidth: 2)
-                            .clipShape(surfaceShape)
-                    } else {
-                        surfaceShape.stroke(Color.white.opacity(store.isExpanded ? 0.085 : 0.035), lineWidth: 0.6)
+        return GeometryReader { viewport in
+            content
+                .animation(motion, value: store.isExpanded)
+                .animation(motion, value: store.hud?.kind)
+                .animation(motion, value: store.showsMediaPeek)
+                // Lay out controls at their destination size once. AppKit owns the
+                // moving viewport; proposing every intermediate window size to the
+                // controls makes labels, spacers and sliders reflow during a morph.
+                // Keep this frame outside the content's animation transaction.
+                .frame(width: size.width, height: size.height, alignment: .top)
+                .frame(width: viewport.size.width, height: viewport.size.height, alignment: .top)
+                .background(Color.black, in: surfaceShape)
+                .clipShape(surfaceShape)
+                .overlay {
+                    // Clip a doubled stroke to keep the full 1 pt outline inside
+                    // the existing surface. It adds no window area or input region.
+                    let outlined = store.preferences.showContrastOutline || contrast == .increased
+                    Group {
+                        if outlined {
+                            surfaceShape.stroke(Color.white.opacity(contrast == .increased ? 1 : 0.45), lineWidth: 2)
+                                .clipShape(surfaceShape)
+                        } else {
+                            surfaceShape.stroke(Color.white.opacity(store.isExpanded ? 0.085 : 0.035), lineWidth: 0.6)
+                        }
                     }
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 }
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-            }
-            .foregroundStyle(Color.white)
-            .tint(CoveNotchStyle.accent(store.preferences.accent))
-            .opacity(store.hidesCompactWhenIdle ? 0 : 1)
+                .foregroundStyle(Color.white)
+                .tint(CoveNotchStyle.accent(store.preferences.accent))
+                .opacity(store.hidesCompactWhenIdle ? 0 : 1)
+                .animation(motion, value: store.hidesCompactWhenIdle)
+        }
     }
 
     @ViewBuilder private var content: some View {
-        Group {
+        let expandedSize = Self.desiredSize(store: store, cutout: cutout, expanded: true)
+        let compactSize = Self.desiredSize(store: store, cutout: cutout, expanded: false)
+        ZStack(alignment: .top) {
             if store.isExpanded {
                 expanded
-                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                    .frame(width: expandedSize.width, height: expandedSize.height)
+                    .transition(contentTransition(expanded: true))
             } else {
                 Button(action: store.openCompactActivity) {
                     compact
@@ -132,7 +190,8 @@ struct NotchView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(compactAccessibilityLabel)
                 .accessibilityHint("Show OpenCove controls")
-                .transition(.opacity)
+                .frame(width: compactSize.width, height: compactSize.height)
+                .transition(contentTransition(expanded: false))
             }
         }
     }

@@ -22,8 +22,20 @@ enum CoveMotion {
 
     static func animation(preferences: CovePreferences, hud: Bool) -> Animation? {
         let seconds = duration(preferences: preferences, hud: hud)
-        return seconds > 0 ? .timingCurve(0.23, 1, 0.32, 1, duration: seconds) : nil
+        return seconds > 0 ? .timingCurve(0.32, 0.72, 0, 1, duration: seconds) : nil
     }
 
-    static let timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+    static func contentAnimation(preferences: CovePreferences, hud: Bool, entering: Bool) -> Animation? {
+        let seconds = duration(preferences: preferences, hud: hud)
+        guard seconds > 0 else { return nil }
+        // Let the viewport open before revealing fixed-size controls. Departing
+        // controls clear sooner, rather than lingering over the next activity.
+        let fade = min(seconds, 0.12 / min(2, max(0.25, preferences.animationSpeed)))
+        return .timingCurve(0.23, 1, 0.32, 1, duration: fade)
+            .delay(entering ? seconds - fade : 0)
+    }
+
+    // A drawer curve gives the native morph a gentler first frame without
+    // extending its duration or introducing spring overshoot at the screen edge.
+    static let timingFunction = CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1)
 }
