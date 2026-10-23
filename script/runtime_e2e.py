@@ -1324,9 +1324,10 @@ print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding:
                         for a, b, t in zip(first, later, target) if t["width"] - a["width"] > 20]
                     policies.append({"speed": speed, "before": first, "after": later, "gains": gains})
                 write_private(replacement / "positive-policies.json", json_bytes(policies))
-                if policies[0]["gains"] and policies[1]["gains"]:
-                    require(min(policies[1]["gains"]) > max(policies[0]["gains"]) + 0.04,
-                            "Fast category replacement retained the prior Smooth native motion.")
+                require(all(row["gains"] for row in policies),
+                        "Native motion samples were too late to compare positive overlay policies.")
+                require(min(policies[1]["gains"]) > max(policies[0]["gains"]) + 0.04,
+                        "Fast category replacement retained the prior Smooth native motion.")
         self.record("overlay replacement: instant category settles an interrupted smooth native transition",
                     observedAnimation=not during["systemReduceMotion"])
         self.record("overlay replacement: actual Fast native motion advances ahead of unchanged Smooth policy",
@@ -2925,13 +2926,28 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
             directory = self.directory("media-song-peek", preferences={**SAFE, "enableMedia": True,
                 "enablePrivateAPIs": True, "hideWhenIdle": False, "expandOnHover": False,
                 "hideInFullscreen": False, "reduceMotion": True, "enableNotifications": True,
+                "enableVolumeHUD": False, "enableBrightnessHUD": False, "enableBattery": False,
+                "enableBluetooth": False, "enableFocus": False,
                 "hudDuration": 0.5, "compactActivity": "timer"})
             observations = []
+            source_transitions = []
 
             def peek_state(client):
                 require(child.poll() is None and json.loads(fixture_state.read_bytes())["pid"] == child.pid,
                         "Own peek fixture stopped or changed PID; no command sent.")
-                return client.request()
+                value = client.request()
+                own = value["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                row = {"ownSource": own, "missingSource": not bool(value["media"].get("sourceBundleIdentifier")),
+                    "item": value["media"].get("contentItemIdentifier") if own else None,
+                    "available": value["media"]["available"], "playing": value["media"]["isPlaying"],
+                    "peek": value["mediaPeekVisible"], "expanded": value["expanded"],
+                    "hudKind": value["hud"]["kind"] if value["hud"] else None}
+                if not source_transitions or row != source_transitions[-1]:
+                    source_transitions.append(row)
+                    del source_transitions[:-256]
+                    path = directory / "source-transitions.json"
+                    path.write_bytes(json_bytes(source_transitions)); path.chmod(0o600)
+                return value
 
             def own_peek(client):
                 state = peek_state(client)
