@@ -212,12 +212,11 @@ struct CoveArtwork: View {
             if !immediate && hasRetainedSource {
                 // Fixed slots retarget on A/B/A without accumulating removal
                 // transitions. An opaque lower slot prevents a dark midpoint.
-                ZStack {
-                    layer(first)
-                    layer(second)
-                        .opacity(showsSecond ? 1 : 0)
-                        // Section wrappers clear inherited data animations.
-                        .animation(CoveMotion.contentFadeAnimation(), value: showsSecond)
+                CoveArtworkTransition(first: retainedImage(first), second: retainedImage(second),
+                                      showsSecond: showsSecond, sourceIdentifier: sourceIdentifier,
+                                      revision: fadeRevision, fading: fadePhase == .fading(fadeRevision), size: size) { revision in
+                    guard fadeRevision == revision, fadePhase == .fading(revision) else { return }
+                    fadePhase = .completed(revision)
                 }
                 .transition(.identity)
             } else if let thumbnail = displayed {
@@ -251,8 +250,8 @@ struct CoveArtwork: View {
             guard case .completed(let revision) = phase, fadeRevision == revision else { return }
             if showsSecond { first = nil } else { second = nil }
             fadePhase = .idle
-            // Read the latest view input here. The animation completion holds
-            // the input from the start of its fade, which may already be stale.
+            // Read the latest view input here. The native completion reports
+            // only a phase and never reads a thumbnail from the fade's start.
             updateArtwork()
         }
         .task(id: decodeGap) {
@@ -275,10 +274,10 @@ struct CoveArtwork: View {
         Image(decorative: thumbnail.image, scale: 1).resizable().scaledToFill()
     }
 
-    @ViewBuilder private func layer(_ cover: RetainedArtwork?) -> some View {
-        // Remove old pixels from the tree before an input callback runs.
-        if let cover, cover.source == sourceIdentifier { image(cover.thumbnail) }
-        else { Color.clear }
+    private func retainedImage(_ cover: RetainedArtwork?) -> CGImage? {
+        // Suppress old-source pixels before the input callback settles state.
+        guard let cover, cover.source == sourceIdentifier else { return nil }
+        return cover.thumbnail.image
     }
 
     private func settle(to cover: RetainedArtwork?) {
@@ -326,12 +325,7 @@ struct CoveArtwork: View {
         fadeRevision &+= 1
         let revision = fadeRevision
         fadePhase = .fading(revision)
-        withAnimation(CoveMotion.contentFadeAnimation(), completionCriteria: .removed) {
-            showsSecond.toggle()
-        } completion: {
-            guard fadeRevision == revision else { return }
-            fadePhase = .completed(revision)
-        }
+        showsSecond.toggle()
     }
 }
 

@@ -6,6 +6,7 @@ import SwiftUI
 /// retarget an in-flight transition; reduced motion is resolved by each owner.
 enum CoveMotion {
     static let contentFadeDuration = 0.12
+    static let contentFadeTimingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
 
     static func contentFadeAnimation(duration: Double = contentFadeDuration) -> Animation {
         .timingCurve(0.23, 1, 0.32, 1, duration: duration)

@@ -575,6 +575,9 @@ final class DevelopmentServer {
         result["playbackIndicatorMotion"] = NSApp.windows.filter(\.isVisible).flatMap { window in
             window.contentView.map { CovePlaybackIndicatorView.motionSnapshots(in: $0) } ?? []
         }
+        result["artworkTransitionMotion"] = NSApp.windows.filter(\.isVisible).flatMap { window in
+            window.contentView.map { CoveArtworkTransitionView.motionSnapshots(in: $0) } ?? []
+        }
         result["timerClock"] = ["publications": timerPublications]
         result["timerProgressMotion"] = NSApp.windows.filter(\.isVisible).flatMap { window in
             window.contentView.map { CoveTimerProgressView.motionSnapshots(in: $0) } ?? []
@@ -704,7 +707,9 @@ final class DevelopmentServer {
         bitmap.bitmapData?.initialize(repeating: 0, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
             CoveTimerProgressView.withCurrentPresentation(in: view) {
-                view.cacheDisplay(in: view.bounds, to: bitmap)
+                CoveArtworkTransitionView.withCurrentPresentation(in: view) {
+                    view.cacheDisplay(in: view.bounds, to: bitmap)
+                }
             }
         }
         guard let png = bitmap.representation(using: .png, properties: [:]) else { throw ControlError.failed("Native rendering failed.") }
