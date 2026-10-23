@@ -26,6 +26,9 @@ final class MediaController: ObservableObject {
         didSet {
             guard oldValue != preferredSource else { return }
             generation = UUID()
+            delayedRefresh?.cancel()
+            delayedRefresh = nil
+            adapterRefreshRequested = false
             remoteRead?.cancel()
             remoteRead = nil
             scripts.cancelAll()
@@ -65,6 +68,7 @@ final class MediaController: ObservableObject {
     private var remoteRead: CoveRemoteRead?
     private var pollTimer: Timer?
     private var delayedRefresh: DispatchWorkItem?
+    private var adapterRefreshRequested = false
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var sourceBundleID: String?
     private var sourcePID: pid_t?
@@ -127,6 +131,7 @@ final class MediaController: ObservableObject {
         pollTimer = nil
         delayedRefresh?.cancel()
         delayedRefresh = nil
+        adapterRefreshRequested = false
         remoteRead?.cancel()
         remoteRead = nil
         for (center, token) in observers { center.removeObserver(token) }
@@ -356,13 +361,18 @@ final class MediaController: ObservableObject {
         }
     }
 
-    private func scheduleRefresh(after delay: TimeInterval = 0.35) {
+    private func scheduleRefresh(after delay: TimeInterval = 0.35, wakeAdapter: Bool = false) {
         delayedRefresh?.cancel()
+        adapterRefreshRequested = adapterRefreshRequested || wakeAdapter
         let epoch = generation
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.running, self.generation == epoch else { return }
                 self.delayedRefresh = nil
+                if self.adapterRefreshRequested {
+                    self.adapterRefreshRequested = false
+                    self.adapterWatch.requestRefresh()
+                }
                 self.refresh()
             }
         }
@@ -850,7 +860,7 @@ final class MediaController: ObservableObject {
             case .success(let data):
                 if let payload = CoveMediaAdapterWatch.payload(from: data) {
                     self.lastError = payload["error"] as? String
-                    if self.lastError == nil { self.scheduleRefresh(after: 0.5) }
+                    if self.lastError == nil { self.scheduleRefresh(after: 0.2, wakeAdapter: true) }
                 } else { self.lastError = "The system media adapter returned an unreadable response." }
             case .failure(let error): self.lastError = error.localizedDescription
             }
@@ -1512,6 +1522,7 @@ private final class CoveMediaAdapterWatch: @unchecked Sendable {
     // The reader queue owns both ends. Writers borrow this descriptor only
     // under lock; it is unpublished under that lock before either end closes.
     private var readerWake: (token: Int, descriptor: Int32)?
+    private var refreshInput: (token: Int, descriptor: Int32)?
 
     var isRunning: Bool { lock.lock(); defer { lock.unlock() }; return active }
 
@@ -1519,12 +1530,23 @@ private final class CoveMediaAdapterWatch: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         wakeReaderLocked(token: epoch)
         readerWake = nil
+        refreshInput = nil
         epoch += 1
         active = false
         pendingPayload = nil
         deliveryScheduled = false
         if let process, process.isRunning { kill(process.processIdentifier, SIGKILL) }
         process = nil
+    }
+
+    func requestRefresh() {
+        lock.lock(); defer { lock.unlock() }
+        guard active, let refreshInput, refreshInput.token == epoch, process?.isRunning == true else { return }
+        // One nonblocking byte requests metadata only. The child coalesces
+        // bursts; EAGAIN means it already has pending refresh requests.
+        var byte: UInt8 = 1
+        var count: Int
+        repeat { count = Darwin.write(refreshInput.descriptor, &byte, 1) } while count < 0 && errno == EINTR
     }
 
     private func wakeReaderLocked(token: Int) {
@@ -1592,10 +1614,35 @@ private final class CoveMediaAdapterWatch: @unchecked Sendable {
                 try? output.fileHandleForWriting.close()
             }
             let javaScript = url.pathExtension == "js"
+            let input = javaScript ? Pipe() : nil
+            defer {
+                lock.lock()
+                if refreshInput?.token == token { refreshInput = nil }
+                lock.unlock()
+                try? input?.fileHandleForReading.close()
+                try? input?.fileHandleForWriting.close()
+            }
+            if let input {
+                let writer = input.fileHandleForWriting.fileDescriptor
+                for handle in [input.fileHandleForReading, input.fileHandleForWriting] {
+                    let flags = fcntl(handle.fileDescriptor, F_GETFD)
+                    guard flags >= 0, fcntl(handle.fileDescriptor, F_SETFD, flags | FD_CLOEXEC) == 0 else {
+                        exited(token: token, error: "Could not configure the media refresh pipe.", callback: onExit)
+                        return
+                    }
+                }
+                let flags = fcntl(writer, F_GETFL)
+                guard flags >= 0, fcntl(writer, F_SETFL, flags | O_NONBLOCK) == 0,
+                      fcntl(writer, F_SETNOSIGPIPE, 1) == 0 else {
+                    exited(token: token, error: "Could not configure the media refresh writer.", callback: onExit)
+                    return
+                }
+            }
             task.executableURL = URL(fileURLWithPath: javaScript ? "/usr/bin/osascript" : "/usr/bin/swift")
             task.arguments = (javaScript ? ["-l", "JavaScript", url.path] : ["-swift-version", "5", url.path]) + ["--watch"]
             task.currentDirectoryURL = url.deletingLastPathComponent()
-            task.standardInput = FileHandle.nullDevice
+            if let input { task.standardInput = input }
+            else { task.standardInput = FileHandle.nullDevice }
             task.standardOutput = output
             task.standardError = FileHandle.nullDevice
             task.terminationHandler = { [weak self] _ in
@@ -1612,6 +1659,7 @@ private final class CoveMediaAdapterWatch: @unchecked Sendable {
                 return
             }
             process = task
+            if let input { refreshInput = (token, input.fileHandleForWriting.fileDescriptor) }
             lock.unlock()
             var buffer = Data(), failure: String?
             var artworkKey: [String]?

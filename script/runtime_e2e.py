@@ -15,6 +15,7 @@ import math
 import os
 from pathlib import Path
 import plistlib
+import selectors
 import socket
 import stat
 import subprocess
@@ -1565,6 +1566,133 @@ print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding:
             require(client.request()["preferences"]["reduceMotion"], "Pinned A settings did not survive process restart.")
         self.record("storage: actual intermediate alias A-to-B retarget leaves all later writes/lock/control in physical A")
 
+    def media_refresh(self):
+        """Exercise the actual stdin wake protocol and owned-app recovery."""
+        work, executable, environment = self.build_media_fixture("media-refresh-fixture")
+        fixture_state = work / "playing.json"
+        child = subprocess.Popen([str(executable), "--state", str(fixture_state)], env=environment,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, umask=0o077)
+        try:
+            wait_for(fixture_state.exists, bool, "Own media-refresh fixture did not start.")
+            adapter = self.bundle / "Contents/Resources/OpenCoveMediaAdapter.js"
+            require(adapter.is_file(), "Media refresh requires the packaged JavaScript reader.")
+
+            def own_fixture():
+                require(child.poll() is None, "Own media-refresh fixture stopped; no command sent.")
+                state = json.loads(fixture_state.read_bytes())
+                require(state["pid"] == child.pid, "Own fixture PID changed; no command sent.")
+                return state
+
+            def native_source():
+                own_fixture()
+                result = subprocess.run(["/usr/bin/osascript", "-l", "JavaScript", str(adapter), "--read"],
+                                        env=environment, capture_output=True, timeout=15)
+                require(result.returncode == 0, "Native source check failed; no command sent.")
+                payload = plistlib.loads(base64.b64decode(json.loads(result.stdout)["snapshot"]))
+                require(payload.get("bundleID") == FIXTURE_ID, "Native source changed; no command sent.")
+
+            directory = self.directory("media-refresh", preferences={**SAFE, "enableMedia": True,
+                "enablePrivateAPIs": True, "reduceMotion": True, "hideWhenIdle": False, "expandOnHover": False})
+            observations = []
+            with self.app(directory) as client:
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["artworkAvailable"], "Own source did not reach the refresh app.", 25)
+                for action in ("media.next", "media.previous", "media.playPause", "media.playPause"):
+                    native_source()
+                    old = client.request()["media"]
+                    before = own_fixture()
+                    began = time.monotonic()
+                    client.command(action)
+                    def changed(state):
+                        if state["media"].get("sourceBundleIdentifier") != FIXTURE_ID:
+                            return False
+                        return (state["media"].get("contentItemIdentifier") != old.get("contentItemIdentifier")
+                                if action != "media.playPause" else state["media"]["isPlaying"] != old["isPlaying"])
+                    current = wait_for(client.request, changed, "Actual app transport metadata did not update.")
+                    actual = own_fixture()
+                    require(actual["track"] != before["track"] if action != "media.playPause"
+                            else actual["playing"] != before["playing"], "App metadata was not confirmed by the real player.")
+                    observations.append({"action": action, "callerObservedSeconds": time.monotonic() - began})
+                    expected = current["media"]
+                    for _ in range(8):
+                        time.sleep(0.15)
+                        current = client.request()["media"]
+                        require(current.get("contentItemIdentifier") == expected.get("contentItemIdentifier")
+                            and current["isPlaying"] == expected["isPlaying"], "A stale snapshot undid actual transport state.")
+
+                native_source()
+                app_pid = client.request()["pid"]
+                helpers = []
+                for row in subprocess.check_output(["ps", "-axo", "pid=,ppid=,args="], text=True).splitlines():
+                    parts = row.strip().split(None, 2)
+                    if len(parts) == 3 and int(parts[1]) == app_pid and str(adapter) in parts[2] and "--watch" in parts[2]:
+                        helpers.append(int(parts[0]))
+                require(len(helpers) == 1, "Expected exactly one owned reader before the failure check.")
+                client.command("media.next")
+                time.sleep(0.15)
+                os.kill(helpers[0], 9)
+                time.sleep(0.5)
+                require(client.request()["pid"] == app_pid, "A reader exit or queued refresh stopped the app.")
+                client.command("preferences", values={"enableMedia": False})
+                client.command("preferences", values={"enableMedia": True})
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["artworkAvailable"], "Own reader did not recover after explicit restart.", 25)
+            write_private(directory / "observations.json", json_bytes(observations))
+            self.record("media refresh: real transport readback, stale-state hold, reader exit during queued refresh and recovery")
+
+            # Drive the real CLI stream directly, including an input EOF. The
+            # input can request metadata only; it cannot control the player.
+            selector = selectors.DefaultSelector()
+            reader = None
+            try:
+                reader = subprocess.Popen(["/usr/bin/osascript", "-l", "JavaScript", str(adapter), "--watch"],
+                    env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                os.set_blocking(reader.stdout.fileno(), False)
+                selector.register(reader.stdout, selectors.EVENT_READ)
+                buffer = b""
+                def frame():
+                    nonlocal buffer
+                    deadline = time.monotonic() + 15
+                    while time.monotonic() < deadline:
+                        require(reader.poll() is None, "Owned CLI reader exited before a complete frame.")
+                        if b"\n" in buffer:
+                            line, buffer = buffer.split(b"\n", 1)
+                            payload = plistlib.loads(base64.b64decode(json.loads(line)["snapshot"]))
+                            if payload.get("bundleID") == FIXTURE_ID:
+                                return payload
+                        for key, _ in selector.select(0.1):
+                            chunk = os.read(key.fileobj.fileno(), 65536)
+                            require(chunk, "Owned CLI reader closed its output.")
+                            buffer += chunk
+                            require(len(buffer) <= 23 * 1024 * 1024, "Owned CLI frame exceeded its bound.")
+                    raise ControlFailure("Owned CLI reader did not publish a source frame.")
+                initial = frame()
+                item_key = "kMRMediaRemoteNowPlayingInfoContentItemIdentifier"
+                initial_item = initial.get("info", {}).get(item_key)
+                require(initial_item, "Owned CLI reader did not identify its initial item.")
+                before = own_fixture()
+                reader.stdin.write(b"refresh\n" * 100)
+                reader.stdin.flush()
+                reader.stdin.close()
+                time.sleep(0.4)
+                unchanged = own_fixture()
+                require(unchanged["track"] == before["track"] and unchanged["playing"] == before["playing"],
+                        "Metadata-only stdin input changed actual playback.")
+                native_source()
+                result = subprocess.run(["/usr/bin/osascript", "-l", "JavaScript", str(adapter),
+                    "--next", "--source", FIXTURE_ID], env=environment, capture_output=True, timeout=15)
+                require(result.returncode == 0, "Own CLI next was rejected.")
+                after = wait_for(own_fixture, lambda f: f["track"] != before["track"], "Own CLI player did not advance.")
+                require(after["playing"] == before["playing"], "Metadata refresh input changed real playback.")
+                current = wait_for(frame, lambda p: bool(p.get("info", {}).get(item_key))
+                    and p["info"][item_key] != initial_item, "Input EOF stopped actual new-item metadata.", 20)
+                self.record("media refresh: bounded CLI input, actual player readback and metadata stream after input EOF")
+            finally:
+                selector.close()
+                stop(reader)
+        finally:
+            stop(child)
+
     def build_media_fixture(self, name):
         work = self.evidence / name
         work.mkdir(mode=0o700)
@@ -3020,12 +3148,12 @@ def main():
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
     parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
-    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "compact-motion", "weather", "motion", "displays", "activities", "compact", "dismissal", "shape", "outline", "preferences", "timers", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "compact-motion", "media-refresh", "weather", "motion", "displays", "activities", "compact", "dismissal", "shape", "outline", "preferences", "timers", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
         parser.error("--pathological-duration requires --media-fixture")
-    if args.only in ("media", "compact-motion") and not args.media_fixture:
+    if args.only in ("media", "compact-motion", "media-refresh") and not args.media_fixture:
         parser.error("--only " + args.only + " requires --media-fixture")
     if args.only == "weather" and not args.weather_service:
         parser.error("--only weather requires --weather-service")
@@ -3053,6 +3181,7 @@ def main():
             groups.append(("outline", runtime.outline))
         if args.media_fixture and args.only != "storage":
             groups.append(("compact-motion", runtime.compact_motion))
+            groups.append(("media-refresh", runtime.media_refresh))
             groups.append(("media", lambda: runtime.media(args.pathological_duration)))
         if args.weather_service and args.only != "storage":
             groups.append(("weather", runtime.weather))
