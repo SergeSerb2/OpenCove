@@ -134,7 +134,17 @@ struct CovePreferences: Codable, Equatable {
     var usesLiveWaveform: Bool { enableMedia && showPlaybackIndicator && showLiveWaveform }
 }
 
-enum CoveCompactActivity: String { case media, calendar, timer, clock }
+enum CoveCompactActivity: String {
+    case media, calendar, timer, clock
+    var title: String {
+        switch self {
+        case .media: return "Now Playing"
+        case .calendar: return "Calendar"
+        case .timer: return "Timer"
+        case .clock: return "Clock"
+        }
+    }
+}
 
 enum CoveTab: String, Codable, CaseIterable, Identifiable {
     case media, calendar, files, timer

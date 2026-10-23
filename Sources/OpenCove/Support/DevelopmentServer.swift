@@ -286,6 +286,13 @@ final class DevelopmentServer {
         switch action {
         case "expand": store.expand()
         case "compact.open": store.openCompactActivity()
+        case "compact.dismiss", "compact.restore":
+            guard let target = values["target"] as? String, target.utf8.count <= 64, UUID(uuidString: target) != nil else {
+                throw ControlError.invalid("Echo the current compact activity target from state.")
+            }
+            let submitted = action == "compact.dismiss" ? store.dismissCompactActivity(target: target)
+                : store.restoreCompactActivity(target: target)
+            guard submitted else { throw ControlError.rejected("This activity is no longer available for that action. Read fresh state.") }
         case "collapse": store.collapse()
         case "toggle": store.toggleExpanded()
         case "selectTab":
@@ -497,6 +504,12 @@ final class DevelopmentServer {
         result["media"] = try encoded(media)
         result["compactMediaVisible"] = store.compactMediaVisible
         result["compactActivity"] = store.compactActivity.rawValue
+        result["compactActivities"] = store.availableCompactActivities.map(\.rawValue)
+        result["dismissedCompactActivities"] = store.dismissedCompactActivities.map(\.rawValue)
+        result["compactDismissTarget"] = store.compactDismissTarget.map { $0 as Any } ?? NSNull()
+        result["compactRestoreTarget"] = store.compactRestoreTarget.map { $0 as Any } ?? NSNull()
+        result["compactDismissActivity"] = store.compactDismissActivity.map { $0.rawValue as Any } ?? NSNull()
+        result["compactRestoreActivity"] = store.compactRestoreActivity.map { $0.rawValue as Any } ?? NSNull()
         result["mediaPeekVisible"] = store.showsMediaPeek
         result["mediaPeekRemaining"] = store.mediaPeekRemaining.map { $0 as Any } ?? NSNull()
         result["playbackClock"] = ["receivedSamples": store.media.playback.receivedSamples,

@@ -41,6 +41,9 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     var preferredCalendarApp = "calendar"
     @Published var files: [TrayFile] = []
     @Published var timer = CoveTimerState()
+    // Presentation identity survives pause/resume but changes for a new timer.
+    // The timer publication already delivers its changes; this adds no tick.
+    private(set) var timerActivityIdentifier = UUID()
     @Published var notifications: [CoveNotification] = []
     @Published var lastError: String? {
         didSet {
@@ -1032,6 +1035,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
             return
         }
         removeTimerNotification()
+        timerActivityIdentifier = UUID()
         timer = CoveTimerState(running: true, remaining: seconds, duration: seconds,
                                endsAt: Date().addingTimeInterval(seconds), notificationIdentifier: "OpenCove.timer.\(UUID().uuidString)")
         save(timer, as: "activity-timer.json")
@@ -1066,6 +1070,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     func cancelTimer() {
         loadIfNeeded()
         removeTimerNotification()
+        timerActivityIdentifier = UUID()
         timer = CoveTimerState()
         save(timer, as: "activity-timer.json")
         updateCountdown()

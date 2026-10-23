@@ -7,7 +7,7 @@ enum DevelopmentPage {
 </style></head><body>
 <header><div class="brand"><div class="mark">⌒</div><div><h1>OpenCove</h1><p>Native app · Development controls</p></div></div><span class="badge" id="connection">Connecting</span></header>
 <div class="preview"><div class="menubar"><span>OpenCove</span><span id="screen-state">Native view</span></div><div class="native"><img id="native-image" alt="Native OpenCove notch rendered from the running app"></div><div class="caption">Live SwiftUI rendering · Actions use the running app’s real services</div></div>
-<div class="toolbar"><button class="primary" data-action="expand">Expand notch</button><button data-action="collapse">Collapse notch</button><button data-tab="media">Media</button><button data-tab="calendar">Calendar</button><button data-tab="files">Files</button><button data-tab="timer">Timer</button><button data-action="settings">Open settings</button></div>
+<div class="toolbar"><button class="primary" data-action="expand">Expand notch</button><button data-action="collapse">Collapse notch</button><button id="compact-dismiss">Dismiss activity</button><button id="compact-restore">Restore activity</button><button data-tab="media">Media</button><button data-tab="calendar">Calendar</button><button data-tab="files">Files</button><button data-tab="timer">Timer</button><button data-action="settings">Open settings</button></div>
 <div id="error" role="alert"></div>
 <div class="grid">
 <section class="card"><h2>Live state</h2><div class="facts"><div>Media<strong id="media-title">—</strong></div><div>Audio output<strong id="output">—</strong></div><div>Battery<strong id="battery">—</strong></div><div>Calendar access<strong id="calendar">—</strong></div></div><div class="toolbar"><button data-action="media.refresh">Refresh media</button><button data-action="system.refresh">Refresh system</button><button data-action="calendar.refresh">Refresh calendar</button></div><p id="service-errors" class="muted"></p></section>
@@ -27,7 +27,7 @@ const connectionChanged=()=>new DOMException('Connection changed','AbortError');
 function enqueue(operation){const generation=epoch,next=serial.then(()=>{if(generation!==epoch||closed)throw connectionChanged();return operation()});serial=next.catch(()=>{});return next}
 function clearImage(){const image=document.getElementById('native-image');image.onload=null;image.onerror=null;image.removeAttribute('src');image.style.removeProperty('width');if(lastImage)URL.revokeObjectURL(lastImage);lastImage=null}
 function clearFiles(){const files=document.getElementById('files');for(const button of files.querySelectorAll('button'))button.onclick=null;files.replaceChildren()}
-function setActionsEnabled(enabled){for(const button of document.querySelectorAll('button'))if(button.id!=='reconnect')button.disabled=!enabled;for(const button of document.querySelectorAll('[data-tab]'))button.disabled=!enabled||!(state?.enabledTabs??[]).includes(button.dataset.tab);for(const key of appearanceKeys)document.getElementById(key).disabled=!enabled;for(const id of ['display-choice','save-display'])document.getElementById(id).disabled=!enabled||!state?.displaySelection}
+function setActionsEnabled(enabled){for(const button of document.querySelectorAll('button'))if(button.id!=='reconnect')button.disabled=!enabled;for(const button of document.querySelectorAll('[data-tab]'))button.disabled=!enabled||!(state?.enabledTabs??[]).includes(button.dataset.tab);for(const key of appearanceKeys)document.getElementById(key).disabled=!enabled;for(const id of ['display-choice','save-display'])document.getElementById(id).disabled=!enabled||!state?.displaySelection;document.getElementById('compact-dismiss').disabled=!enabled||!state?.compactDismissTarget;document.getElementById('compact-restore').disabled=!enabled||!state?.compactRestoreTarget}
 function paintAppearance(){for(const key of appearanceKeys){const input=document.getElementById(key),value=drafts.has(key)?drafts.get(key):(key==='playbackIndicator'?(state?.preferences.showPlaybackIndicator===false?'none':state?.preferences.showLiveWaveform?'live':'decorative'):state?.preferences[key]);if(input.type==='checkbox')input.checked=value??false;else input.value=value??''}}
 function paintDisplays(){
  const selection=state?.displaySelection,select=document.getElementById('display-choice');
@@ -45,7 +45,7 @@ function paintDisplays(){
 // images are cleared together whenever the authenticated connection is retired.
 function resetConnection(label='Disconnected',message=''){
  epoch++;controller.abort();controller=new AbortController();clearTimeout(poll);poll=null;state=null;transportError=false;lastRender=0;
- clearImage();clearFiles();setActionsEnabled(false);paintAppearance();
+ clearImage();clearFiles();setActionsEnabled(false);paintAppearance();paintCompactActions();
  displayDraft=null;displaySignature='';document.getElementById('display-choice').replaceChildren();document.getElementById('display-status').textContent='';
  for(const id of ['media-title','output','battery','calendar'])document.getElementById(id).textContent='—';
  document.getElementById('screen-state').textContent='Native view';document.getElementById('timer-state').textContent='No authenticated state';
@@ -101,13 +101,21 @@ async function command(action,values={}){
   catch(error){if(generation===epoch&&!closed&&error.name!=='AbortError'){errorBox.textContent=error.message;if(!unauthorized){try{await readState()}catch(readError){if(generation===epoch&&!closed&&readError.name!=='AbortError')disconnected(readError.message)}}}throw error}
  });
 }
+function paintCompactActions(){
+ const names={media:'Now Playing',timer:'Timer',calendar:'Calendar'};
+ for(const [id,action,targetKey,activityKey,verb] of [['compact-dismiss','compact.dismiss','compactDismissTarget','compactDismissActivity','Dismiss'],['compact-restore','compact.restore','compactRestoreTarget','compactRestoreActivity','Restore']]){
+  const button=document.getElementById(id),target=state?.[targetKey],generation=epoch;
+  button.textContent=names[state?.[activityKey]]?`${verb} ${names[state[activityKey]]}`:`${verb} activity`;
+  button.onclick=target?()=>{if(generation===epoch&&!closed)command(action,{target}).catch(()=>{})}:null;
+ }
+}
 window.opencove={command,getState:()=>state};
 function paint(){
  if(!state||closed||unauthorized)return;
  document.getElementById('connection').textContent='Connected';document.getElementById('screen-state').textContent=(state.expanded?'Expanded':'Compact')+' · '+(state.expanded?state.tab:state.hud?'alert':state.mediaPeekVisible?'new playing item':state.compactActivity??state.tab);
  document.getElementById('media-title').textContent=state.media.available?state.media.title||'Media available':'Nothing playing';document.getElementById('output').textContent=state.system.outputDevice||'Unavailable';document.getElementById('battery').textContent=state.system.hasBattery?state.system.batteryPercent+'%'+(state.system.isCharging?' · Charging':''):'No battery';document.getElementById('calendar').textContent=state.calendarAuthorization;
  document.getElementById('timer-state').textContent=state.timer.remaining>0?Math.ceil(state.timer.remaining)+' seconds · '+(state.timer.running?'Running':'Paused'):'No timer running';document.getElementById('service-errors').textContent=(state.errors||[]).join(' · ');document.getElementById('window-state').textContent=state.nativeWindows.map(w=>w.title+' '+Math.round(w.width)+'×'+Math.round(w.height)).join(' · ');
- paintAppearance();paintDisplays();clearFiles();const generation=epoch;document.getElementById('files').replaceChildren(...state.files.map(file=>{const li=document.createElement('li'),text=document.createElement('span'),remove=document.createElement('button');text.textContent=file.name;remove.textContent='Remove';remove.onclick=()=>{if(generation===epoch&&!closed)command('files.remove',{id:file.id}).catch(()=>{})};li.append(text,remove);return li}));document.getElementById('state').textContent=JSON.stringify(state,null,2);setActionsEnabled(true);
+ paintAppearance();paintDisplays();paintCompactActions();clearFiles();const generation=epoch;document.getElementById('files').replaceChildren(...state.files.map(file=>{const li=document.createElement('li'),text=document.createElement('span'),remove=document.createElement('button');text.textContent=file.name;remove.textContent='Remove';remove.onclick=()=>{if(generation===epoch&&!closed)command('files.remove',{id:file.id}).catch(()=>{})};li.append(text,remove);return li}));document.getElementById('state').textContent=JSON.stringify(state,null,2);setActionsEnabled(true);
 }
 function schedule(){clearTimeout(poll);if(!closed&&!document.hidden&&!unauthorized&&token)poll=setTimeout(refresh,2500)}
 async function refresh(){

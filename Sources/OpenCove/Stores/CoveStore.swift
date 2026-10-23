@@ -18,6 +18,24 @@ final class CoveStore: ObservableObject {
     @Published var physicalNotchWidth = 0.0
     @Published var physicalNotchHeight = 0.0
     @Published private(set) var displaySelection = CoveDisplaySelection()
+    @Published private var compactDismissals: [CompactDismissal] = []
+    private var restoredCompactActivity: CompactCandidate?
+    private var compactTarget: (candidate: CompactCandidate, token: String)?
+
+    private struct CompactCandidate: Equatable {
+        enum Identity: Equatable {
+            case media(source: String, item: String)
+            case metadata(source: String, title: String, artist: String, album: String)
+            case timer(UUID)
+            case calendar(id: String, start: Date)
+        }
+        let activity: CoveCompactActivity
+        let identity: Identity
+    }
+    private struct CompactDismissal: Equatable {
+        let candidate: CompactCandidate
+        let token = UUID().uuidString
+    }
     let media = MediaController()
     let system = SystemController()
     let activities = ActivityController()
@@ -48,22 +66,112 @@ final class CoveStore: ObservableObject {
         return enabled.contains(defaultTab) ? defaultTab : enabled.first
     }
 
-    /// A preference changes priority, never enables a feature or invents an
-    /// activity. Preserve the existing automatic order when it is unavailable.
-    var compactActivity: CoveCompactActivity {
-        let media = preferences.enableMedia && compactMediaVisible && self.media.state.available
-        let timer = preferences.enableTimer && activities.timer.remaining > 0
-        let calendar = preferences.enableCalendar && activities.eventActivity != nil
-        switch preferences.compactActivity {
-        case "media" where media: return .media
-        case "calendar" where calendar: return .calendar
-        case "timer" where timer: return .timer
-        default: break
+    private static let compactPriority: [CoveCompactActivity] = [.media, .timer, .calendar]
+
+    private func compactActivityAvailable(_ activity: CoveCompactActivity) -> Bool {
+        switch activity {
+        case .media: return preferences.enableMedia && compactMediaVisible && media.state.available
+        case .timer: return preferences.enableTimer && activities.timer.remaining > 0
+        case .calendar: return preferences.enableCalendar && activities.eventActivity != nil
+        case .clock: return false
         }
-        if media { return .media }
-        if timer { return .timer }
-        if calendar { return .calendar }
-        return .clock
+    }
+
+    private func compactCandidate(for activity: CoveCompactActivity) -> CompactCandidate? {
+        guard compactActivityAvailable(activity) else { return nil }
+        switch activity {
+        case .media:
+            let identity: CompactCandidate.Identity
+            if let item = media.state.contentItemIdentifier, !item.isEmpty, !media.state.sourceBundleIdentifier.isEmpty {
+                identity = .media(source: media.state.sourceBundleIdentifier, item: item)
+            } else {
+                let source = media.state.sourceBundleIdentifier.isEmpty ? media.state.source : media.state.sourceBundleIdentifier
+                identity = .metadata(source: source, title: media.state.title,
+                                     artist: media.state.artist, album: media.state.album)
+            }
+            return CompactCandidate(activity: .media, identity: identity)
+        case .timer:
+            return CompactCandidate(activity: .timer, identity: .timer(activities.timerActivityIdentifier))
+        case .calendar:
+            guard let event = activities.eventActivity?.event else { return nil }
+            return CompactCandidate(activity: .calendar, identity: .calendar(id: event.id, start: event.start))
+        case .clock: return nil
+        }
+    }
+
+    var availableCompactActivities: [CoveCompactActivity] {
+        Self.compactPriority.filter(isCompactActivityVisible)
+    }
+    var dismissedCompactActivities: [CoveCompactActivity] {
+        compactDismissals.filter { compactCandidate(for: $0.candidate.activity) == $0.candidate }.map { $0.candidate.activity }
+    }
+    func isCompactActivityVisible(_ activity: CoveCompactActivity) -> Bool {
+        guard compactActivityAvailable(activity) else { return false }
+        // The common rendering path needs no identity or temporary candidate
+        // array until this category actually has a dismissal to compare.
+        guard let dismissal = compactDismissals.first(where: { $0.candidate.activity == activity }) else { return true }
+        return compactCandidate(for: activity) != dismissal.candidate
+    }
+
+    /// A restored activity is brought forward without changing the saved
+    /// preference. Dismissals are bounded to one live instance per category.
+    var compactActivity: CoveCompactActivity {
+        if let restoredCompactActivity, compactCandidate(for: restoredCompactActivity.activity) == restoredCompactActivity,
+           isCompactActivityVisible(restoredCompactActivity.activity) { return restoredCompactActivity.activity }
+        if let preferred = CoveCompactActivity(rawValue: preferences.compactActivity), isCompactActivityVisible(preferred) { return preferred }
+        return Self.compactPriority.first(where: isCompactActivityVisible) ?? .clock
+    }
+
+    private var mayEditCompactPresentation: Bool {
+        started && sessionActive && !system.state.isLocked && hud == nil
+    }
+    private var compactDismissCandidate: CompactCandidate? {
+        guard mayEditCompactPresentation, !isExpanded else { return nil }
+        return compactCandidate(for: showsMediaPeek ? .media : compactActivity)
+    }
+    var compactDismissActivity: CoveCompactActivity? { compactDismissCandidate?.activity }
+    var compactDismissTarget: String? {
+        guard let candidate = compactDismissCandidate else { compactTarget = nil; return nil }
+        if compactTarget?.candidate != candidate { compactTarget = (candidate, UUID().uuidString) }
+        return compactTarget?.token
+    }
+    private var compactRestoration: CompactDismissal? {
+        guard mayEditCompactPresentation else { return nil }
+        return compactDismissals.last { compactCandidate(for: $0.candidate.activity) == $0.candidate }
+    }
+    var compactRestoreActivity: CoveCompactActivity? { compactRestoration?.candidate.activity }
+    var compactRestoreTarget: String? { compactRestoration?.token }
+
+    @discardableResult func dismissCompactActivity(target: String) -> Bool {
+        guard target == compactDismissTarget, let candidate = compactDismissCandidate else { return false }
+        compactTarget = nil
+        restoredCompactActivity = nil
+        // A peek is its own visible media presentation, not the activity below it.
+        if candidate.activity == .media { dismissMediaPeek() }
+        var next = compactDismissals.filter { $0.candidate.activity != candidate.activity }
+        next.append(CompactDismissal(candidate: candidate))
+        compactDismissals = next
+        return true
+    }
+
+    @discardableResult func restoreCompactActivity(target: String) -> Bool {
+        guard let restoration = compactRestoration, restoration.token == target else { return false }
+        restoredCompactActivity = restoration.candidate
+        compactTarget = nil
+        compactDismissals.removeAll { $0.token == target }
+        collapse()
+        return true
+    }
+
+    private func resetCompactDismissals(for activities: Set<CoveCompactActivity>? = nil) {
+        compactTarget = nil
+        if let restored = restoredCompactActivity, activities.map({ $0.contains(restored.activity) }) ?? true {
+            restoredCompactActivity = nil
+        }
+        let next = compactDismissals.filter { dismissal in
+            activities.map { !$0.contains(dismissal.candidate.activity) } ?? false
+        }
+        if next != compactDismissals { compactDismissals = next }
     }
 
     func openCompactActivity() {
@@ -156,7 +264,7 @@ final class CoveStore: ObservableObject {
 
     private var mayPresentMediaPeek: Bool {
         started && sessionActive && !system.state.isLocked && preferences.enableMedia
-            && preferences.peekOnSongChange && !isExpanded && hud == nil
+            && preferences.peekOnSongChange && !isExpanded && hud == nil && isCompactActivityVisible(.media)
     }
 
     /// Elapsed position, artwork and rate changes must not restart the grace.
@@ -183,9 +291,7 @@ final class CoveStore: ObservableObject {
 
     var hidesCompactWhenIdle: Bool {
         preferences.hideWhenIdle && !isExpanded && hud == nil
-            && !(preferences.enableMedia && compactMediaVisible && media.state.available)
-            && !(preferences.enableTimer && activities.timer.remaining > 0)
-            && !(preferences.enableCalendar && activities.eventActivity != nil)
+            && !showsMediaPeek && compactActivity == .clock
     }
 
     var mirroringStatus: String {
@@ -315,6 +421,7 @@ final class CoveStore: ObservableObject {
 
     func stop() {
         started = false
+        resetCompactDismissals()
         dismissMediaPeek()
         mediaPeekInput = nil
         cancelMediaIdleDeadline()
@@ -575,6 +682,14 @@ final class CoveStore: ObservableObject {
             if let hud, !isHUDEnabled(hud) { hudDismiss?.cancel(); self.hud = nil }
         }
         appliedPreferences = preferences
+        if preferences.compactActivity != previous.compactActivity { resetCompactDismissals() }
+        else {
+            var reset = Set<CoveCompactActivity>()
+            if preferences.enableMedia != previous.enableMedia { reset.insert(.media) }
+            if preferences.enableTimer != previous.enableTimer { reset.insert(.timer) }
+            if preferences.enableCalendar != previous.enableCalendar { reset.insert(.calendar) }
+            if !reset.isEmpty { resetCompactDismissals(for: reset) }
+        }
         reconcileActivitySelection(resetToDefault: preferences.expandedLayout != previous.expandedLayout)
         reconcileCompactMedia()
         if preferences.peekOnSongChange != previous.peekOnSongChange
