@@ -44,9 +44,18 @@ Every release-variant build, including a local ad-hoc release, needs:
 - `OPENCOVE_UPDATE_PUBLIC_ED_KEY`: the maintainer's real base64 Ed25519 public key
   (exactly 32 decoded bytes). This public value is safe to include in a bundle.
 
-The intended owned-domain endpoint is
-`https://opencove.sergeserbinenko.com/appcast.xml`, subject to the parent's hosting
-and DNS confirmation. It is a deployment target, not a claim that a feed exists.
+The deployed owned-domain endpoint is
+`https://opencove.sergeserbinenko.com/appcast.xml`. Its public release trust
+configuration is:
+
+```sh
+export OPENCOVE_UPDATE_FEED_URL='https://opencove.sergeserbinenko.com/appcast.xml'
+export OPENCOVE_UPDATE_PUBLIC_ED_KEY='7QbDVdryUkH6KIVwdEh1SVRpxJu0DxPsrRYGR/xU49w='
+```
+
+This is the public verification key, not the private signing key. Keep the
+private key outside the repository and preserve it for subsequent releases.
+Hosting and signed release publication are separate from building the application.
 Downloads should use immutable versioned paths on the same Cloudflare-backed
 owned domain. The feed URL remains configurable. No hosting, DNS, release
 publication, credential generation, or private key import is done by these tools.
@@ -168,10 +177,12 @@ that directory. This integration does not build or bundle that tool.
 The verified upstream entry point is
 [`sparkle-cli/main.m`](https://github.com/sparkle-project/Sparkle/blob/eef1a539a373c1f1a320624b1130fc5de7b2e100/sparkle-cli/main.m).
 For a copied verification bundle, `sparkle "$OLD_APP" --probe
---check-immediately --feed-url "$LOCAL_FEED" --user-agent-name OpenCoveVerification`
+--feed-url "$LOCAL_FEED" --user-agent-name OpenCoveVerification`
 performs a real availability probe without installing. Its exit status is zero
-when an update is available. Omitting `--probe` can replace the target and relaunch
-it; reserve that for the parent's explicitly isolated two-version proof. A CLI
+when an update is available and four when none is available. Probe mode cannot
+be combined with `--check-immediately`. To install, replace `--probe` with
+`--check-immediately`. This can replace the target and relaunch it if it was
+running; reserve that for explicitly isolated two-version proof. A CLI
 probe does not prove the app's menu, Settings, or consent UI.
 
 Ordinary development builds have no feed or key. The updater is not constructed.
@@ -204,3 +215,28 @@ notarized downloaded-update behavior, app translocation, permissions after a
 signed replacement, delta updates, or the public Cloudflare feed. Those require
 separate owned release/account and runtime evidence. No such proof is claimed
 by adding this integration.
+
+## Published beta verification — October 23, 2026
+
+`0.1.0-beta.2` (build 2) is published at the owned domain as a universal,
+Developer ID signed, notarized and stapled ZIP. Its SHA-256 is
+`bc0718f582787110c274b57356139500028340185b7070be941a845c44f7988c`.
+The final archive passed the bundle/archive validators and Gatekeeper. Remote
+HTTP and browser downloads matched that hash. The appcast was generated and
+verified with Sparkle's pinned official tools after notarization.
+
+The official Sparkle 2.10.0 CLI detected build 2 from an isolated, signed build 1
+copy, downloaded and installed it from the public feed, and then reported no
+newer update. The installed copy passed signature, staple and Gatekeeper checks.
+A same-length corrupted archive failed Sparkle signature validation and left
+the old build unchanged. The target was stopped during installation; a separate
+owned launch verified build 2 afterward. This does not prove automatic relaunch
+of a running app or preservation of arbitrary live user activity.
+
+A separate packaged development build used the real standard updater with its
+own loopback feed and defaults domain. It verified explicit launch gating,
+automatic preference changes and persistence, rejection of invalid values, and
+a new appcast request after the manual check action. Native Settings bitmap
+captures used the actual updater instance. They do not prove physical menu
+input, VoiceOver output, or the consent dialog. Intel execution, long-running
+automatic update scheduling, delta updates and OS-version breadth remain open.

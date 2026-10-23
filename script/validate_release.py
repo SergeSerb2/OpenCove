@@ -25,7 +25,8 @@ SCRIPT_FILES = {"build_and_run.sh", "make_icon.swift", "OpenCoveMediaAdapter.swi
                 "package_release.py", "validate_release.py", "signing_info.swift", "control_e2e.py", "runtime_e2e.py"}
 DOC_FILES = {"building.md", "releasing.md", "privacy.md", "compatibility.md", "architecture.md",
              "calendar.md", "travel-alerts.md", "hardware-huds.md", "notification-mirroring.md",
-             "quality.md", "updates.md", "Sparkle-LICENSE.txt"}
+             "quality.md", "updates.md", "Sparkle-LICENSE.txt", "update-hosting.md"}
+DEPLOY_FILES = {"infra/updates/worker.mjs", "infra/updates/wrangler.jsonc", "infra/updates/.gitignore"}
 REQUIRED = ROOT_FILES | {"script/" + name for name in SCRIPT_FILES - {"control_e2e.py"}} | {
     "docs/" + name for name in ("building.md", "releasing.md", "privacy.md", "compatibility.md", "quality.md")
 } | {"assets/icon.svg", "Sources/OpenCove/App/OpenCoveApp.swift", "docs/updates.md", "docs/Sparkle-LICENSE.txt"}
@@ -214,7 +215,7 @@ def public_path(name):
     if (str(path) != name or path.is_absolute() or any(c in name for c in "\\\r\n\0") or
             any(p in {"..", ".", "__pycache__", ".DS_Store"} for p in path.parts)):
         return False
-    return (name in ROOT_FILES or name == "assets/icon.svg" or
+    return (name in ROOT_FILES or name in DEPLOY_FILES or name == "assets/icon.svg" or
             (name.startswith("Sources/OpenCove/") and path.suffix == ".swift") or
             (name.startswith("script/") and name[7:] in SCRIPT_FILES) or
             (name.startswith("docs/") and name[5:] in DOC_FILES) or
@@ -227,7 +228,7 @@ def source_inventory():
     require(not any(p.name.startswith("Package@") and p.name.endswith(".swift") for p in ROOT.iterdir()),
             "Version-specific Package@*.swift manifests are not public build inputs.")
     names = {name for name in ROOT_FILES if (ROOT / name).exists()}
-    for folder in ("Sources", "script", "docs", ".github", "assets"):
+    for folder in ("Sources", "script", "docs", ".github", "assets", "infra"):
         start = ROOT / folder
         require(not start.is_symlink(), "Source directory must not be a symlink: " + folder)
         for directory, subdirectories, files in os.walk(start, followlinks=False):
