@@ -23,6 +23,10 @@ final class NotchPanelController: NSObject {
     private var menuTrackingDepth = 0
     private var lifecycleRevision: UInt = 0
     private var acceptingMiddleClick = false
+    struct InputAcceptanceError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
     private struct LayoutInputs: Equatable {
         var preferences: CovePreferences
         var expanded: Bool
@@ -328,7 +332,7 @@ final class NotchPanelController: NSObject {
     func acceptMiddleClick(region: String) throws -> [String: Any] {
         guard ProcessInfo.processInfo.arguments.contains("--control-port"),
               CovePaths.isDevelopment, !acceptingMiddleClick, mayHandleMenuAction else {
-            throw ControlError.rejected("Native input acceptance needs an active development-control launch.")
+            throw InputAcceptanceError(message: "Native input acceptance needs an active development-control launch.")
         }
         let eligible = surfaces.values.filter {
             $0.panel.isVisible && !$0.content.hosting.isHidden && !$0.frameAnimationInFlight
@@ -336,7 +340,7 @@ final class NotchPanelController: NSObject {
         }
         guard eligible.count == 1, let surface = eligible.first,
               let original = surface.panel.onEvent else {
-            throw ControlError.rejected("Native input acceptance needs exactly one visible, settled owned panel.")
+            throw InputAcceptanceError(message: "Native input acceptance needs exactly one visible, settled owned panel.")
         }
         let bounds = surface.content.bounds
         let y: CGFloat
@@ -344,10 +348,10 @@ final class NotchPanelController: NSObject {
         case "gestureStrip": y = bounds.maxY - min(bounds.height, surface.gestureStripHeight) / 2
         case "body":
             guard store.isExpanded, bounds.height > surface.gestureStripHeight + 4 else {
-                throw ControlError.rejected("The expanded body is unavailable.")
+                throw InputAcceptanceError(message: "The expanded body is unavailable.")
             }
             y = bounds.minY + (bounds.height - surface.gestureStripHeight) / 2
-        default: throw ControlError.invalid("Choose gestureStrip or body.")
+        default: throw InputAcceptanceError(message: "Choose gestureStrip or body.")
         }
         let point = NSPoint(x: bounds.midX, y: y)
         guard bounds.contains(point), surface.panel.windowNumber > 0,
@@ -355,7 +359,7 @@ final class NotchPanelController: NSObject {
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: surface.panel.windowNumber,
                 context: nil, eventNumber: 1, clickCount: 1, pressure: 1),
               event.buttonNumber == 2 else {
-            throw ControlError.rejected("AppKit could not construct the owned middle-button event.")
+            throw InputAcceptanceError(message: "AppKit could not construct the owned middle-button event.")
         }
         let revision = lifecycleRevision
         acceptingMiddleClick = true
@@ -378,7 +382,7 @@ final class NotchPanelController: NSObject {
             }
         }
         NSApp.sendEvent(event)
-        guard let receipt else { throw ControlError.rejected("The owned native window did not receive the event.") }
+        guard let receipt else { throw InputAcceptanceError(message: "The owned native window did not receive the event.") }
         return receipt
     }
 

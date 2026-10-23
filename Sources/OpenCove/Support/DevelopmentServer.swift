@@ -268,7 +268,11 @@ final class DevelopmentServer {
                         throw ControlError.invalid("Choose gestureStrip or body; arbitrary input targets are not accepted.")
                     }
                     guard let notch else { throw ControlError.rejected("The native panel controller is unavailable.") }
-                    let receipt = try notch.acceptMiddleClick(region: region)
+                    let receipt: [String: Any]
+                    do { receipt = try notch.acceptMiddleClick(region: region) }
+                    catch let error as NotchPanelController.InputAcceptanceError {
+                        throw ControlError.rejected(error.localizedDescription)
+                    }
                     var state = try snapshot()
                     state["commandStatus"] = "observed"
                     state["nativeInput"] = receipt
