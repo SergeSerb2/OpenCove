@@ -442,7 +442,6 @@ struct NotchView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityIdentifier(OwnedAccessibility.compactIdentifier)
                 .accessibilityLabel(compactAccessibilityLabel)
                 .accessibilityHint("Show OpenCove controls")
                 .accessibilityActions {

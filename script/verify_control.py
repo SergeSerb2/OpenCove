@@ -84,7 +84,7 @@ class ControlClient:
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def request(self, path="/state", value=None, *, authenticated=True, headers=None, expected=200, timeout=5):
-        if path not in ("/", "/state", "/command", "/accessibility/compact") and not path.startswith("/render?surface="):
+        if path not in ("/", "/state", "/command") and not path.startswith("/render?surface="):
             raise ControlFailure("Unknown local control endpoint.")
         request_headers = {"Content-Type": "application/json"}
         if authenticated:
