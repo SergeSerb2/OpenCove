@@ -118,6 +118,12 @@ final class SystemController: NSObject, ObservableObject {
         read(parts: .all, emitHUD: true)
     }
 
+    /// Refresh audio readings and output choices without reading unrelated domains.
+    func refreshAudio() {
+        guard running else { return }
+        read(parts: .audio, emitHUD: true)
+    }
+
     /// The synchronous event-tap path must not enumerate Bluetooth, query Focus,
     /// or read private content while deciding whether to consume a control key.
     func refreshHardwareControls(volume: Bool) {
