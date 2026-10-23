@@ -326,7 +326,7 @@ final class NotchPanelController: NSObject {
     }
 
     /// Request-scoped native dispatch for the authenticated, opt-in controls.
-    /// No global input is posted and no user pointer or focus is moved. Observe
+    /// No global input is posted and the user pointer is not moved. Observe
     /// the original window handler synchronously; there is no queued event left
     /// behind after cancellation, timeout, or a later panel lifecycle change.
     func acceptMiddleClick(region: String) throws -> [String: Any] {
