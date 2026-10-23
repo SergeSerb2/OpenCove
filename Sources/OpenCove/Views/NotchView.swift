@@ -233,7 +233,7 @@ struct NotchView: View {
         let height = max(32, store.preferences.notchHeight, cutoutHeight)
         if expanded ?? store.isExpanded {
             let active = store.visibleTab
-            let contentHeight: Double = active == .media ? (store.preferences.expandedLayout == "duo" ? 240 : 205)
+            let contentHeight: Double = active == .media ? (store.showsExpandedDuo ? 240 : 205)
                 : active == .calendar ? 235 : 260
             return CGSize(width: max(440, width, cutoutWidth + 80), height: max(contentHeight + cutoutHeight, height))
         }
@@ -303,8 +303,7 @@ struct NotchView: View {
     private var visibleTab: CoveTab? { store.visibleTab }
 
     private var showsDuo: Bool {
-        store.preferences.expandedLayout == "duo" && visibleTab == .media
-            && store.preferences.enableMedia && store.preferences.enableCalendar
+        store.showsExpandedDuo
     }
 
     private var expandedSectionPermissions: CoveExpandedSectionPermissions {

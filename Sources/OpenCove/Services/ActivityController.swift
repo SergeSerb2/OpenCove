@@ -70,6 +70,11 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
             ? upcomingCalendarEvents : []
     }
 
+    var hasVisibleCalendarActivity: Bool {
+        calendarEnabled && calendarSettingsValid && !calendarDetailsHidden
+            && EKEventStore.authorizationStatus(for: .event) == .fullAccess && eventActivity != nil
+    }
+
     let dataDirectory: URL
     private let eventStore = EKEventStore()
     private let calendarReader = CoveCalendarReader()

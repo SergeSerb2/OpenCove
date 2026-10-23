@@ -37,6 +37,7 @@ final class NotchPanelController: NSObject {
         var mediaPeek: Bool
         var timer: Bool
         var event: Bool
+        var duo: Bool
     }
     private var lastLayoutInputs: LayoutInputs?
     private var layoutInputs: LayoutInputs {
@@ -45,7 +46,8 @@ final class NotchPanelController: NSObject {
                      media: store.isCompactActivityVisible(.media),
                      compactActivity: store.compactActivity,
                      mediaPeek: store.showsMediaPeek,
-                     timer: store.isCompactActivityVisible(.timer), event: store.isCompactActivityVisible(.calendar))
+                     timer: store.isCompactActivityVisible(.timer), event: store.isCompactActivityVisible(.calendar),
+                     duo: store.showsExpandedDuo)
     }
 
     init(store: CoveStore) {
