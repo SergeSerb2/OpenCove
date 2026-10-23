@@ -44,6 +44,9 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     // Presentation identity survives pause/resume but changes for a new timer.
     // The timer publication already delivers its changes; this adds no tick.
     private(set) var timerActivityIdentifier = UUID()
+    // Clock/wake events retarget native progress even if remaining time clamps
+    // to the same duration after a backwards wall-clock change.
+    private(set) var timerClockRevision: UInt64 = 0
     @Published var notifications: [CoveNotification] = []
     @Published var lastError: String? {
         didSet {
@@ -189,7 +192,9 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
                 guard let self, self.started else { return }
                 self.refreshCalendar()
                 self.refreshNotificationAuthorization()
+                self.timerClockRevision &+= 1
                 self.updateTimer()
+                self.updateCountdown()
             }
         })
         observers.append(center.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [weak self] _ in
@@ -1079,25 +1084,25 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     private func updateCountdown() {
         countdown?.invalidate()
         countdown = nil
-        guard started, timer.running else { return }
-        // The visible timer shows whole seconds. Its saved absolute deadline
-        // remains authoritative; no quarter-second publish loop is needed.
-        let remaining = timer.endsAt?.timeIntervalSinceNow ?? timer.remaining
-        let ticker = Timer(timeInterval: max(0.01, min(1, remaining)), repeats: false) { [weak self] _ in
+        guard started, timer.running, let deadline = timer.endsAt else { return }
+        // One absolute completion boundary. Mounted labels and native progress
+        // read this same deadline without publishing second-by-second state.
+        let ticker = Timer(fire: max(Date().addingTimeInterval(0.01), deadline), interval: 0,
+                           repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, self.started else { return }
                 self.updateTimer()
                 self.updateCountdown()
             }
         }
-        ticker.tolerance = remaining <= 1 ? 0 : 0.1
+        ticker.tolerance = 0
         RunLoop.main.add(ticker, forMode: .common)
         countdown = ticker
     }
 
     private func updateTimer() {
-        guard timer.running, let deadline = timer.endsAt else { return }
-        timer.remaining = min(timer.duration, max(0, deadline.timeIntervalSinceNow))
+        guard timer.running, timer.endsAt != nil else { return }
+        timer.remaining = timer.remaining(at: Date())
         guard timer.remaining == 0 else { return }
         timer.running = false
         timer.endsAt = nil
@@ -1109,7 +1114,9 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
 
     private func handleClockChange() {
         guard started else { return }
+        timerClockRevision &+= 1
         updateTimer()
+        updateCountdown()
         refreshCalendar()
         scheduleTimerNotification()
     }

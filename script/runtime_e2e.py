@@ -1179,6 +1179,127 @@ print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding:
             self.backup(damaged, "preferences.recovery.*.json", raw)
         self.record("indicators: dormant saved live choices, repeated saves/restart, legacy default and malformed opt-out recovery")
 
+    def timer_presentation(self):
+        """Real deadline, native-layer progress and no hidden countdown publications."""
+        directory = self.directory("timer-presentation", preferences={**SAFE, "enableBattery": False,
+            "enableBluetooth": False, "enableFocus": False, "hideWhenIdle": False,
+            "expandOnHover": False, "reduceMotion": False, "accent": "mint"})
+        captures = []
+        with self.app(directory) as client:
+            client.command("selectTab", tab="files")
+            client.command("expand")
+            client.command("timer.start", seconds=40)
+            time.sleep(0.5)
+            first = client.request()
+            time.sleep(1.3)
+            later = client.request()
+            require(later["timer"]["remaining"] < first["timer"]["remaining"] - 1.1
+                and later["timerClock"] == first["timerClock"],
+                "Hidden timer froze caller time or kept publishing countdown state.")
+            require(not any(r["animationCount"] for r in later["timerProgressMotion"]),
+                    "Hidden timer retained native progress motion.")
+            client.command("timer.start", seconds=0, expected=400)
+            rejected = client.request()
+            require(rejected["timer"]["endsAt"] == later["timer"]["endsAt"]
+                and rejected["timerClock"] == later["timerClock"],
+                "Rejected duration changed the actual timer.")
+            client.command("selectTab", tab="timer")
+            animated = not first["systemReduceMotion"]
+            def rings(state):
+                return [r for r in state["timerProgressMotion"] if r["visible"]]
+            first = wait_for(client.request, lambda s: rings(s)
+                and 0.1 < rings(s)[0]["fraction"] <= 1
+                and (not animated or rings(s)[0]["animationCount"] == 1),
+                "Actual timer progress did not mount.")
+            time.sleep(0.3)
+            second = client.request()
+            if animated:
+                require(rings(second)[0]["fraction"] < rings(first)[0]["fraction"] - 0.002,
+                        "Native timer progress jumped or did not advance between second ticks.")
+            for name in ("running-first", "running-second"):
+                path = directory / (name + ".png")
+                write_private(path, client.request("/render?surface=live-notch"))
+                captures.append(path)
+                time.sleep(1.2 if name == "running-first" else 0)
+            after_capture = client.request()
+            require(after_capture["timerClock"] == first["timerClock"]
+                and (not animated or rings(after_capture)[0]["animationCount"] == 1),
+                "Native capture stopped progress or countdown state still published every second.")
+            client.command("timer.pause")
+            paused = wait_for(client.request, lambda s: rings(s) and rings(s)[0]["animationCount"] == 0,
+                              "Paused native timer kept animating.")
+            time.sleep(0.4)
+            held = client.request()
+            require(held["timer"] == paused["timer"]
+                and abs(rings(held)[0]["fraction"] - rings(paused)[0]["fraction"]) < 0.00001,
+                "Paused timer or ring moved.")
+            client.command("timer.resume")
+            client.command("preferences", values={"reduceMotion": True})
+            reduced = wait_for(client.request, lambda s: rings(s) and rings(s)[0]["animationCount"] == 0,
+                               "Reduce Motion left a native timer animation running.")
+            require(0 < rings(reduced)[0]["fraction"] < 1, "Reduced progress lost its actual deadline value.")
+            client.command("preferences", values={"reduceMotion": False})
+            client.command("selectTab", tab="files")
+            wait_for(client.request, lambda s: not any(r["animationCount"] for r in s["timerProgressMotion"]),
+                     "Leaving Timer retained a progress animation.")
+            client.command("timer.start", seconds=1)
+            finished = wait_for(client.request, lambda s: not s["timer"]["running"] and s["timer"]["remaining"] == 0,
+                                "Hidden absolute timer did not complete.", 5)
+            receipts = [n for n in finished["notifications"] if n["source"] == "Timer"]
+            require(len(receipts) == 1, "Hidden timer did not record exactly one completion.")
+            time.sleep(1.1)
+            require([n for n in client.request()["notifications"] if n["source"] == "Timer"] == receipts,
+                    "An old deadline repeated timer completion.")
+            client.command("timer.start", seconds=30)
+            deadline = client.request()["timer"]["endsAt"]
+        with self.app(directory) as client:
+            restored = client.request()["timer"]
+            require(restored["running"] and 0 < restored["remaining"] < 30
+                and restored["endsAt"] == deadline,
+                "Timer restart changed its saved deadline or failed to derive remaining time.")
+            client.command("timer.cancel")
+        # Decode real mounted PNGs after the app stops. The icon alone is too
+        # small to pass this ring extent check, catching model-only CA captures.
+        decoder = r'''
+import AppKit
+import Foundation
+var result: [[String: Int]] = []
+var labels: [[UInt8]] = []
+for path in CommandLine.arguments.dropFirst() {
+    guard let image = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: path))) else { exit(1) }
+    var minX = image.pixelsWide, maxX = 0, minY = image.pixelsHigh, maxY = 0
+    var label: [UInt8] = []
+    for y in 0..<image.pixelsHigh {
+        for x in 0..<image.pixelsWide {
+            guard let c = image.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { exit(1) }
+            if x >= image.pixelsWide / 3 {
+                let rgb = [c.redComponent, c.greenComponent, c.blueComponent]
+                label.append(c.alphaComponent > 0.5 && rgb.max()! > 0.5 && rgb.max()! - rgb.min()! < 0.1 ? 1 : 0)
+                continue
+            }
+            if c.alphaComponent > 0.5 && c.greenComponent - c.redComponent > 0.1
+                && c.greenComponent - c.blueComponent > 0.08 {
+                minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+    }
+    result.append(["width": maxX - minX, "height": maxY - minY])
+    labels.append(label)
+}
+if labels.count == 2 { result[1]["labelChanged"] = labels[0] != labels[1] ? 1 : 0 }
+print(String(data: try JSONSerialization.data(withJSONObject: result), encoding: .utf8)!)
+'''
+        decoded = subprocess.run(["xcrun", "swift", "-e", decoder, *map(str, captures)],
+                                 text=True, capture_output=True, timeout=60)
+        require(decoded.returncode == 0, "Actual timer PNG decoding failed: " + decoded.stderr[:1000])
+        pixels = json.loads(decoded.stdout)
+        write_private(directory / "ring-pixels.json", json_bytes(pixels))
+        require(len(pixels) == 2 and all(p["width"] > 70 and p["height"] > 70 for p in pixels),
+                "Mounted native capture omitted actual running progress.")
+        require(pixels[1]["labelChanged"] == 1, "Mounted countdown label stopped updating without service ticks.")
+        self.record("timer presentation: no hidden publications, actual native progress, pause/resume, reduced motion, capture, completion and restart",
+                    observedAnimation=animated)
+
     def timers(self):
         directory = self.directory("timer-restart")
         with self.app(directory) as client:
@@ -3184,7 +3305,7 @@ def main():
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
     parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
-    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "compact-motion", "media-refresh", "weather", "motion", "displays", "activities", "compact", "dismissal", "shape", "outline", "preferences", "timers", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "compact-motion", "media-refresh", "weather", "motion", "displays", "activities", "compact", "dismissal", "shape", "outline", "preferences", "timers", "timer-presentation", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
@@ -3208,6 +3329,7 @@ def main():
                   ("timers", runtime.timers), ("timer-corruption", runtime.timer_corruption),
                   ("calendar", runtime.calendar), ("files", runtime.files)]
         if args.only != "storage":
+            groups.append(("timer-presentation", runtime.timer_presentation))
             groups.append(("motion", runtime.motion))
             groups.append(("displays", runtime.displays))
             groups.append(("activities", runtime.activity_selection))
