@@ -77,11 +77,11 @@ final class NotchPanelController: NSObject {
         sessionActive = currentSessionIsActive()
         lastPreferences = store.preferences
 
-        // objectWillChange fires before published values change. Receive on the
-        // next main run-loop turn so geometry always uses the updated values.
+        // Coalesce will-change notifications into one main-actor job. Read the
+        // committed values there, without a second run-loop hop before motion.
         for publisher in [store.objectWillChange, store.media.objectWillChange,
                           store.system.objectWillChange, store.activities.objectWillChange] {
-            publisher.receive(on: RunLoop.main).sink { [weak self] _ in
+            publisher.sink { [weak self] _ in
                 self?.scheduleLayout()
             }.store(in: &subscriptions)
         }
@@ -383,11 +383,11 @@ final class NotchPanelController: NSObject {
         // Elapsed time, artwork, calendar countdowns, and volume repaint their
         // SwiftUI views directly. They do not require display enumeration or a
         // WindowServer fullscreen query when the panel geometry is unchanged.
-        guard started, layoutTask == nil, layoutInputs != lastLayoutInputs else { return }
+        guard started, layoutTask == nil else { return }
         layoutTask = Task { @MainActor [weak self] in
-            await Task.yield()
             guard !Task.isCancelled, let self else { return }
             self.layoutTask = nil
+            guard self.layoutInputs != self.lastLayoutInputs else { return }
             self.refreshLayout()
         }
     }

@@ -723,17 +723,67 @@ print(String(decoding:data,as:UTF8.self))
                         return
                     time.sleep(0.025)
 
+            client.command("selectTab", tab="timer")
             client.command("collapse")
             compact = read("compact-calibration")
             client.command("expand")
             expanded = until(lambda rows: all(w["height"] > c["height"] + 20
                 for w, c in zip(rows, compact)), "expanded-calibration")
+            time.sleep(0.12)
+            write_private(directory / "expanded-reference.png", client.request("/render?surface=live-notch"))
             client.command("collapse")
             until(lambda rows: matches(rows, compact), "compact-calibration")
+            time.sleep(0.12)
+            write_private(directory / "compact-reference.png", client.request("/render?surface=live-notch"))
             animated = not client.request()["systemReduceMotion"]
             interruption_latency = []
+            speed_observations = []
             if animated:
                 client.command("preferences", values={"reduceMotion": False})
+                # Read actual NSWindow geometry at slow, normal and fast speeds.
+                # These are caller samples, not display-frame/FPS measurements.
+                for speed in (0.5, 1, 2):
+                    client.command("preferences", values={"animationSpeed": speed})
+                    for action, origin, target in (("expand", compact, expanded), ("collapse", expanded, compact)):
+                        client.command(action)
+                        began = time.monotonic()
+                        previous = origin
+                        intermediate = 0
+                        captured = False
+                        while True:
+                            rows = read("speed-%s-%s" % (speed, action))
+                            require(len(rows) == len(target), "A moving native panel disappeared.")
+                            for row, prior, small, large in zip(rows, previous, compact, expanded):
+                                for key in ("width", "height"):
+                                    require(small[key] - 1 <= row[key] <= large[key] + 1,
+                                            "Native motion exceeded its settled dimensions.")
+                                    require(row[key] >= prior[key] - 1 if action == "expand"
+                                            else row[key] <= prior[key] + 1,
+                                            "Native motion reversed without a new command.")
+                                require(abs(row["y"] + row["height"] - small["y"] - small["height"]) <= 1
+                                        and abs(row["x"] + row["width"] / 2 - small["x"] - small["width"] / 2) <= 1,
+                                        "Native motion moved its top/center anchor.")
+                            if not matches(rows, origin) and not matches(rows, target):
+                                intermediate += 1
+                                if speed == 0.5 and not captured and time.monotonic() - began > 0.15:
+                                    write_private(directory / (action + "-in-flight.png"),
+                                                  client.request("/render?surface=live-notch"))
+                                    captured = True
+                            if matches(rows, target):
+                                break
+                            require(time.monotonic() - began < 2, "A native speed transition did not settle.")
+                            previous = rows
+                            time.sleep(0.005)
+                        require(intermediate > 0, "Native motion jumped directly to its target.")
+                        speed_observations.append({"speed": speed, "action": action,
+                            "callerObservedSeconds": time.monotonic() - began,
+                            "intermediateSamples": intermediate})
+                        # Let the separately timed content fade finish before
+                        # the next case; capture the real mounted surface too.
+                        time.sleep(0.12 / speed)
+                        write_private(directory / ("speed-%s-%s.png" % (speed, action)),
+                                      client.request("/render?surface=live-notch"))
+                client.command("preferences", values={"animationSpeed": 0.25})
                 for action, origin, target in (("expand", compact, expanded), ("collapse", expanded, compact)):
                     client.command(action)
                     # Establish actual intermediate geometry, not only a command
@@ -746,6 +796,8 @@ print(String(decoding:data,as:UTF8.self))
                     interrupted = time.monotonic()
                     until(lambda rows: matches(rows, target), action + "-reduce-motion", timeout=0.2)
                     interruption_latency.append(time.monotonic() - interrupted)
+                    write_private(directory / (action + "-reduce-motion.png"),
+                                  client.request("/render?surface=live-notch"))
                     hold(target, action + "-settled")
                     client.command("preferences", values={"reduceMotion": False})
 
@@ -795,8 +847,41 @@ print(String(decoding:data,as:UTF8.self))
             state = client.request()
             require(state["preferences"]["reduceMotion"] and matches(panels(state), compact),
                     "Reduce Motion or native compact geometry did not survive restart.")
+        if animated:
+            # Decode the actual mounted captures after the app has stopped.
+            # Geometry alone cannot catch controls left invisible by a delayed
+            # SwiftUI fade when Reduce Motion interrupts the native animator.
+            reader = r'''
+import AppKit
+import Foundation
+var counts: [Int] = []
+for path in CommandLine.arguments.dropFirst() {
+    guard let image = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: path))),
+          image.pixelsWide > 40, image.pixelsHigh > 16 else { exit(1) }
+    var count = 0
+    for y in 8..<(image.pixelsHigh - 8) {
+        for x in 20..<(image.pixelsWide - 20) {
+            guard let color = image.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { exit(1) }
+            if min(color.redComponent, color.greenComponent, color.blueComponent) > 0.65 && color.alphaComponent > 0.65 {
+                count += 1
+            }
+        }
+    }
+    counts.append(count)
+}
+print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding: .utf8)!)
+'''
+            decoded = subprocess.run(["xcrun", "swift", "-e", reader, *[str(directory / name) for name in (
+                "expanded-reference.png", "expand-reduce-motion.png", "compact-reference.png", "collapse-reduce-motion.png")]],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+            require(decoded.returncode == 0, "Native interrupted-content PNG decoding failed: " + decoded.stderr[:1000])
+            counts = json.loads(decoded.stdout)
+            require(counts[0] > 100 and counts[2] > 30 and counts[1] >= counts[0] * 0.85 and counts[3] >= counts[2] * 0.85,
+                    "Reduce Motion settled native geometry but left its active controls faded or invisible.")
+            write_private(directory / "interrupted-content-pixels.json", json_bytes(counts))
         self.record("motion: native interruption, reversal, hidden-content cleanup and preference restart",
                     observedAnimation=animated, interruptionReadLatencySeconds=interruption_latency,
+                    speedObservations=speed_observations,
                     nativeGeometrySamples=len(samples))
 
     def compact_activity(self):
