@@ -11,8 +11,9 @@ enum MediaFixture {
     @MainActor static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
         if args == ["--help"] {
-            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration NONNEGATIVE_SECONDS] [--metadata-style normal|long|oversized|identical] [--rate-controls] [--live-metadata] [--explicit-metadata]")
+            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration NONNEGATIVE_SECONDS] [--metadata-style normal|long|oversized|identical] [--artwork-style shared|alternate|none] [--rate-controls] [--live-metadata] [--explicit-metadata]")
             print("Plays only its own two silent tracks for at most 90 seconds. No arguments and missing/unsafe state paths fail before playback. OPENCOVE_FIXTURE_STATE can supply --state.")
+            print("--artwork-style defaults to shared (the original cover on both tracks); alternate uses a second original cover on track 2; none omits artwork. State reports artworkStyle and artworkVariant (original|alternate|none).")
             print("--live-metadata advertises this local fixture's public live flag on its first item; it does not start a network stream. Zero metadata duration represents unavailable timing.")
             print("--explicit-metadata uses an opt-in native publisher for this fixture only: first item explicit, second item false. It never overrides another app or sends another player a command. Cannot combine with --live-metadata or --rate-controls.")
             return
@@ -20,6 +21,7 @@ enum MediaFixture {
         var state = ProcessInfo.processInfo.environment["OPENCOVE_FIXTURE_STATE"]
         var duration: Double?
         var metadataStyle = "normal"
+        var artworkStyle = "shared"
         var rateControls = false
         var liveMetadata = false
         var explicitMetadata = false
@@ -37,6 +39,9 @@ enum MediaFixture {
             case "--metadata-style":
                 guard ["normal", "long", "oversized", "identical"].contains(args[index + 1]) else { fail() }
                 metadataStyle = args[index + 1]
+            case "--artwork-style":
+                guard ["shared", "alternate", "none"].contains(args[index + 1]) else { fail() }
+                artworkStyle = args[index + 1]
             default: fail()
             }
             index += 2
@@ -51,7 +56,7 @@ enum MediaFixture {
               lstat(url.path, &info) != 0, errno == ENOENT else { fail() }
         umask(0o077)
         let app = NSApplication.shared
-        let delegate = FixtureDelegate(statusURL: url, metadataDuration: duration, metadataStyle: metadataStyle, rateControls: rateControls, liveMetadata: liveMetadata, explicitMetadata: explicitMetadata)
+        let delegate = FixtureDelegate(statusURL: url, metadataDuration: duration, metadataStyle: metadataStyle, artworkStyle: artworkStyle, rateControls: rateControls, liveMetadata: liveMetadata, explicitMetadata: explicitMetadata)
         app.delegate = delegate
         app.setActivationPolicy(.prohibited)
         app.run()
@@ -73,6 +78,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
     private let statusURL: URL
     private let metadataDuration: Double?
     private let metadataStyle: String
+    private let artworkStyle: String
     private let rateControls: Bool
     private let liveMetadata: Bool
     private let explicitMetadata: Bool
@@ -91,11 +97,26 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         }
         return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }()
+    // Keep the same large rectangle layout with contrasting colors. Each cover
+    // and its image are created once and reused across publishes and track changes.
+    private lazy var alternateArtwork: MPMediaItemArtwork = {
+        let image = NSImage(size: NSSize(width: 2048, height: 2048), flipped: false) { bounds in
+            NSColor.systemPink.setFill()
+            bounds.fill()
+            NSColor.systemYellow.setFill()
+            NSRect(x: 0, y: 0, width: bounds.width / 2, height: bounds.height).fill()
+            NSColor.systemBlue.setFill()
+            NSRect(x: bounds.width / 2, y: 0, width: bounds.width / 2, height: bounds.height / 2).fill()
+            return true
+        }
+        return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+    }()
 
-    init(statusURL: URL, metadataDuration: Double?, metadataStyle: String, rateControls: Bool, liveMetadata: Bool, explicitMetadata: Bool) {
+    init(statusURL: URL, metadataDuration: Double?, metadataStyle: String, artworkStyle: String, rateControls: Bool, liveMetadata: Bool, explicitMetadata: Bool) {
         self.statusURL = statusURL
         self.metadataDuration = metadataDuration
         self.metadataStyle = metadataStyle
+        self.artworkStyle = artworkStyle
         self.rateControls = rateControls
         self.liveMetadata = liveMetadata
         self.explicitMetadata = explicitMetadata
@@ -192,7 +213,6 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
             MPMediaItemPropertyTitle: title,
             MPMediaItemPropertyArtist: artist,
             MPMediaItemPropertyAlbumTitle: "End-to-end fixture",
-            MPMediaItemPropertyArtwork: artwork,
             MPMediaItemPropertyPlaybackDuration: publishedDuration,
             MPMediaItemPropertyPersistentID: UInt64(track),
             MPNowPlayingInfoPropertyExternalContentIdentifier: "org.opencove.MediaFixture.track.\(track)",
@@ -201,6 +221,16 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
             MPNowPlayingInfoPropertyDefaultPlaybackRate: Double(player.rate),
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]
+        let artworkVariant: String
+        if artworkStyle == "none" {
+            artworkVariant = "none"
+        } else if artworkStyle == "alternate" && track == 2 {
+            metadata[MPMediaItemPropertyArtwork] = alternateArtwork
+            artworkVariant = "alternate"
+        } else {
+            metadata[MPMediaItemPropertyArtwork] = artwork
+            artworkVariant = "original"
+        }
         if liveMetadata { metadata[MPNowPlayingInfoPropertyIsLiveStream] = isLive }
         if explicitMetadata { metadata[MPMediaItemPropertyIsExplicit] = track == 1 }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = metadata
@@ -210,7 +240,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
                 elapsed: player.currentTime, rate: player.isPlaying ? Double(player.rate) : 0,
                 track: track)
         }
-        let state: [String: Any] = ["track": track, "playing": player.isPlaying, "elapsed": player.currentTime, "duration": player.duration, "rate": player.rate, "pid": ProcessInfo.processInfo.processIdentifier, "publishedDuration": publishedDuration, "liveMetadata": isLive, "publishedExplicit": explicitMetadata ? (track == 1) as Any : NSNull()]
+        let state: [String: Any] = ["track": track, "playing": player.isPlaying, "elapsed": player.currentTime, "duration": player.duration, "rate": player.rate, "pid": ProcessInfo.processInfo.processIdentifier, "publishedDuration": publishedDuration, "liveMetadata": isLive, "publishedExplicit": explicitMetadata ? (track == 1) as Any : NSNull(), "artworkStyle": artworkStyle, "artworkVariant": artworkVariant]
         if let data = try? JSONSerialization.data(withJSONObject: state) { try? data.write(to: statusURL, options: .atomic) }
     }
 
