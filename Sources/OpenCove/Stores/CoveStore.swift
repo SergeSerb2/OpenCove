@@ -182,7 +182,7 @@ final class CoveStore: ObservableObject {
             case .media: selectTab(.media)
             case .calendar: selectTab(.calendar)
             case .timer: selectTab(.timer)
-            case .clock: break
+            case .clock: reconcileActivitySelection(resetToDefault: true)
             }
         }
         expand()
