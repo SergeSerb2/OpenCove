@@ -5,6 +5,13 @@ import SwiftUI
 /// One timing policy for the native window and its SwiftUI content. Both can
 /// retarget an in-flight transition; reduced motion is resolved by each owner.
 enum CoveMotion {
+    static let contentFadeDuration = 0.12
+    static let contentFadeTimingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+
+    static func contentFadeAnimation(duration: Double = contentFadeDuration) -> Animation {
+        .timingCurve(0.23, 1, 0.32, 1, duration: duration)
+    }
+
     // Reading speed and rest time, independent of panel transition speed.
     static let mediaTextPointsPerSecond = 26.0
     static let mediaTextPause = 1.6
@@ -31,8 +38,8 @@ enum CoveMotion {
         guard seconds > 0 else { return nil }
         // Let the viewport open before revealing fixed-size controls. Departing
         // controls clear sooner, rather than lingering over the next activity.
-        let fade = min(seconds, 0.12 / min(2, max(0.25, preferences.animationSpeed)))
-        return .timingCurve(0.23, 1, 0.32, 1, duration: fade)
+        let fade = min(seconds, contentFadeDuration / min(2, max(0.25, preferences.animationSpeed)))
+        return contentFadeAnimation(duration: fade)
             .delay(entering ? seconds - fade : 0)
     }
 
