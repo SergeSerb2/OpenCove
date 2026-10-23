@@ -2566,7 +2566,11 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                                   and bool(p.get("info", {}).get("kMRMediaRemoteNowPlayingInfoContentItemIdentifier")),
                                   "Own native item did not settle before the rate transition.")
                 old_item = native["info"]["kMRMediaRemoteNowPlayingInfoContentItemIdentifier"]
-                old_target = client.request()["media"]
+                old_target = wait_for(client.request, lambda s:
+                    s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("contentItemIdentifier") == old_item
+                    and s["media"].get("supportedPlaybackSpeeds") == [0.75, 1, 1.25, 1.5, 2],
+                    "App and native item did not agree before the rate transition.", 15)["media"]
                 owned_rate()
                 client.command("media.next")
                 # A successful command means submission. Native source/item
@@ -2576,9 +2580,21 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 wait_for(fixture_rate, lambda s: s["track"] == 2, "Own rate fixture did not change track.")
                 wait_for(client.request, lambda s: s["media"].get("supportedPlaybackSpeeds") == [1, 2],
                          "New item's supported rates did not replace old capabilities.")
-                wait_for(lambda: read_adapter("--read")[1], lambda p: p.get("bundleID") == FIXTURE_ID and
+                new_native = wait_for(lambda: read_adapter("--read")[1], lambda p: p.get("bundleID") == FIXTURE_ID and
                          p.get("info", {}).get("kMRMediaRemoteNowPlayingInfoContentItemIdentifier") not in (None, "", old_item),
                          "Actual new native item did not publish before stale-rate check.", 15)
+                # Supported commands can refresh before the watcher's cached
+                # item. HTTP 200 means submission, so test HTTP stale rejection
+                # only after this app has actually adopted the new native item.
+                current = wait_for(client.request, lambda s:
+                    s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("contentItemIdentifier") == new_native["info"]["kMRMediaRemoteNowPlayingInfoContentItemIdentifier"]
+                    and s["media"].get("supportedPlaybackSpeeds") == [1, 2],
+                    "App did not adopt the actual changed native item before stale-rate check.", 15)
+                write_private(directory / "rate-identity-observation.json", json_bytes({
+                    "oldAppMatchedNative": old_target["contentItemIdentifier"] == old_item,
+                    "newAppMatchedNative": current["media"]["contentItemIdentifier"] == new_native["info"]["kMRMediaRemoteNowPlayingInfoContentItemIdentifier"],
+                    "appItemChanged": current["media"]["contentItemIdentifier"] != old_target["contentItemIdentifier"]}))
                 rate(1.5, expected=400)
                 rate(2, expected=409, target=old_target)
                 owned_rate()
