@@ -174,8 +174,16 @@ private struct CoveExpandedSectionFade: AnimatableModifier {
 
     func body(content: Content) -> some View {
         let selected = identity == context.presentation.active
-        content.opacity(context.presentation.settled ? (selected ? 1 : 0) : opacity)
+        let retained = identity == context.presentation.outgoing && !context.presentation.settled
+        let permitted = (selected || retained) && context.permissions.permits(identity.section, outgoing: !selected)
+        let active = selected && context.expanded && permitted
+        // SwiftUI can retain a rendered exit tree after its content is removed.
+        // Fence that image at the transition itself as well as the live subtree.
+        content.opacity(!permitted ? 0 : context.presentation.settled ? (selected ? 1 : 0) : opacity)
             .transaction { $0.animation = nil }
+            .disabled(!active)
+            .allowsHitTesting(active)
+            .accessibilityHidden(!active)
     }
 }
 
