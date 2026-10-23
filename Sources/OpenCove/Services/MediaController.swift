@@ -860,7 +860,7 @@ final class MediaController: ObservableObject {
             case .success(let data):
                 if let payload = CoveMediaAdapterWatch.payload(from: data) {
                     self.lastError = payload["error"] as? String
-                    if self.lastError == nil { self.scheduleRefresh(after: 0.2, wakeAdapter: true) }
+                    if self.lastError == nil { self.scheduleRefresh(after: 0.05, wakeAdapter: true) }
                 } else { self.lastError = "The system media adapter returned an unreadable response." }
             case .failure(let error): self.lastError = error.localizedDescription
             }
