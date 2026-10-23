@@ -27,6 +27,9 @@ function run(argv) {
             const info=field(value,'info');
             if(present(info) && id(info)) {
                 const key=text(field(value,'bundleID'))+'\n'+id(info)+'\n'+text(field(info,'kMRMediaRemoteNowPlayingInfoArtworkIdentifier'));
+                // The parent drops its image when this context changes, even
+                // if the next item has no cover. Returning must resend bytes.
+                if(key!==sentArtworkKey) sentArtworkKey='';
                 if(present(field(info,'kMRMediaRemoteNowPlayingInfoArtworkData'))) {
                     if(key===sentArtworkKey) info.removeObjectForKey('kMRMediaRemoteNowPlayingInfoArtworkData');
                     else sentArtworkKey=key;
