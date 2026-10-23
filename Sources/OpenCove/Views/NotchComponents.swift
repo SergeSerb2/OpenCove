@@ -171,7 +171,14 @@ struct CoveArtwork: View {
     @State private var second: RetainedArtwork?
     @State private var showsSecond = false
     @State private var fadeRevision: UInt64 = 0
+    @State private var fadePhase = FadePhase.idle
     @State private var decodeGap: UUID?
+
+    private enum FadePhase: Equatable {
+        case idle
+        case fading(UInt64)
+        case completed(UInt64)
+    }
 
     private struct RetainedArtwork {
         let source: String
@@ -194,7 +201,7 @@ struct CoveArtwork: View {
         return current?.source == sourceIdentifier
     }
 
-    // Keep only the latest ready cover during a brief same-source decode gap.
+    // Immediate rendering keeps the target cover during a same-source decode gap.
     // This never supplies cached bytes or tint as the current item's artwork.
     private var displayed: CoveArtworkThumbnail? {
         thumbnail ?? (hasRetainedSource ? current?.thumbnail : nil)
@@ -240,6 +247,14 @@ struct CoveArtwork: View {
         .onChange(of: immediate) { _, immediate in
             if immediate { updateArtwork() }
         }
+        .onChange(of: fadePhase) { _, phase in
+            guard case .completed(let revision) = phase, fadeRevision == revision else { return }
+            if showsSecond { first = nil } else { second = nil }
+            fadePhase = .idle
+            // Read the latest view input here. The animation completion holds
+            // the input from the start of its fade, which may already be stale.
+            updateArtwork()
+        }
         .task(id: decodeGap) {
             guard !Task.isCancelled, let gap = decodeGap else { return }
             do { try await Task.sleep(for: .milliseconds(200)) }
@@ -271,6 +286,7 @@ struct CoveArtwork: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             fadeRevision &+= 1
+            fadePhase = .idle
             first = cover
             second = nil
             showsSecond = false
@@ -287,22 +303,34 @@ struct CoveArtwork: View {
             // Motion/section changes must not extend an existing decode hold.
             if hasRetainedSource {
                 if decodeGap == nil { decodeGap = UUID() }
-            } else { decodeGap = nil }
-            settle(to: hasRetainedSource ? current : nil)
+                // Preserve both visible slots until the unfinished fade ends.
+                if immediate { settle(to: current) }
+            } else {
+                decodeGap = nil
+                settle(to: nil)
+            }
             return
         }
         decodeGap = nil
         let next = RetainedArtwork(source: sourceIdentifier, thumbnail: thumbnail)
         guard hasRetainedSource, !immediate else { settle(to: next); return }
         if let current, current.thumbnail.image === thumbnail.image { return }
+        let outgoing = showsSecond ? first : second
+        if outgoing?.thumbnail.image !== thumbnail.image {
+            // A third cover must not replace a slot that still contributes to
+            // the blend. Coalesce in the live input, without retaining a third
+            // cover; the completed phase above will pick up the latest one.
+            guard fadePhase == .idle else { return }
+            if showsSecond { first = next } else { second = next }
+        }
         fadeRevision &+= 1
         let revision = fadeRevision
-        if showsSecond { first = next } else { second = next }
+        fadePhase = .fading(revision)
         withAnimation(CoveMotion.contentFadeAnimation(), completionCriteria: .removed) {
             showsSecond.toggle()
         } completion: {
             guard fadeRevision == revision else { return }
-            if showsSecond { first = nil } else { second = nil }
+            fadePhase = .completed(revision)
         }
     }
 }
