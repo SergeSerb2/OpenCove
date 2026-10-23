@@ -9,6 +9,7 @@ import SwiftUI
 struct CoveArtworkTransition: NSViewRepresentable {
     var first: CGImage?
     var second: CGImage?
+    var inputIdentity: ObjectIdentifier?
     var showsSecond: Bool
     var sourceIdentifier: String?
     var revision: UInt64
@@ -21,7 +22,7 @@ struct CoveArtworkTransition: NSViewRepresentable {
     }
 
     func updateNSView(_ view: CoveArtworkTransitionView, context: Context) {
-        view.configure(first: first, second: second, showsSecond: showsSecond,
+        view.configure(first: first, second: second, inputIdentity: inputIdentity, showsSecond: showsSecond,
                        sourceIdentifier: sourceIdentifier, revision: revision,
                        fading: fading, completion: completion)
     }
@@ -58,6 +59,10 @@ final class CoveArtworkTransitionView: NSView {
     // One scalar-only phase record in explicit verification launches. No image
     // identity, source text, extra image retention or recurring work is added.
     private var phaseOrigin: [String: Any]?
+    // An image identity is a non-retaining scalar. Neither this observation nor
+    // the native leaf keeps the third decoded image alive.
+    private var distinctInputIdentity: ObjectIdentifier?
+    private var distinctInput: [String: Any]?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -94,7 +99,7 @@ final class CoveArtworkTransitionView: NSView {
         if window == nil { settleAnimation() }
     }
 
-    func configure(first: CGImage?, second: CGImage?, showsSecond: Bool,
+    func configure(first: CGImage?, second: CGImage?, inputIdentity: ObjectIdentifier?, showsSecond: Bool,
                    sourceIdentifier: String?, revision: UInt64, fading: Bool,
                    completion: @escaping (UInt64) -> Void) {
         guard !retired else { return }
@@ -102,6 +107,36 @@ final class CoveArtworkTransitionView: NSView {
         let changedSource = self.sourceIdentifier != sourceIdentifier
         let firstID = first.map { ObjectIdentifier($0) }
         let secondID = second.map { ObjectIdentifier($0) }
+        if recordsPhaseOrigin {
+            if changedSource || inputIdentity == nil || distinctInputIdentity != inputIdentity {
+                distinctInput = nil
+                distinctInputIdentity = nil
+            }
+            // Observe before the unchanged-slot guard. A ready third cover
+            // must be visible to verification even while rendering is deferred.
+            if let inputIdentity, let activeRevision = self.revision,
+               !changedSource, firstImage != nil, secondImage != nil,
+               inputIdentity != firstImage, inputIdentity != secondImage,
+               upper.animation(forKey: Self.animationKey) != nil,
+               distinctInput == nil {
+                let now = CACurrentMediaTime()
+                distinctInputIdentity = inputIdentity
+                distinctInput = ["readyDuringRevision": activeRevision, "readyAt": now,
+                    "animationCount": 1, "presentationOpacity": presentationOpacity,
+                    "deadline": animationDeadline.map { $0 as Any } ?? NSNull(),
+                    "incomingRevisionUnchanged": self.revision == revision,
+                    "incomingFirstUnchanged": firstImage == firstID,
+                    "incomingSecondUnchanged": secondImage == secondID,
+                    "consumedByRevision": NSNull(), "consumedAt": NSNull()]
+            }
+            if let inputIdentity, distinctInputIdentity == inputIdentity, distinctInput != nil,
+               distinctInput?["consumedByRevision"] is NSNull,
+               inputIdentity == firstID || inputIdentity == secondID {
+                distinctInput?["consumedByRevision"] = revision
+                distinctInput?["consumedAt"] = CACurrentMediaTime()
+                distinctInput?["consumedWhileAnimating"] = upper.animation(forKey: Self.animationKey) != nil
+            }
+        }
         // Completion releases the outgoing slot without changing the revision.
         guard self.revision != revision || changedSource
             || firstImage != firstID || secondImage != secondID else { return }
@@ -187,6 +222,8 @@ final class CoveArtworkTransitionView: NSView {
     }
 
     private func settleAnimation() {
+        distinctInputIdentity = nil
+        distinctInput = nil
         guard let revision = pendingRevision, upper.animation(forKey: Self.animationKey) != nil else { return }
         generation &+= 1
         let completionGeneration = generation
@@ -207,6 +244,8 @@ final class CoveArtworkTransitionView: NSView {
         animationDeadline = nil
         phaseOrigin = nil
         completion = nil
+        distinctInputIdentity = nil
+        distinctInput = nil
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         upper.removeAnimation(forKey: Self.animationKey)
@@ -230,7 +269,8 @@ final class CoveArtworkTransitionView: NSView {
                 "animationCount": animating ? 1 : 0,
                 "presentationOpacity": presentationOpacity, "targetOpacity": upper.opacity,
                 "revision": revision.map { $0 as Any } ?? NSNull(), "remainingSeconds": remaining,
-                "phaseOrigin": phaseOrigin.map { $0 as Any } ?? NSNull()]
+                "phaseOrigin": phaseOrigin.map { $0 as Any } ?? NSNull(),
+                "distinctInput": distinctInput.map { $0 as Any } ?? NSNull()]
     }
 
     static func motionSnapshots(in view: NSView) -> [[String: Any]] {
