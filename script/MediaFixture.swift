@@ -11,11 +11,12 @@ enum MediaFixture {
     @MainActor static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
         if args == ["--help"] {
-            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration NONNEGATIVE_SECONDS] [--metadata-style normal|long|oversized|identical] [--artwork-style shared|alternate|none] [--rate-controls] [--live-metadata] [--explicit-metadata]")
+            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration NONNEGATIVE_SECONDS] [--metadata-style normal|long|oversized|identical] [--artwork-style shared|alternate|none] [--rate-controls] [--live-metadata] [--explicit-metadata] [--stdin-control]")
             print("Plays only its own two silent tracks for at most 90 seconds. No arguments and missing/unsafe state paths fail before playback. OPENCOVE_FIXTURE_STATE can supply --state.")
             print("--artwork-style defaults to shared (the original cover on both tracks); alternate uses a second original cover on track 2; none omits artwork. State reports artworkStyle and artworkVariant (original|alternate|none).")
             print("--live-metadata advertises this local fixture's public live flag on its first item; it does not start a network stream. Zero metadata duration represents unavailable timing.")
             print("--explicit-metadata uses an opt-in native publisher for this fixture only: first item explicit, second item false. It never overrides another app or sends another player a command. Cannot combine with --live-metadata or --rate-controls.")
+            print("--stdin-control reads only exact LF-terminated next or previous commands for this fixture. Reads are at most 256 bytes, raw buffering stays below 512 bytes, lines are at most 32 bytes, and at most 128 commands are handled. EOF, invalid input, or the limit retires the reader without ending playback. State reports the active reader as stdinControl and completed commands as handledInputCount; raw input is never stored in state. Without this flag, stdin is never read.")
             return
         }
         var state = ProcessInfo.processInfo.environment["OPENCOVE_FIXTURE_STATE"]
@@ -25,11 +26,13 @@ enum MediaFixture {
         var rateControls = false
         var liveMetadata = false
         var explicitMetadata = false
+        var stdinControl = false
         var index = 0
         while index < args.count {
             if args[index] == "--rate-controls" { rateControls = true; index += 1; continue }
             if args[index] == "--live-metadata" { liveMetadata = true; index += 1; continue }
             if args[index] == "--explicit-metadata" { explicitMetadata = true; index += 1; continue }
+            if args[index] == "--stdin-control" { stdinControl = true; index += 1; continue }
             guard index + 1 < args.count else { fail() }
             switch args[index] {
             case "--state": state = args[index + 1]
@@ -56,7 +59,7 @@ enum MediaFixture {
               lstat(url.path, &info) != 0, errno == ENOENT else { fail() }
         umask(0o077)
         let app = NSApplication.shared
-        let delegate = FixtureDelegate(statusURL: url, metadataDuration: duration, metadataStyle: metadataStyle, artworkStyle: artworkStyle, rateControls: rateControls, liveMetadata: liveMetadata, explicitMetadata: explicitMetadata)
+        let delegate = FixtureDelegate(statusURL: url, metadataDuration: duration, metadataStyle: metadataStyle, artworkStyle: artworkStyle, rateControls: rateControls, liveMetadata: liveMetadata, explicitMetadata: explicitMetadata, stdinControl: stdinControl)
         app.delegate = delegate
         app.setActivationPolicy(.prohibited)
         app.run()
@@ -66,6 +69,65 @@ enum MediaFixture {
     private static func fail() -> Never {
         fputs("MediaFixture needs a fresh state path in an owned private directory. Use --help.\n", stderr)
         exit(2)
+    }
+}
+
+private enum FixtureInputCommand: String, Sendable {
+    case next, previous
+}
+
+private enum FixtureStdinReader {
+    static func start(handle: @escaping @MainActor @Sendable ([FixtureInputCommand], Bool) -> Void) {
+        DispatchQueue(label: "org.opencove.MediaFixture.stdin", qos: .userInitiated).async {
+            // Only this background queue blocks. A 256-byte read plus a 32-byte
+            // partial line keeps all raw input buffering below 512 bytes.
+            var chunk = [UInt8](repeating: 0, count: 256)
+            var line: [UInt8] = []
+            line.reserveCapacity(32)
+            var inputCount = 0
+            var retirement: String?
+            while retirement == nil {
+                let count = chunk.withUnsafeMutableBytes { Darwin.read(STDIN_FILENO, $0.baseAddress, $0.count) }
+                if count < 0 && errno == EINTR { continue }
+                var commands: [FixtureInputCommand] = []
+                if count <= 0 {
+                    retirement = count == 0 ? (line.isEmpty ? "EOF" : "incomplete line at EOF") : "read error"
+                } else {
+                    for byte in chunk.prefix(count) {
+                        if byte == 0x0A {
+                            guard let text = String(bytes: line, encoding: .utf8),
+                                  let command = FixtureInputCommand(rawValue: text) else {
+                                retirement = "invalid command"
+                                break
+                            }
+                            commands.append(command)
+                            line.removeAll(keepingCapacity: true)
+                            inputCount += 1
+                            if inputCount == 128 {
+                                retirement = "command limit"
+                                break
+                            }
+                        } else {
+                            guard line.count < 32 else {
+                                retirement = "line limit"
+                                break
+                            }
+                            line.append(byte)
+                        }
+                    }
+                }
+                // One serial producer uses FIFO main-queue blocks, with no
+                // independent Tasks that could reorder successive read batches.
+                let batch = commands
+                let retired = retirement != nil
+                if !batch.isEmpty || retired {
+                    DispatchQueue.main.async { handle(batch, retired) }
+                }
+                if let retirement {
+                    fputs("Media fixture stdin control retired: \(retirement).\n", stderr)
+                }
+            }
+        }
     }
 }
 
@@ -82,6 +144,8 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
     private let rateControls: Bool
     private let liveMetadata: Bool
     private let explicitMetadata: Bool
+    private var stdinControl: Bool
+    private var handledInputCount = 0
     private var players: [AVAudioPlayer] = []
     // Original, local fixture pixels. A large source exercises the app's real
     // artwork transfer and thumbnail path without contacting an image service.
@@ -112,7 +176,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }()
 
-    init(statusURL: URL, metadataDuration: Double?, metadataStyle: String, artworkStyle: String, rateControls: Bool, liveMetadata: Bool, explicitMetadata: Bool) {
+    init(statusURL: URL, metadataDuration: Double?, metadataStyle: String, artworkStyle: String, rateControls: Bool, liveMetadata: Bool, explicitMetadata: Bool, stdinControl: Bool) {
         self.statusURL = statusURL
         self.metadataDuration = metadataDuration
         self.metadataStyle = metadataStyle
@@ -120,6 +184,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         self.rateControls = rateControls
         self.liveMetadata = liveMetadata
         self.explicitMetadata = explicitMetadata
+        self.stdinControl = stdinControl
         super.init()
     }
 
@@ -165,6 +230,22 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in self?.publish() }
             }
             publish()
+            if stdinControl {
+                FixtureStdinReader.start { [weak self] commands, retired in
+                    guard let self, self.stdinControl else { return }
+                    for command in commands {
+                        switch command {
+                        case .next, .previous: self.changeTrack()
+                        }
+                        self.handledInputCount += 1
+                        self.publish()
+                    }
+                    if retired {
+                        self.stdinControl = false
+                        self.publish()
+                    }
+                }
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 90) { NSApp.terminate(nil) }
         } catch {
             fputs("Media fixture could not create silent audio.\n", stderr)
@@ -240,11 +321,12 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
                 elapsed: player.currentTime, rate: player.isPlaying ? Double(player.rate) : 0,
                 track: track)
         }
-        let state: [String: Any] = ["track": track, "playing": player.isPlaying, "elapsed": player.currentTime, "duration": player.duration, "rate": player.rate, "pid": ProcessInfo.processInfo.processIdentifier, "publishedDuration": publishedDuration, "liveMetadata": isLive, "publishedExplicit": explicitMetadata ? (track == 1) as Any : NSNull(), "artworkStyle": artworkStyle, "artworkVariant": artworkVariant]
+        let state: [String: Any] = ["track": track, "playing": player.isPlaying, "elapsed": player.currentTime, "duration": player.duration, "rate": player.rate, "pid": ProcessInfo.processInfo.processIdentifier, "publishedDuration": publishedDuration, "liveMetadata": isLive, "publishedExplicit": explicitMetadata ? (track == 1) as Any : NSNull(), "artworkStyle": artworkStyle, "artworkVariant": artworkVariant, "stdinControl": stdinControl, "handledInputCount": handledInputCount]
         if let data = try? JSONSerialization.data(withJSONObject: state) { try? data.write(to: statusURL, options: .atomic) }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        stdinControl = false
         timer?.invalidate()
         player?.stop()
         for (command, target) in targets { command.removeTarget(target) }
