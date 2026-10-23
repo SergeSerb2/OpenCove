@@ -1592,8 +1592,10 @@ print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding:
                 require(payload.get("bundleID") == FIXTURE_ID, "Native source changed; no command sent.")
 
             directory = self.directory("media-refresh", preferences={**SAFE, "enableMedia": True,
-                "enablePrivateAPIs": True, "reduceMotion": True, "hideWhenIdle": False, "expandOnHover": False})
+                "enablePrivateAPIs": True, "reduceMotion": True, "hideWhenIdle": False, "expandOnHover": False,
+                "notchWidth": 400, "notchHeight": 56, "showPlaybackIndicator": False})
             observations = []
+            captures = []
             with self.app(directory) as client:
                 wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
                     and s["artworkAvailable"], "Own source did not reach the refresh app.", 25)
@@ -1613,6 +1615,10 @@ print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding:
                     require(actual["track"] != before["track"] if action != "media.playPause"
                             else actual["playing"] != before["playing"], "App metadata was not confirmed by the real player.")
                     observations.append({"action": action, "callerObservedSeconds": time.monotonic() - began})
+                    if action != "media.playPause":
+                        path = directory / (action + "-first.png")
+                        write_private(path, client.request("/render?surface=live-notch"))
+                        captures.append(path)
                     expected = current["media"]
                     for _ in range(8):
                         time.sleep(0.15)
@@ -1637,7 +1643,37 @@ print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding:
                 client.command("preferences", values={"enableMedia": True})
                 wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
                     and s["artworkAvailable"], "Own reader did not recover after explicit restart.", 25)
+                # Opt-out must clear even a pending outgoing cover immediately.
+                client.command("preferences", values={"enableMedia": False})
+                path = directory / "optout-immediate.png"
+                write_private(path, client.request("/render?surface=live-notch"))
+                captures.append(path)
             write_private(directory / "observations.json", json_bytes(observations))
+            pixels = r'''
+import AppKit
+import Foundation
+var counts: [Int] = []
+for path in CommandLine.arguments.dropFirst() {
+    guard let image = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: path))) else { exit(1) }
+    var colored = 0
+    for y in 0..<image.pixelsHigh {
+        for x in 0..<(image.pixelsWide / 4) {
+            guard let c = image.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { exit(1) }
+            let rgb = [c.redComponent, c.greenComponent, c.blueComponent]
+            if c.alphaComponent > 0.5 && rgb.max()! - rgb.min()! > 0.2 { colored += 1 }
+        }
+    }
+    counts.append(colored)
+}
+print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding: .utf8)!)
+'''
+            decoded = subprocess.run(["xcrun", "swift", "-e", pixels, *map(str, captures)],
+                                     text=True, capture_output=True, timeout=60)
+            require(decoded.returncode == 0, "Actual media-refresh PNG decoding failed: " + decoded.stderr[:1000])
+            counts = json.loads(decoded.stdout)
+            write_private(directory / "cover-pixels.json", json_bytes(counts))
+            require(len(counts) == 3 and min(counts[:2]) > 0 and counts[2] == 0,
+                    "Mounted cover flashed a placeholder or media opt-out retained outgoing artwork.")
             self.record("media refresh: real transport readback, stale-state hold, reader exit during queued refresh and recovery")
 
             # Drive the real CLI stream directly, including an input EOF. The

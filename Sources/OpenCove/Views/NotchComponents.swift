@@ -163,10 +163,32 @@ struct CoveArtwork: View {
     var thumbnail: CoveArtworkThumbnail?
     var size: Double
     var radius: Double = 12
+    var sourceIdentifier: String?
+    @State private var retained: RetainedArtwork?
+
+    private struct RetainedArtwork {
+        let source: String
+        let thumbnail: CoveArtworkThumbnail
+    }
+
+    private struct Input: Hashable {
+        let source: String?
+        let image: ObjectIdentifier?
+    }
+
+    private var input: Input {
+        Input(source: sourceIdentifier, image: thumbnail.map { ObjectIdentifier($0.image) })
+    }
+
+    // Keep only the outgoing cover during a brief same-source decode gap.
+    // This never supplies cached bytes or tint as the current item's artwork.
+    private var displayed: CoveArtworkThumbnail? {
+        thumbnail ?? (retained?.source == sourceIdentifier ? retained?.thumbnail : nil)
+    }
 
     var body: some View {
         Group {
-            if let thumbnail {
+            if let thumbnail = displayed {
                 Image(decorative: thumbnail.image, scale: 1)
                     .resizable()
                     .scaledToFill()
@@ -183,6 +205,23 @@ struct CoveArtwork: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .task(id: input) {
+            guard !Task.isCancelled else { return }
+            guard let sourceIdentifier, !sourceIdentifier.isEmpty else {
+                retained = nil
+                return
+            }
+            if let thumbnail {
+                retained = RetainedArtwork(source: sourceIdentifier, thumbnail: thumbnail)
+            } else if retained?.source == sourceIdentifier {
+                do { try await Task.sleep(for: .milliseconds(200)) }
+                catch { return }
+                guard !Task.isCancelled else { return }
+                retained = nil
+            } else {
+                retained = nil
+            }
+        }
         .overlay(RoundedRectangle(cornerRadius: radius).stroke(.white.opacity(0.08), lineWidth: 0.5))
         .accessibilityHidden(true)
     }
@@ -447,11 +486,13 @@ struct CoveMediaSurface: View {
         let artworkTint = musicColorAccent ? artwork?.tint : nil
         return HStack(alignment: .center, spacing: condensed ? 9 : 15) {
             if locked {
-                CoveArtwork(thumbnail: artwork, size: 54, radius: 12)
+                CoveArtwork(thumbnail: artwork, size: 54, radius: 12,
+                            sourceIdentifier: media.state.sourceBundleIdentifier)
             } else {
                 Button(action: media.openPlayer) {
                     CoveArtwork(thumbnail: artwork, size: condensed ? 46 : 54,
-                                radius: condensed ? 9 : 12)
+                                radius: condensed ? 9 : 12,
+                                sourceIdentifier: media.state.sourceBundleIdentifier)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open media player")
