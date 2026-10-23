@@ -355,11 +355,20 @@ final class NotchPanelController: NSObject {
         }
         let point = NSPoint(x: bounds.midX, y: y)
         guard bounds.contains(point), surface.panel.windowNumber > 0,
-              let event = NSEvent.mouseEvent(with: .otherMouseDown, location: point, modifierFlags: [],
+              let prototype = NSEvent.mouseEvent(with: .otherMouseDown, location: point, modifierFlags: [],
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: surface.panel.windowNumber,
                 context: nil, eventNumber: 1, clickCount: 1, pressure: 1),
-              event.buttonNumber == 2 else {
+              let native = prototype.cgEvent else {
             throw InputAcceptanceError(message: "AppKit could not construct the owned middle-button event.")
+        }
+        // The AppKit factory has no button-number parameter. Use its public
+        // Core Graphics bridge, then require the owned target and local point
+        // to survive the conversion before dispatching anything.
+        native.setIntegerValueField(.mouseEventButtonNumber, value: 2)
+        guard let event = NSEvent(cgEvent: native), event.type == .otherMouseDown,
+              event.buttonNumber == 2, event.windowNumber == surface.panel.windowNumber,
+              event.locationInWindow == point else {
+            throw InputAcceptanceError(message: "The native middle-button conversion did not preserve its owned target.")
         }
         let revision = lifecycleRevision
         acceptingMiddleClick = true
