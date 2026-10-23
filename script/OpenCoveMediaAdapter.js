@@ -87,6 +87,16 @@ function run(argv) {
         const deadline=now()+seconds;
         while(!predicate() && now()<deadline) $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.02));
     }
+    // Finish the command burst once actual item or playback state changes.
+    function signal(payload) {
+        const info=field(payload,'info');
+        let rate='';
+        try {
+            const value=ObjC.unwrap(field(info,'kMRMediaRemoteNowPlayingInfoPlaybackRate'));
+            if(typeof value==='number' && Number.isFinite(value)) rate=String(value);
+        } catch(_) {}
+        return text(field(payload,'bundleID'))+'\n'+id(info)+'\n'+rate;
+    }
     function snapshot() {
         const source=bundle(), info=currentInfo(), commands=supported();
         const payload=dict({version:1,canValidateSeekItem:false});
@@ -156,24 +166,49 @@ function run(argv) {
     }
     if(!watch) { emit(snapshot());return; }
     const parent=$.getppid(), started=now();
-    let dirty=true,lastRead=-1e9,hasMetadata=false,lastSource='';
+    let dirty=true,sourceDirty=true,lastRead=-1e9,lastPeriodicRead=-1e9,hasMetadata=false,lastSource='';
+    let requestDeadline=0,requestSignal='',lastSignal='';
     // Native notifications refresh MediaRemote's local cache. Do not install
     // reentrant JavaScript notification blocks; read the cache on the main loop.
     try {
         ObjC.bindFunction('MRMediaRemoteRegisterForNowPlayingNotifications',['void',['id']]);
         ObjC.bindFunction('dispatch_get_global_queue',['id',['long','unsigned long']]);
         $.MRMediaRemoteRegisterForNowPlayingNotifications($.dispatch_get_global_queue(0,0));
-
     } catch(_) {}
+    // The parent can request a short, coalesced refresh after a command.
+    // A native selector avoids reentrant JXA notification blocks. EOF simply
+    // disables further requests; the normal cadence and lease still apply.
+    const input=$.NSFileHandle.fileHandleWithStandardInput;
+    ObjC.registerSubclass({name:'OpenCoveMediaRefreshInput',superclass:'NSObject',methods:{
+        'inputReady:':{types:['void',['id']],implementation:function(notification) {
+            const data=field(get(notification,'userInfo'),'NSFileHandleNotificationDataItem');
+            if(!present(data) || Number(data.length)===0) return;
+            if(now()>=requestDeadline) requestSignal=lastSignal;
+            requestDeadline=now()+0.75;dirty=true;
+            input.readInBackgroundAndNotify;
+        }}
+    }});
+    const observer=$.OpenCoveMediaRefreshInput.alloc.init;
+    $.NSNotificationCenter.defaultCenter.addObserverSelectorNameObject(observer,$.NSSelectorFromString('inputReady:'),'NSFileHandleReadCompletionNotification',input);
+    input.readInBackgroundAndNotify;
     while($.getppid()===parent && now()-started<180) {
         const source=bundle();
-        if(source!==lastSource) { dirty=true; lastSource=source; }
+        if(source!==lastSource) { dirty=true;sourceDirty=true;lastSource=source; }
         const interval=hasMetadata || source ? 1 : 15;
-        if((dirty && now()-lastRead>=0.25) || now()-lastRead>=interval) {
+        const periodic=now()-lastPeriodicRead>=interval;
+        if(((dirty || now()<requestDeadline) && now()-lastRead>=0.25) || periodic) {
             dirty=false;lastRead=now();
-            const value=snapshot();hasMetadata=Boolean(present(field(value,'info')));emit(value);
+            // Early command reads must not postpone the ordinary poll.
+            if(periodic || sourceDirty) lastPeriodicRead=lastRead;
+            sourceDirty=false;
+            const value=snapshot();
+            hasMetadata=Boolean(present(field(value,'info')));lastSignal=signal(value);
+            if(lastSignal!==requestSignal) requestDeadline=0;
+            emit(value);
         }
-        const delay=Math.max(0.01,Math.min(1,lastRead+(dirty?0.25:interval)-now()));
+        const deadline=dirty || now()<requestDeadline?Math.min(lastRead+0.25,lastPeriodicRead+interval):lastPeriodicRead+interval;
+        const delay=Math.max(0.01,Math.min(1,deadline-now()));
         $.NSRunLoop.currentRunLoop.runModeBeforeDate($.NSDefaultRunLoopMode,$.NSDate.dateWithTimeIntervalSinceNow(delay));
     }
+    $.NSNotificationCenter.defaultCenter.removeObserver(observer);
 }
