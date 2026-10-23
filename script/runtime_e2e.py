@@ -1565,8 +1565,8 @@ print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding:
             require(client.request()["preferences"]["reduceMotion"], "Pinned A settings did not survive process restart.")
         self.record("storage: actual intermediate alias A-to-B retarget leaves all later writes/lock/control in physical A")
 
-    def media(self, pathological=False):
-        work = self.evidence / "media-fixture"
+    def build_media_fixture(self, name):
+        work = self.evidence / name
         work.mkdir(mode=0o700)
         bundle = work / "MediaFixture.app"
         executable = bundle / "Contents/MacOS/MediaFixture"
@@ -1581,6 +1581,188 @@ print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding:
             subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none", str(bundle)],
                            stdout=log, stderr=log, check=True, timeout=15)
         environment = {k: v for k, v in os.environ.items() if not k.startswith("OPENCOVE_")}
+        return work, executable, environment
+
+    def compact_motion(self):
+        """Crossfade actual mounted content at constant native geometry."""
+        work, executable, environment = self.build_media_fixture("compact-motion-fixture")
+        fixture_state = work / "playing.json"
+        child = subprocess.Popen([str(executable), "--state", str(fixture_state)], env=environment,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, umask=0o077)
+        try:
+            wait_for(fixture_state.exists, bool, "Own compact-motion fixture did not start.")
+            directory = self.directory("compact-motion", preferences={**SAFE, "enableMedia": True,
+                "enablePrivateAPIs": True, "enableBattery": False, "enableBluetooth": False,
+                "enableFocus": False, "showPlaybackIndicator": False, "hideWhenIdle": False,
+                "expandOnHover": False, "hideInFullscreen": False, "animationSpeed": 0.25,
+                "notchWidth": 400, "notchHeight": 56, "reduceMotion": True,
+                "peekOnSongChange": False, "enableNotifications": True, "hudDuration": 2})
+            samples, captures = [], []
+            with self.app(directory) as client:
+                def owned():
+                    require(child.poll() is None and json.loads(fixture_state.read_bytes())["pid"] == child.pid,
+                            "Own compact-motion fixture stopped or changed PID.")
+                    state = client.request()
+                    if state["preferences"]["enableMedia"]:
+                        require(state["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
+                                "Compact-motion source changed; no player was controlled.")
+                    else:
+                        require(not state["media"]["available"], "Media opt-out did not clear the source.")
+                    return state
+
+                def capture(name):
+                    state = owned()
+                    rows = [w for w in state["nativeWindows"] if w["title"] == "OpenCove"]
+                    require(rows == geometry, "Compact content verification changed native geometry.")
+                    samples.append({"capture": name, "seconds": time.monotonic() - began,
+                                    "activity": state["compactActivity"], "panels": rows})
+                    path = directory / (name + ".png")
+                    write_private(path, client.request("/render?surface=live-notch"))
+                    captures.append(name)
+
+                def dismiss():
+                    client.command("compact.dismiss", target=owned()["compactDismissTarget"])
+
+                def restore():
+                    client.command("compact.restore", target=owned()["compactRestoreTarget"])
+
+                wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["artworkAvailable"], "Own compact-motion artwork did not become available.", 25)
+                client.command("timer.start", seconds=180)
+                client.command("timer.pause")
+                client.command("collapse")
+                time.sleep(0.25)
+                state = owned()
+                geometry = [w for w in state["nativeWindows"] if w["title"] == "OpenCove"]
+                require(geometry, "Compact-motion native panel is missing.")
+                # Physical cutouts can force different widths. Do not fabricate a
+                # screen or claim a constant-size observation on that topology.
+                equal_size = all(w["width"] == 400 and w["height"] == 56 for w in geometry)
+                if not equal_size:
+                    self.record("compact motion: constant-size capture unavailable on actual display topology",
+                                observed=False, geometry=geometry)
+                    return
+                began = time.monotonic()
+                capture("media-reference")
+                dismiss()
+                capture("timer-reference")
+                restore()
+                animated = not owned()["systemReduceMotion"]
+                if animated:
+                    client.command("preferences", values={"reduceMotion": False})
+                    for phase, action in (("dismiss", dismiss), ("restore", restore)):
+                        action()
+                        start = time.monotonic()
+                        index = 0
+                        while time.monotonic() - start < 0.6:
+                            capture("%s-%02d" % (phase, index))
+                            index += 1
+                            time.sleep(0.02)
+                        time.sleep(0.4)
+                    dismiss()
+                    time.sleep(0.04)
+                    client.command("preferences", values={"reduceMotion": True})
+                    capture("reduce-on")
+                    client.command("preferences", values={"reduceMotion": False})
+                    for index in range(8):
+                        capture("reduce-off-%d" % index)
+                        time.sleep(0.04)
+                    restore()
+                    time.sleep(1)
+                    for _ in range(6):
+                        dismiss()
+                        time.sleep(0.035)
+                        restore()
+                        time.sleep(0.035)
+                    time.sleep(1)
+                    capture("rapid-settled")
+                    dismiss()
+                    time.sleep(0.04)
+                    client.command("preferences", values={"enableMedia": False})
+                    capture("optout-immediate")
+                    time.sleep(1)
+                    capture("optout-settled")
+                    client.command("preferences", values={"enableMedia": True, "hudSpeed": "instant"})
+                    wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                        and s["artworkAvailable"], "Own compact-motion media did not return.", 25)
+                    time.sleep(1)
+                    dismiss()
+                    time.sleep(0.04)
+                    client.command("notification.post", title="Motion verification", body="Own local HUD")
+                    capture("instant-hud")
+                    time.sleep(0.2)
+                    capture("instant-hud-settled")
+                    wait_for(client.request, lambda s: s["hud"] is None, "Own compact-motion HUD did not expire.")
+                    time.sleep(1)
+                    capture("hud-expired")
+                current = owned()
+                require(current["media"]["isPlaying"] and not current["timer"]["running"]
+                    and abs(current["timer"]["remaining"] - 180) < 0.25,
+                    "Compact presentation changed actual playback or the paused timer.")
+            write_private(directory / "samples.json", json_bytes({"animated": animated, "samples": samples}))
+            if animated:
+                # Decode actual native captures with AppKit, after stopping the
+                # app. Compare RGB bytes; PNG encoding and alpha alone cannot
+                # establish a content transition or a correctly settled surface.
+                reader = r'''
+import AppKit
+import Foundation
+var result: [[String: Any]] = []
+var pixels: [[UInt8]] = []
+let paths = Array(CommandLine.arguments.dropFirst())
+for path in paths {
+    guard let image = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: path))) else { exit(1) }
+    var rgb: [UInt8] = []
+    var artwork = 0
+    for y in 0..<image.pixelsHigh {
+        for x in 0..<image.pixelsWide {
+            guard let c = image.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { exit(1) }
+            rgb += [c.redComponent, c.greenComponent, c.blueComponent].map { UInt8(max(0, min(255, ($0 * 255).rounded()))) }
+            // The own fixture's orange cover quadrant. Timer/notification
+            // controls cannot contain these actual artwork pixels.
+            if x < image.pixelsWide / 4 && c.redComponent > 0.45 && c.greenComponent > 0.2
+                && c.blueComponent < 0.35 && c.redComponent > c.blueComponent * 2 { artwork += 1 }
+        }
+    }
+    pixels.append(rgb)
+    result.append(["capture": URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent,
+                   "artworkPixels": artwork])
+}
+for i in pixels.indices {
+    result[i]["equalsMedia"] = pixels[i] == pixels[0]
+    result[i]["equalsTimer"] = pixels[i] == pixels[1]
+    result[i]["equalsPrevious"] = i > 0 && pixels[i] == pixels[i - 1]
+}
+print(String(data: try JSONSerialization.data(withJSONObject: result), encoding: .utf8)!)
+'''
+                decoded = subprocess.run(["xcrun", "swift", "-e", reader,
+                    *[str(directory / (name + ".png")) for name in captures]],
+                    text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+                require(decoded.returncode == 0, "Compact-motion PNG decoding failed: " + decoded.stderr[:1000])
+                observations = json.loads(decoded.stdout)
+                write_private(directory / "pixel-observations.json", json_bytes(observations))
+                by_name = {row["capture"]: row for row in observations}
+                require(not by_name["timer-reference"]["equalsMedia"], "Compact references contain identical content.")
+                for phase in ("dismiss", "restore"):
+                    intermediate = [row for row in observations if row["capture"].startswith(phase + "-")
+                        and not row["equalsMedia"] and not row["equalsTimer"] and not row["equalsPrevious"]]
+                    require(len(intermediate) >= 2, "Compact " + phase + " jumped without distinct intermediate content.")
+                require(all(by_name[name]["equalsTimer"] for name in captures if name.startswith("reduce-")),
+                        "Reduce Motion did not settle exact current content or disabling it resumed an old fade.")
+                require(by_name["rapid-settled"]["equalsMedia"], "Rapid compact reversals retained stale content.")
+                require(by_name["media-reference"]["artworkPixels"] > 0 and
+                    by_name["optout-immediate"]["artworkPixels"] == 0 and by_name["optout-settled"]["equalsTimer"],
+                    "Media opt-out retained outgoing artwork or failed to settle its replacement.")
+                require(by_name["instant-hud-settled"]["equalsPrevious"] and by_name["hud-expired"]["equalsTimer"],
+                        "Instant HUD overlapped outgoing content or expiry did not restore the timer.")
+            self.record("compact motion: same-size native crossfades, rapid reversal, reduced-motion cancellation, opt-out and instant HUD"
+                        if animated else "compact motion: current-content references with system Reduce Motion",
+                        animated=animated, captures=len(captures))
+        finally:
+            stop(child)
+
+    def media(self, pathological=False):
+        work, executable, environment = self.build_media_fixture("media-fixture")
         for extra, code in ((["--help"], 0), ([], 2), (["--state", "relative.json"], 2),
                             (["--state", str(work / "invalid.json"), "--metadata-duration", "nan"], 2),
                             (["--state", str(work / "invalid.json"), "--metadata-duration", "-1"], 2),
@@ -2838,13 +3020,13 @@ def main():
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
     parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
-    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "weather", "motion", "displays", "activities", "compact", "dismissal", "shape", "outline", "preferences", "timers", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "compact-motion", "weather", "motion", "displays", "activities", "compact", "dismissal", "shape", "outline", "preferences", "timers", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
         parser.error("--pathological-duration requires --media-fixture")
-    if args.only == "media" and not args.media_fixture:
-        parser.error("--only media requires --media-fixture")
+    if args.only in ("media", "compact-motion") and not args.media_fixture:
+        parser.error("--only " + args.only + " requires --media-fixture")
     if args.only == "weather" and not args.weather_service:
         parser.error("--only weather requires --weather-service")
     os.umask(0o077)
@@ -2870,6 +3052,7 @@ def main():
             groups.append(("shape", runtime.shape))
             groups.append(("outline", runtime.outline))
         if args.media_fixture and args.only != "storage":
+            groups.append(("compact-motion", runtime.compact_motion))
             groups.append(("media", lambda: runtime.media(args.pathological_duration)))
         if args.weather_service and args.only != "storage":
             groups.append(("weather", runtime.weather))
