@@ -162,6 +162,24 @@ private struct CoveExpandedSectionContent<Content: View>: View {
     }
 }
 
+/// Input and accessibility depend on lifecycle changes, not opacity samples.
+/// Keep their modifier body separate from the per-frame transition body.
+private struct CoveExpandedSectionInputGate: ViewModifier {
+    let identity: CoveExpandedSectionIdentity
+    @Environment(\.coveExpandedSection) private var context
+
+    func body(content: Content) -> some View {
+        let selected = identity == context.presentation.active
+        let retained = identity == context.presentation.outgoing && !context.presentation.settled
+        let permitted = (selected || retained) && context.permissions.permits(identity.section, outgoing: !selected)
+        let active = selected && context.expanded && permitted
+        content
+            .disabled(!active)
+            .allowsHitTesting(active)
+            .accessibilityHidden(!active)
+    }
+}
+
 private struct CoveExpandedSectionFade: AnimatableModifier {
     var opacity: Double
     let identity: CoveExpandedSectionIdentity
@@ -176,14 +194,11 @@ private struct CoveExpandedSectionFade: AnimatableModifier {
         let selected = identity == context.presentation.active
         let retained = identity == context.presentation.outgoing && !context.presentation.settled
         let permitted = (selected || retained) && context.permissions.permits(identity.section, outgoing: !selected)
-        let active = selected && context.expanded && permitted
         // SwiftUI can retain a rendered exit tree after its content is removed.
         // Fence that image at the transition itself as well as the live subtree.
         content.opacity(!permitted ? 0 : context.presentation.settled ? (selected ? 1 : 0) : opacity)
             .transaction { $0.animation = nil }
-            .disabled(!active)
-            .allowsHitTesting(active)
-            .accessibilityHidden(!active)
+            .modifier(CoveExpandedSectionInputGate(identity: identity))
     }
 }
 
