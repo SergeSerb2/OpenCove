@@ -46,6 +46,59 @@ final class SystemController: NSObject, ObservableObject {
     private var screensAwake = true
     private var systemAwake = true
     private var lastHUD: CoveHUD?
+    private var audioRefreshAcceptance: AudioRefreshAcceptance?
+    private var audioRefreshCapture: AudioRefreshEvidence?
+
+    enum AudioRefreshCaller: String, Encodable { case nativePicker, developmentAPI }
+
+    struct ReadEvidence: Encodable {
+        var count = 0
+        var milliseconds = 0.0
+    }
+
+    struct AudioRefreshEvidence: Encodable {
+        let caller: AudioRefreshCaller
+        let generation: Int
+        var milliseconds = 0.0
+        // Counts are domain-entry calls, not individual OS property reads.
+        var reads = Dictionary(uniqueKeysWithValues: ["audio", "audioOutputs", "brightness", "battery",
+            "bluetooth", "bluetoothRegistry", "focus", "lock"].map { ($0, ReadEvidence()) })
+        // Request-scoped attempted OS setter calls, including failed attempts.
+        let hardwareWritesBefore: Int
+        var hardwareWritesAfter = 0
+        var hardwareWriteDelta = 0
+        var audioReadErrors: [String] = []
+    }
+
+    private final class AudioRefreshAcceptance {
+        var hardwareWrites = 0
+        var samples: [AudioRefreshEvidence] = []
+    }
+
+    /// Only the opt-in development server opens this short capture window. No
+    /// clocks, counters or retained samples run outside an explicit acceptance.
+    func withAudioRefreshAcceptance(_ operation: @MainActor () async throws -> Void) async rethrows -> [AudioRefreshEvidence]? {
+        guard running, audioRefreshAcceptance == nil else { return nil }
+        let acceptance = AudioRefreshAcceptance()
+        let initialGeneration = generation
+        audioRefreshAcceptance = acceptance
+        defer { audioRefreshAcceptance = nil }
+        try await operation()
+        guard running, generation == initialGeneration else { return nil }
+        return acceptance.samples
+    }
+
+    private func beginReadEvidence(_ domain: String) -> TimeInterval? {
+        guard audioRefreshCapture != nil else { return nil }
+        audioRefreshCapture?.reads[domain, default: ReadEvidence()].count += 1
+        return ProcessInfo.processInfo.systemUptime
+    }
+
+    private func finishReadEvidence(_ domain: String, since start: TimeInterval?) {
+        guard let start else { return }
+        audioRefreshCapture?.reads[domain, default: ReadEvidence()].milliseconds +=
+            (ProcessInfo.processInfo.systemUptime - start) * 1_000
+    }
 
     deinit {
         refreshWork?.cancel()
@@ -119,8 +172,27 @@ final class SystemController: NSObject, ObservableObject {
     }
 
     /// Refresh audio readings and output choices without reading unrelated domains.
-    func refreshAudio() {
+    func refreshAudio(caller: AudioRefreshCaller = .nativePicker) {
         guard running else { return }
+        // The picker keeps its original entry path. Only an armed acceptance
+        // captures this synchronous call; later listener/fallback/HUD work is
+        // outside its interval. A reentrant read contributes to the outer call.
+        let capture = audioRefreshAcceptance != nil && audioRefreshCapture == nil
+        let start = capture ? ProcessInfo.processInfo.systemUptime : nil
+        if capture, let acceptance = audioRefreshAcceptance {
+            audioRefreshCapture = AudioRefreshEvidence(caller: caller, generation: generation,
+                                                       hardwareWritesBefore: acceptance.hardwareWrites)
+        }
+        defer {
+            if let start, var evidence = audioRefreshCapture, let acceptance = audioRefreshAcceptance {
+                evidence.milliseconds = (ProcessInfo.processInfo.systemUptime - start) * 1_000
+                evidence.hardwareWritesAfter = acceptance.hardwareWrites
+                evidence.hardwareWriteDelta = evidence.hardwareWritesAfter - evidence.hardwareWritesBefore
+                evidence.audioReadErrors = ["audioDevicesRead", "audioRead"].compactMap { errors[$0] }
+                acceptance.samples.append(evidence)
+                audioRefreshCapture = nil
+            }
+        }
         read(parts: .audio, emitHUD: true)
     }
 
@@ -149,6 +221,7 @@ final class SystemController: NSObject, ObservableObject {
         }
         var property = address(kAudioHardwarePropertyDefaultOutputDevice)
         var device = AudioObjectID(id)
+        audioRefreshAcceptance?.hardwareWrites += 1
         let result = AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &property, 0, nil,
                                                UInt32(MemoryLayout<AudioObjectID>.size), &device)
         let outcome = finishOperation("audioRoute", result == noErr ? nil : "Could not select audio output: \(statusDescription(result)).")
@@ -273,6 +346,7 @@ final class SystemController: NSObject, ObservableObject {
         for (index, varAddress) in addresses.enumerated() {
             var address = varAddress
             var scalar = addresses.count > 1 && maximum > 0 ? level * current[index] / maximum : level
+            audioRefreshAcceptance?.hardwareWrites += 1
             let result = AudioObjectSetPropertyData(target, &address, 0, nil, UInt32(MemoryLayout<Float32>.size), &scalar)
             if result != noErr { failures.append(statusDescription(result)) }
         }
@@ -305,6 +379,7 @@ final class SystemController: NSObject, ObservableObject {
         guard value.isFinite, let display = brightnessDisplay, let services = displayServices, state.canSetBrightness else {
             return rejectOperation("brightnessControl", "No active display exposes brightness control. External DDC displays are not supported.")
         }
+        audioRefreshAcceptance?.hardwareWrites += 1
         let result = services.set(display, Float(min(1, max(0, value))))
         let outcome = finishOperation("brightnessControl", result == 0 ? nil : "DisplayServices could not set brightness (\(result)).")
         read(parts: .brightness, emitHUD: true)
@@ -491,6 +566,8 @@ final class SystemController: NSObject, ObservableObject {
     }
 
     private func readOutputDevices(into next: inout SystemState) {
+        let start = beginReadEvidence("audioOutputs")
+        defer { finishReadEvidence("audioOutputs", since: start) }
         let system = AudioObjectID(kAudioObjectSystemObject)
         var property = address(kAudioHardwarePropertyDevices)
         var size: UInt32 = 0
@@ -585,12 +662,15 @@ final class SystemController: NSObject, ObservableObject {
         return addresses.compactMap { valueAddress in
             var property = valueAddress
             var value: UInt32 = muted ? 1 : 0
+            audioRefreshAcceptance?.hardwareWrites += 1
             let result = AudioObjectSetPropertyData(audioDevice, &property, 0, nil, UInt32(MemoryLayout<UInt32>.size), &value)
             return result == noErr ? nil : statusDescription(result)
         }
     }
 
     private func readAudio(into next: inout SystemState) {
+        let start = beginReadEvidence("audio")
+        defer { finishReadEvidence("audio", since: start) }
         readOutputDevices(into: &next)
         var property = address(kAudioHardwarePropertyDefaultOutputDevice)
         var device = AudioObjectID(kAudioObjectUnknown)
@@ -746,6 +826,8 @@ final class SystemController: NSObject, ObservableObject {
     }
 
     private func readBattery(into next: inout SystemState) {
+        let start = beginReadEvidence("battery")
+        defer { finishReadEvidence("battery", since: start) }
         guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let list = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] else {
             next.batteryAvailable = false
@@ -780,6 +862,8 @@ final class SystemController: NSObject, ObservableObject {
     // MARK: DisplayServices (optional, dynamically loaded)
 
     private func readBrightness(into next: inout SystemState) {
+        let start = beginReadEvidence("brightness")
+        defer { finishReadEvidence("brightness", since: start) }
         next.brightnessAvailable = false
         next.canSetBrightness = false
         next.brightnessDisplayID = nil
@@ -859,6 +943,8 @@ final class SystemController: NSObject, ObservableObject {
     // MARK: Bluetooth (authorized passive connections and driver battery reports)
 
     private func readBluetooth(into next: inout SystemState) {
+        let start = beginReadEvidence("bluetooth")
+        defer { finishReadEvidence("bluetooth", since: start) }
         let authorization = CBManager.authorization
         switch authorization {
         case .allowedAlways: next.bluetoothAuthorization = "authorized"
@@ -934,6 +1020,10 @@ final class SystemController: NSObject, ObservableObject {
         // a user's preferences. An exact connected address is required; names
         // and model names alone cannot identify an accessory safely.
         for serviceClass in ["AppleDeviceManagementHIDEventService", "IOBluetoothDevice", "IOHIDDevice"] {
+            // One pass per service class, only after the existing authorization,
+            // private-integration and connected-address guards have passed.
+            let start = beginReadEvidence("bluetoothRegistry")
+            defer { finishReadEvidence("bluetoothRegistry", since: start) }
             guard let matching = IOServiceMatching(serviceClass) else { continue }
             var iterator: io_iterator_t = 0
             guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == KERN_SUCCESS else {
@@ -1024,6 +1114,8 @@ final class SystemController: NSObject, ObservableObject {
     // MARK: Public read-only Focus status
 
     private func readFocus(into next: inout SystemState) {
+        let start = beginReadEvidence("focus")
+        defer { finishReadEvidence("focus", since: start) }
         let center = INFocusStatusCenter.default
         next.focusAvailable = false
         switch center.authorizationStatus {
@@ -1082,6 +1174,8 @@ final class SystemController: NSObject, ObservableObject {
     }
 
     private func readLock(into next: inout SystemState) {
+        let start = beginReadEvidence("lock")
+        defer { finishReadEvidence("lock", since: start) }
         guard privateAPIs else {
             next.lockStateKnown = false
             next.capabilityMessages["lock"] = "Lock state monitoring requires the private integrations setting."

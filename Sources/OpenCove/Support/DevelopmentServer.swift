@@ -257,6 +257,22 @@ final class DevelopmentServer {
                 catch { throw ControlError.invalid("The command body must be a JSON object.") }
                 guard let object = value as? [String: Any], let action = object["action"] as? String,
                       !action.isEmpty, action.utf8.count <= 128 else { throw ControlError.invalid("A command action is required.") }
+                if action == "system.refreshAudio" {
+                    let caller = object["caller"] as? String ?? "developmentAPI"
+                    guard object["caller"] == nil || object["caller"] is String,
+                          ["developmentAPI", "nativePicker"].contains(caller) else {
+                        throw ControlError.invalid("Use developmentAPI or nativePicker for the audio refresh caller.")
+                    }
+                    connections[ObjectIdentifier(connection)]?.renderTask = Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        do {
+                            self.respond(connection, status: 200, json: try await self.acceptAudioRefresh(mountPicker: caller == "nativePicker"))
+                        } catch is CancellationError { }
+                        catch let failure as ControlError { self.fail(connection, failure.status, failure.localizedDescription) }
+                        catch { self.fail(connection, 500, "Audio refresh acceptance could not return evidence.") }
+                    }
+                    return
+                }
                 try dispatch(action, object)
                 var state = try snapshot()
                 state["commandStatus"] = "submitted"
@@ -269,6 +285,25 @@ final class DevelopmentServer {
 
     private func fail(_ connection: NWConnection, _ status: Int, _ message: String) {
         respond(connection, status: status, json: ["error": message])
+    }
+
+    private func acceptAudioRefresh(mountPicker: Bool) async throws -> [String: Any] {
+        // Mount the actual picker through the existing unordered native renderer.
+        // Its onAppear alone uses the default nativePicker caller; the API path
+        // names itself explicitly and invokes the same refreshAudio entry.
+        guard let evidence = try await store.system.withAudioRefreshAcceptance({
+            if mountPicker { _ = try await self.render(surface: "audio-output-picker") }
+            else { self.store.system.refreshAudio(caller: .developmentAPI) }
+        }) else {
+            throw ControlError.rejected("Audio acceptance requires running system monitoring, no other acceptance, and an unchanged monitoring generation.")
+        }
+        guard !evidence.isEmpty else {
+            throw ControlError.rejected("No synchronous audio refresh was observed. The native picker may not have appeared.")
+        }
+        // This reports observations, including real read errors and empty output
+        // lists. It does not infer acceptance from an HTTP 200 or cached state.
+        return ["commandStatus": "observed", "audioRefreshAcceptance": try encoded(evidence),
+                "system": try encoded(store.system.state)]
     }
 
     private func dispatch(_ action: String, _ values: [String: Any]) throws {
@@ -600,6 +635,9 @@ final class DevelopmentServer {
         let content: AnyView
         let size: CGSize
         switch surface {
+        case "audio-output-picker":
+            size = CGSize(width: 320, height: 60)
+            content = AnyView(AudioOutputPicker(system: store.system).padding(12).environment(\.colorScheme, .dark))
         case "notch":
             size = NotchView.desiredSize(store: store)
             content = AnyView(NotchView(store: store).environment(\.colorScheme, .dark))
