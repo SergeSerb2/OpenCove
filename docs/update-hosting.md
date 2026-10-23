@@ -77,8 +77,8 @@ agreement if the feed changes during the request; retry a generic `503` if it ra
 
 All Worker responses set a strict CSP, `nosniff`, frame denial, no-referrer,
 restricted browser permissions, and HSTS for this host. The HTML has no scripts,
-styles, forms, or remote assets. Request values, R2 metadata, and release JSON
-are never interpolated into HTML. No credentials or signing keys belong in the
+styles, forms, or remote assets. Request values and R2 metadata are never interpolated into HTML. The download
+link uses only escaped, validated fields from the bounded release descriptor. No credentials or signing keys belong in the
 Worker, bucket, feed, source tree, command arguments, or logs.
 
 ## Pinned command and private authentication
