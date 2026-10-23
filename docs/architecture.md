@@ -42,6 +42,7 @@ Optional paused-media hiding affects compact presentation only. The store observ
 
 - `MediaController`: real media metadata, command capabilities, transport, artwork, optional Apple Events fallback, and the isolated system MediaRemote adapter. Unsupported actions stay unavailable.
 - `SystemController`: CoreAudio outputs, supported volume/mute, battery, Bluetooth, Focus, optional private brightness, and conservative session/lock knowledge.
+  The output picker's appearance refresh reads audio only. It still enumerates current outputs and reads the real route, UID, levels and capabilities. Explicit route/volume/mute writes retain their fresh identity and capability checks. An opt-in development acceptance window can record synchronous domain entries and attempted controller hardware writes; outside that window it retains no samples or timing work.
 - `ActivityController`: EventKit reads, calendar filters and alerts, bookmark-backed file references, a persistent timer, and app notifications. It never edits calendar events.
 - `WeatherController`: explicit location selection, bounded Open-Meteo refreshes, stale-state handling, and cancellation on opt-out.
 

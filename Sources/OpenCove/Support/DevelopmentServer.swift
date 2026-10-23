@@ -288,11 +288,11 @@ final class DevelopmentServer {
     }
 
     private func acceptAudioRefresh(mountPicker: Bool) async throws -> [String: Any] {
-        // Mount the actual picker through the existing unordered native renderer.
+        // Mount the actual Activities settings through the unordered renderer.
         // Its onAppear alone uses the default nativePicker caller; the API path
         // names itself explicitly and invokes the same refreshAudio entry.
         guard let evidence = try await store.system.withAudioRefreshAcceptance({
-            if mountPicker { _ = try await self.render(surface: "audio-output-picker") }
+            if mountPicker { _ = try await self.render(surface: "settings-activities") }
             else { self.store.system.refreshAudio(caller: .developmentAPI) }
         }) else {
             throw ControlError.rejected("Audio acceptance requires running system monitoring, no other acceptance, and an unchanged monitoring generation.")
@@ -635,9 +635,6 @@ final class DevelopmentServer {
         let content: AnyView
         let size: CGSize
         switch surface {
-        case "audio-output-picker":
-            size = CGSize(width: 320, height: 60)
-            content = AnyView(AudioOutputPicker(system: store.system).padding(12).environment(\.colorScheme, .dark))
         case "notch":
             size = NotchView.desiredSize(store: store)
             content = AnyView(NotchView(store: store).environment(\.colorScheme, .dark))
