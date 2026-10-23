@@ -3153,8 +3153,10 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 position(17)
                 old_item = source(client)["media"]["contentItemIdentifier"]
                 client.command("media.next")
-                changed = wait_for(client.request, lambda s: s["media"].get("contentItemIdentifier") != old_item
-                    and s["media"].get("seekTarget") != target, "An actual new item did not replace the seek target.")
+                changed = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("supportsSeek") and bool(s["media"].get("contentItemIdentifier"))
+                    and bool(s["media"].get("seekTarget")) and s["media"]["contentItemIdentifier"] != old_item
+                    and s["media"]["seekTarget"] != target, "An actual new item did not replace the seek target.")
                 for key in ("sourceBundleIdentifier", "title", "artist", "album", "duration"):
                     require(changed["media"][key] == first["media"][key],
                             "Bound-seek regression must use identical source/text/duration metadata.")
@@ -3171,7 +3173,9 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 write_private(directory / "bound-lock.png", client.request("/render?surface=lock"))
                 source(client)
                 client.command("media.previous")
-                returned = wait_for(client.request, lambda s: s["media"].get("seekTarget") not in (target, current),
+                returned = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("supportsSeek") and bool(s["media"].get("seekTarget"))
+                    and s["media"]["seekTarget"] not in (target, current),
                                     "Returning to an earlier item reused a retired seek target.")
                 require(returned["media"]["title"] == first["media"]["title"], "Own identical metadata changed unexpectedly.")
                 source(client)
