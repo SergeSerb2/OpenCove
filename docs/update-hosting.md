@@ -12,6 +12,24 @@ The Sparkle feed URL is:
 https://opencove.sergeserbinenko.com/appcast.xml
 ```
 
+The host is deployed. The published `0.1.0-beta.2` universal ZIP, source ZIP,
+release metadata and checksums use immutable `/releases/0.1.0-beta.2/` paths.
+The home page and `/download` expose the verified app archive. See the
+[published verification record](updates.md#published-beta-verification--october-23-2026)
+for its hash and the tested Sparkle installation scope.
+
+The local HTTP/R2 check covered 111 cases: 110 passed, none failed, and one
+remained inconclusive. Workerd normalizes a literal backslash before the Worker
+can inspect it; that alias returned only the exact allowed public fixture.
+Encoded separators and traversal checks still passed. Do not describe this as
+rejection of every raw URL spelling.
+
+Cloudflare Browser Integrity Check remains enabled for the zone. A default
+Python urllib user agent received error 1010; the actual Sparkle user agent,
+curl and the collaborative browser reached the deployed host. Use an honest
+application user agent for an HTTP release verifier. No zone security rule was
+changed to make the checks pass.
+
 The Worker has no dependencies. It is plain ESM JavaScript. Use **Wrangler
 4.152.0**, the current stable npm release checked on 2026-10-23, with Node.js
 22 or later. Use an exact temporary package runner; this Swift repository does

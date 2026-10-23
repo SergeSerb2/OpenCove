@@ -6,7 +6,7 @@
 
 An independent, MIT-licensed macOS notch app, written in SwiftUI and AppKit.
 
-**Early beta (`0.1.0-beta.1`).** Real app/API/CLI integration checks are provided in [the quality guide](docs/quality.md). This is not a stable release or a claim of complete hardware, macOS, or player compatibility. No notarized public binary has been verified. See [compatibility and open gaps](docs/compatibility.md).
+**Early beta (`0.1.0-beta.2`).** [Download OpenCove for Apple Silicon and Intel](https://opencove.sergeserbinenko.com/download). The universal archive is Developer ID signed and notarized. Real app/API/CLI integration checks are provided in [the quality guide](docs/quality.md). This is not a stable release or a claim of complete hardware, macOS, or player compatibility. See [compatibility and open gaps](docs/compatibility.md).
 
 ## What it does
 
@@ -39,11 +39,11 @@ Quit a running copy before rebuilding its bundle, or select an isolated output d
 
 Settings → General → Displays chooses Built-in, Main, All, or an individual connected display. Individual choices use the display's saved system identity. If it is unavailable, the app keeps that choice and uses the main available display temporarily. All overrides the saved choice; choosing Built-in or Main clears it. The same choice applies to optional lock widgets. Mixed-display and secure-screen behavior still need the checks in [compatibility](docs/compatibility.md).
 
-The expanded layout sets the startup section and the combined Media & Calendar presentation. A manual section choice stays selected across collapse/reopen and previews. Changing the layout applies its default once. Disabling the selected section falls back to the configured default or the first enabled section. If every section is off, the panel shows a Settings action.
+The expanded layout sets the startup section and the combined Media & Calendar presentation. Opening the idle clock restores that default. Ordinary expansion and previews retain a manual section choice. Changing the layout applies its default once. Disabling the selected section falls back to the configured default or the first enabled section. If every section is off, the panel shows a Settings action.
 
 Appearance → Simulate a notch uses an attached panel with center clearance from Width and Height. The real camera housing always sets the minimum; simulation does not change reported hardware geometry. With simulation off, a display without a notch uses the floating pill. Hide when idle still applies to the simulated panel.
 
-For an optimized local app, supply the real public feed/key configuration in [updates](docs/updates.md), then run `./script/build_and_run.sh --release`. The resulting bundle is `dist/release/OpenCove.app`. These builds are **ad-hoc signed**, not Developer ID signed or notarized; macOS may block a downloaded copy. Do not treat ad-hoc archives as trusted distribution builds. The intended download/update host is `opencove.sergeserbinenko.com`, pending owned-domain deployment confirmation, with checksums and a stated signing status. No feed or download is claimed published.
+For an optimized local app, supply the public feed/key configuration in [updates](docs/updates.md), then run `./script/build_and_run.sh --release`. The resulting bundle is `dist/release/OpenCove.app`. These local builds are **ad-hoc signed**, not Developer ID signed or notarized; macOS may block a downloaded copy. The separate [published download](https://opencove.sergeserbinenko.com/) includes its checksum. In that release, use **Check for Updates…** in the menu or Settings → About. Sparkle asks for permission before automatic checks; automatic downloads can be enabled in Settings.
 
 [Build instructions](docs/building.md) cover source ZIPs without Git, architecture selection, isolated paths, and real app controls. [Quality checks](docs/quality.md) define the real integration workflow and manual gates. [Release instructions](docs/releasing.md) cover manual packaging and the opt-in Developer ID/notarization path.
 
@@ -55,7 +55,7 @@ Private system integrations are enabled by default and can be disabled in Settin
 
 Settings, file references, timers, and selected locations are stored locally. Normal launches have no HTTP control listener. An explicit development launch can enable a token-protected loopback API that can read app state and change real settings. Keep its token private.
 
-Weather sends selected coordinates to Open-Meteo. Optional Maps routing sends the selected origin, event destination, and arrival time to Apple. Spotify fallback artwork can contact Spotify's image CDN. Links and file sharing use the chosen app or service. There is no app-operated account, analytics, update, or telemetry backend. See [the full permission, data, and network disclosure](docs/privacy.md).
+Weather sends selected coordinates to Open-Meteo. Optional Maps routing sends the selected origin, event destination, and arrival time to Apple. Spotify fallback artwork can contact Spotify's image CDN. Release update checks contact the Cloudflare-hosted OpenCove feed and downloads. Links and file sharing use the chosen app or service. There is no app-operated account, analytics, or telemetry service. See [the full permission, data, and network disclosure](docs/privacy.md).
 
 ## Limits and project links
 

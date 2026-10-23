@@ -22,8 +22,9 @@ Run the [real integration workflow](quality.md), inspect its native renders, and
 Release builds include the native Sparkle updater. First supply the real public
 `OPENCOVE_UPDATE_FEED_URL` and `OPENCOVE_UPDATE_PUBLIC_ED_KEY` configuration in
 [the update guide](updates.md). Missing configuration stops before compilation.
-The intended feed is on OpenCove's owned Cloudflare domain, pending deployment
-confirmation. No feed or release is published by the packaging command.
+The deployed feed is `https://opencove.sergeserbinenko.com/appcast.xml`.
+No feed or release is published by the packaging command. Publication uses the
+separate [update host procedure](update-hosting.md).
 
 ```sh
 python3 script/package_release.py package --arch arm64 --signing adhoc
@@ -38,7 +39,7 @@ The default output is `dist/releases/OpenCove-0.1.0-beta.1-arm64-adhoc/`:
 
 Use `--output-dir` for a different fresh directory. Existing output directories fail rather than silently replacing a prior release. Packaging verifies the completed ZIPs after extraction, framework symlinks, executable modes, source hashes, nested signatures, architecture, and checksums. It never installs or launches the app. Metadata includes the public Sparkle feed/key policy. The source manifest records the exact SDK identity and checksum.
 
-An ad-hoc signature is a local code-integrity signature. It is not an Apple distribution identity or notarization, and macOS can block a downloaded archive. Label it clearly if publishing it for beta use. Source builds remain the current primary installation path.
+An ad-hoc signature is a local code-integrity signature. It is not an Apple distribution identity or notarization, and macOS can block a downloaded archive. Label it clearly if publishing it for beta use. The public beta download uses the separate Developer ID/notarization path below.
 
 ## Opt-in Developer ID and notarization
 
