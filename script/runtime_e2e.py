@@ -1179,6 +1179,172 @@ print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding:
             self.backup(damaged, "preferences.recovery.*.json", raw)
         self.record("indicators: dormant saved live choices, repeated saves/restart, legacy default and malformed opt-out recovery")
 
+    def hud_timing(self):
+        """Saved per-category timing through the real API and mounted panel."""
+        kinds = ("volume", "brightness", "battery", "bluetooth", "focus", "notification", "lock")
+        directory = self.directory("hud-timing", preferences={**SAFE, "enableBattery": False,
+            "enableBluetooth": False, "enableFocus": False, "enableNotifications": True,
+            "enableVolumeHUD": True, "hideWhenIdle": False, "hideInFullscreen": False,
+            "expandOnHover": False, "reduceMotion": False, "notchWidth": 200, "notchHeight": 32,
+            "hudDuration": 3, "hudSpeed": "smooth"})
+        frames = []
+        def sample(client, seconds):
+            end = time.monotonic() + seconds
+            while time.monotonic() < end:
+                s = client.request()
+                frames.append({"time": time.monotonic(), "hud": s["hud"]["kind"] if s["hud"] else None,
+                    "remaining": s["hudRemaining"], "panels": [r for r in s["nativeWindows"] if r["title"] == "OpenCove"]})
+                time.sleep(0.02)
+        with self.app(directory) as client:
+            initial = client.request()
+            require(all(initial["preferences"][k + "HUDDuration"] == 0 and
+                initial["preferences"][k + "HUDSpeed"] == "global" for k in kinds),
+                "Legacy preferences did not inherit default overlay timing.")
+            client.command("timer.start", seconds=30)
+            client.command("timer.pause")
+            client.command("selectTab", tab="files")
+            client.command("collapse")
+            before = client.request()
+            require(before["hud"] is None, "Unexpected real event prevents isolated overlay verification.")
+            client.command("hud.preview", kind="unknown", expected=400)
+            client.command("hud.preview", kind="battery", expected=409)
+            require(client.request()["preferences"]["enableBattery"] is False,
+                    "Preview enabled a disabled integration.")
+            client.command("expand")
+            client.command("hud.preview", kind="volume", expected=409)
+            client.command("collapse")
+            preview = client.command("hud.preview", kind="volume")
+            require(preview["hud"]["origin"] == "preview" and "preview" in preview["hud"]["title"]
+                and 2.5 < preview["hudRemaining"] <= 3,
+                "Labelled volume preview did not inherit the default duration.")
+            if preview["system"]["volumeAvailable"]:
+                require(preview["hud"].get("value") == preview["system"]["volume"],
+                        "Volume preview substituted a value for the cached actual reading.")
+            else:
+                require(preview["hud"].get("value") is None and "unavailable" in preview["hud"]["subtitle"],
+                        "Unavailable volume preview showed a made-up reading.")
+            client.command("preferences", values={"hudDuration": 0.5})
+            time.sleep(0.65)
+            require(client.request()["hud"] is not None, "Saving timing restarted the current captured deadline.")
+            client.command("preferences", values={"volumeHUDDuration": 1.5, "volumeHUDSpeed": "fast",
+                "notificationHUDDuration": 0.5, "notificationHUDSpeed": "instant"})
+            expected = client.request()["preferences"]
+            for invalid in ({"volumeHUDDuration": True}, {"volumeHUDDuration": -1},
+                            {"volumeHUDDuration": 0.2}, {"volumeHUDDuration": 11},
+                            {"notificationHUDSpeed": "slow"}, {"focusHUDSpeed": 1}):
+                client.command("preferences", values=invalid, expected=400)
+                require(client.request()["preferences"] == expected, "Rejected overlay timing changed preferences.")
+            client.command("hud.preview", kind="notification")
+            note = client.request()
+            require(note["hud"]["subtitle"] == "Preview only · no system notification"
+                and note["notifications"] == before["notifications"],
+                "Preview posted an activity instead of a labelled presentation.")
+            sample(client, 0.16)
+            write_private(directory / "notification-preview.png", client.request("/render?surface=live-notch"))
+            client.command("hud.preview", kind="volume")
+            sample(client, 0.55)
+            current = client.request()
+            require(current["hud"]["kind"] == "volume" and 0.6 < current["hudRemaining"] < 1.3,
+                    "An old notification deadline dismissed its replacement.")
+            renewed = client.command("hud.preview", kind="volume")
+            require(renewed["hudRemaining"] > current["hudRemaining"] + 0.25,
+                    "Repeated preview failed to restart the captured duration.")
+            time.sleep(1.1)
+            require(client.request()["hud"] is not None, "Old same-category deadline dismissed a repeated overlay.")
+            write_private(directory / "volume-preview.png", client.request("/render?surface=live-notch"))
+            finished = wait_for(client.request, lambda s: s["hud"] is None, "Overlay failed to retire.", 4)
+            require(finished["hudRemaining"] is None and finished["timer"] == before["timer"]
+                and finished["files"] == before["files"] and finished["tab"] == before["tab"],
+                "Temporary overlay changed the underlying paused timer, files or selection.")
+            time.sleep(0.3)
+            client.command("preferences", values={"reduceMotion": True})
+            client.command("hud.preview", kind="volume")
+            sample(client, 0.2)
+            write_private(directory / "reduced-preview.png", client.request("/render?surface=live-notch"))
+            write_private(directory / "settings.png", client.request("/render?surface=settings-activities"))
+            client.command("preferences", values={"enableVolumeHUD": False})
+            require(client.request()["hud"] is None, "Disabling an overlay retained its preview.")
+            client.command("hud.preview", kind="volume", expected=409)
+            client.command("timer.cancel")
+        with self.app(directory) as client:
+            p = client.request()["preferences"]
+            require(p["volumeHUDDuration"] == 1.5 and p["volumeHUDSpeed"] == "fast"
+                and p["notificationHUDDuration"] == 0.5 and p["notificationHUDSpeed"] == "instant"
+                and not p["enableVolumeHUD"] and not p["enablePrivateAPIs"],
+                "Overlay timing or independent consent changed across restart.")
+            client.command("preferences", values={"volumeHUDDuration": 0, "volumeHUDSpeed": "global"})
+        write_private(directory / "native-frames.json", json_bytes(frames))
+        self.record("overlay timing: legacy defaults, strict ranges, read-only previews, repeated/replaced deadlines, native captures and restart")
+        replacement = self.directory("hud-replacement", preferences={**SAFE, "enableNotifications": True,
+            "enableBattery": False, "enableBluetooth": False, "enableFocus": False,
+            "hideWhenIdle": False, "hideInFullscreen": False, "expandOnHover": False,
+            "reduceMotion": False, "notchWidth": 200, "notchHeight": 32, "animationSpeed": 0.25,
+            "volumeHUDDuration": 3, "volumeHUDSpeed": "smooth",
+            "notificationHUDDuration": 0.5, "notificationHUDSpeed": "instant"})
+        def panels(s):
+            return sorted([r for r in s["nativeWindows"] if r["title"] == "OpenCove"],
+                          key=lambda r: r["displayID"])
+        with self.app(replacement) as client:
+            time.sleep(0.3)
+            client.command("hud.preview", kind="notification")
+            time.sleep(0.1)
+            target = panels(client.request())
+            wait_for(client.request, lambda s: s["hud"] is None, "Calibration overlay did not retire.")
+            time.sleep(1)
+            client.command("hud.preview", kind="volume")
+            time.sleep(0.08)
+            during = client.request()
+            client.command("hud.preview", kind="notification")
+            time.sleep(0.05)
+            immediate = client.request()
+            require(len(panels(immediate)) == len(target) > 0 and all(
+                abs(a[key] - b[key]) <= 1 for a, b in zip(panels(immediate), target)
+                for key in ("width", "height", "x", "y")),
+                "An instant replacement retained the previous category's native frame animation.")
+            write_private(replacement / "native-frames.json", json_bytes({"target": target,
+                "during": panels(during), "replacement": panels(immediate)}))
+            write_private(replacement / "instant-replacement.png", client.request("/render?surface=live-notch"))
+            policies = []
+            if not during["systemReduceMotion"]:
+                for speed in ("smooth", "fast"):
+                    client.command("preferences", values={"enableVolumeHUD": False,
+                        "enableNotifications": False, "reduceMotion": True})
+                    time.sleep(0.15)
+                    client.command("preferences", values={"enableVolumeHUD": True,
+                        "enableNotifications": True, "reduceMotion": False,
+                        "notificationHUDSpeed": speed, "notificationHUDDuration": 3})
+                    time.sleep(0.15)
+                    client.command("hud.preview", kind="volume")
+                    time.sleep(0.08)
+                    first = panels(client.request())
+                    client.command("hud.preview", kind="notification")
+                    time.sleep(0.2)
+                    later = panels(client.request())
+                    gains = [(b["width"] - a["width"]) / (t["width"] - a["width"])
+                        for a, b, t in zip(first, later, target) if t["width"] - a["width"] > 20]
+                    policies.append({"speed": speed, "before": first, "after": later, "gains": gains})
+                write_private(replacement / "positive-policies.json", json_bytes(policies))
+                require(all(row["gains"] for row in policies),
+                        "Native motion samples were too late to compare positive overlay policies.")
+                require(min(policies[1]["gains"]) > max(policies[0]["gains"]) + 0.04,
+                        "Fast category replacement retained the prior Smooth native motion.")
+        self.record("overlay replacement: instant category settles an interrupted smooth native transition",
+                    observedAnimation=not during["systemReduceMotion"])
+        self.record("overlay replacement: actual Fast native motion advances ahead of unchanged Smooth policy",
+                    observedGeometry=bool(policies and all(row["gains"] for row in policies)))
+        raw = json_bytes({**SAFE, "volumeHUDDuration": "bad", "brightnessHUDSpeed": "bad",
+            "notificationHUDDuration": 20, "focusHUDDuration": True, "hudDuration": 4})
+        damaged = self.directory("hud-timing-recovery", raw=raw)
+        with self.app(damaged) as client:
+            p = client.request()["preferences"]
+            require(p["volumeHUDDuration"] == 0 and p["brightnessHUDSpeed"] == "global"
+                and p["notificationHUDDuration"] == 10 and p["focusHUDDuration"] == 0
+                and p["hudDuration"] == 4 and not p["enablePrivateAPIs"],
+                "Damaged per-category fields did not repair independently.")
+            client.command("preferences", values={"hudDuration": 3})
+            self.backup(damaged, "preferences.recovery.*.json", raw)
+        self.record("overlay recovery: exact private original backup and individual timing repair without consent")
+
     def timer_presentation(self):
         """Real deadline, native-layer progress and no hidden countdown publications."""
         directory = self.directory("timer-presentation", preferences={**SAFE, "enableBattery": False,
@@ -2426,7 +2592,11 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                                   and bool(p.get("info", {}).get("kMRMediaRemoteNowPlayingInfoContentItemIdentifier")),
                                   "Own native item did not settle before the rate transition.")
                 old_item = native["info"]["kMRMediaRemoteNowPlayingInfoContentItemIdentifier"]
-                old_target = client.request()["media"]
+                old_target = wait_for(client.request, lambda s:
+                    s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("contentItemIdentifier") == old_item
+                    and s["media"].get("supportedPlaybackSpeeds") == [0.75, 1, 1.25, 1.5, 2],
+                    "App and native item did not agree before the rate transition.", 15)["media"]
                 owned_rate()
                 client.command("media.next")
                 # A successful command means submission. Native source/item
@@ -2436,9 +2606,21 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 wait_for(fixture_rate, lambda s: s["track"] == 2, "Own rate fixture did not change track.")
                 wait_for(client.request, lambda s: s["media"].get("supportedPlaybackSpeeds") == [1, 2],
                          "New item's supported rates did not replace old capabilities.")
-                wait_for(lambda: read_adapter("--read")[1], lambda p: p.get("bundleID") == FIXTURE_ID and
+                new_native = wait_for(lambda: read_adapter("--read")[1], lambda p: p.get("bundleID") == FIXTURE_ID and
                          p.get("info", {}).get("kMRMediaRemoteNowPlayingInfoContentItemIdentifier") not in (None, "", old_item),
                          "Actual new native item did not publish before stale-rate check.", 15)
+                # Supported commands can refresh before the watcher's cached
+                # item. HTTP 200 means submission, so test HTTP stale rejection
+                # only after this app has actually adopted the new native item.
+                current = wait_for(client.request, lambda s:
+                    s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("contentItemIdentifier") == new_native["info"]["kMRMediaRemoteNowPlayingInfoContentItemIdentifier"]
+                    and s["media"].get("supportedPlaybackSpeeds") == [1, 2],
+                    "App did not adopt the actual changed native item before stale-rate check.", 15)
+                write_private(directory / "rate-identity-observation.json", json_bytes({
+                    "oldAppMatchedNative": old_target["contentItemIdentifier"] == old_item,
+                    "newAppMatchedNative": current["media"]["contentItemIdentifier"] == new_native["info"]["kMRMediaRemoteNowPlayingInfoContentItemIdentifier"],
+                    "appItemChanged": current["media"]["contentItemIdentifier"] != old_target["contentItemIdentifier"]}))
                 rate(1.5, expected=400)
                 rate(2, expected=409, target=old_target)
                 owned_rate()
@@ -2568,11 +2750,14 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 "enablePrivateAPIs": True, "hideWhenIdle": False, "expandOnHover": False,
                 "hideInFullscreen": False, "reduceMotion": True})
             with self.app(directory) as client:
-                def owned_live():
+                def live_state():
                     require(child.poll() is None, "Own live fixture stopped; no command sent.")
                     own = json.loads(fixture_state.read_bytes())
                     require(own["pid"] == child.pid, "Own live fixture PID changed.")
-                    state = client.request()
+                    return client.request()
+
+                def owned_live():
+                    state = live_state()
                     require(state["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
                             "Live app source changed; no command sent.")
                     return state
@@ -2596,7 +2781,8 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 client.command("media.next")
                 wait_for(lambda: json.loads(fixture_state.read_bytes()), lambda s: s["track"] == 2,
                          "Own live-metadata fixture did not advance.")
-                normal = wait_for(owned_live, lambda s: s["media"].get("isLive") is False and
+                normal = wait_for(live_state, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("isLive") is False and
                     s["media"]["duration"] > 0 and s["media"]["title"] == "OpenCove verification 2",
                     "Live status or duration did not follow the actual next item.")
                 require(normal["media"]["supportsSeek"], "A real timed seekable item did not restore seek support.")
@@ -2611,7 +2797,8 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
                         "Native timed source changed; no previous command sent.")
                 client.command("media.previous")
-                returned = wait_for(owned_live, lambda s: s["media"].get("isLive") is True and
+                returned = wait_for(live_state, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("isLive") is True and
                     s["media"]["duration"] == 0 and s["media"]["title"] == "OpenCove verification 1",
                     "Returning to the live item did not restore live/unavailable-timing state.")
                 require(not returned["media"]["supportsSeek"], "Returning live item retained timed seek support.")
@@ -2739,16 +2926,41 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
             directory = self.directory("media-song-peek", preferences={**SAFE, "enableMedia": True,
                 "enablePrivateAPIs": True, "hideWhenIdle": False, "expandOnHover": False,
                 "hideInFullscreen": False, "reduceMotion": True, "enableNotifications": True,
+                "enableVolumeHUD": False, "enableBrightnessHUD": False, "enableBattery": False,
+                "enableBluetooth": False, "enableFocus": False,
                 "hudDuration": 0.5, "compactActivity": "timer"})
             observations = []
+            source_transitions = []
 
-            def own_peek(client):
+            def peek_state(client):
                 require(child.poll() is None and json.loads(fixture_state.read_bytes())["pid"] == child.pid,
                         "Own peek fixture stopped or changed PID; no command sent.")
-                state = client.request()
+                value = client.request()
+                own = value["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                row = {"ownSource": own, "missingSource": not bool(value["media"].get("sourceBundleIdentifier")),
+                    "item": value["media"].get("contentItemIdentifier") if own else None,
+                    "available": value["media"]["available"], "playing": value["media"]["isPlaying"],
+                    "peek": value["mediaPeekVisible"], "expanded": value["expanded"],
+                    "hudKind": value["hud"]["kind"] if value["hud"] else None}
+                if not source_transitions or row != source_transitions[-1]:
+                    source_transitions.append(row)
+                    del source_transitions[:-256]
+                    path = directory / "source-transitions.json"
+                    path.write_bytes(json_bytes(source_transitions)); path.chmod(0o600)
+                return value
+
+            def own_peek(client):
+                state = peek_state(client)
                 require(state["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
                         "Peek app source changed; no command sent.")
                 return state
+
+            def wait_peek(client, predicate, message, timeout=12):
+                # A submitted item transition can temporarily clear metadata.
+                # Read only while waiting; commands still use own_peek and the
+                # fresh independent native-source guard below.
+                return wait_for(lambda: peek_state(client), lambda s:
+                    s["media"].get("sourceBundleIdentifier") == FIXTURE_ID and predicate(s), message, timeout)
 
             def change_item(client, action):
                 before = own_peek(client)
@@ -2757,12 +2969,12 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 item = before["media"].get("contentItemIdentifier")
                 require(item, "Own peek source has no opaque item identity.")
                 client.command(action)
-                return wait_for(lambda: own_peek(client), lambda s: bool(s["media"].get("contentItemIdentifier"))
+                return wait_peek(client, lambda s: bool(s["media"].get("contentItemIdentifier"))
                     and s["media"]["contentItemIdentifier"] != item,
                     "Own identical-metadata source did not change its actual item.")
 
             def peek(client, visible):
-                state = wait_for(lambda: own_peek(client), lambda s: s["mediaPeekVisible"] is visible,
+                state = wait_peek(client, lambda s: s["mediaPeekVisible"] is visible,
                                  "Song-change peek did not reach its expected real state.")
                 observations.append({"visible": state["mediaPeekVisible"], "expanded": state["expanded"],
                     "compact": state["compactActivity"], "tab": state["visibleTab"],
@@ -2820,7 +3032,7 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                         "A preference update extended the actual monotonic peek deadline.")
                 if elapsed < initial_remaining - 0.35:
                     require(saved["mediaPeekVisible"], "Unrelated save dismissed the active peek before its deadline.")
-                wait_for(lambda: own_peek(client), lambda s: not s["mediaPeekVisible"],
+                wait_peek(client, lambda s: not s["mediaPeekVisible"],
                          "Metadata or preference updates extended the original peek deadline.", max(0.5, initial_remaining - elapsed + 0.75))
                 client.command("preferences", values={"mediaPeekDuration": 6})
                 change_item(client, "media.next")
@@ -2834,7 +3046,7 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                         replacement_at + replacement["mediaPeekRemaining"] > old_deadline + 0.5,
                         "Actual command latency prevented observing overlapping peek deadlines.")
                 client.command("preferences", values={"showPlaybackIndicator": False})
-                off_peek = wait_for(lambda: own_peek(client), lambda s: not s["playbackIndicatorMotion"],
+                off_peek = wait_peek(client, lambda s: not s["playbackIndicatorMotion"],
                                     "Indicator off retained native layers in the actual song peek.")
                 require(off_peek["mediaPeekVisible"], "Indicator opt-out changed the active peek.")
                 write_private(directory / "peek-indicator-off.png", client.request("/render?surface=live-notch"))
@@ -2850,7 +3062,7 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                     "afterSaveRemaining": saved["mediaPeekRemaining"], "oldDeadline": old_deadline,
                     "replacementObservedAt": replacement_at, "replacementRemaining": replacement["mediaPeekRemaining"],
                     "retainedRemaining": retained["mediaPeekRemaining"], "overlapObserved": True}))
-                wait_for(lambda: own_peek(client), lambda s: not s["mediaPeekVisible"],
+                wait_peek(client, lambda s: not s["mediaPeekVisible"],
                          "Replacement peek did not retire.", retained["mediaPeekRemaining"] + 0.75)
                 client.command("preferences", values={"mediaPeekDuration": 3, "showPlaybackIndicator": True})
                 wait_for(client.request, lambda s: not s["playbackIndicatorMotion"],
@@ -2900,12 +3112,12 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
                         "Native source changed; no pause command sent.")
                 client.command("media.playPause")
-                wait_for(lambda: own_peek(client), lambda s: not s["media"]["isPlaying"]
+                wait_peek(client, lambda s: not s["media"]["isPlaying"]
                     and not s["mediaPeekVisible"], "Pause did not dismiss the actual peek.")
                 require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
                         "Native source changed; no resume command sent.")
                 client.command("media.playPause")
-                wait_for(lambda: own_peek(client), lambda s: s["media"]["isPlaying"], "Own source did not resume.")
+                wait_peek(client, lambda s: s["media"]["isPlaying"], "Own source did not resume.")
                 peek(client, False)
                 change_item(client, "media.previous")
                 peek(client, True)
@@ -2982,8 +3194,10 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 position(17)
                 old_item = source(client)["media"]["contentItemIdentifier"]
                 client.command("media.next")
-                changed = wait_for(client.request, lambda s: s["media"].get("contentItemIdentifier") != old_item
-                    and s["media"].get("seekTarget") != target, "An actual new item did not replace the seek target.")
+                changed = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("supportsSeek") and bool(s["media"].get("contentItemIdentifier"))
+                    and bool(s["media"].get("seekTarget")) and s["media"]["contentItemIdentifier"] != old_item
+                    and s["media"]["seekTarget"] != target, "An actual new item did not replace the seek target.")
                 for key in ("sourceBundleIdentifier", "title", "artist", "album", "duration"):
                     require(changed["media"][key] == first["media"][key],
                             "Bound-seek regression must use identical source/text/duration metadata.")
@@ -3000,7 +3214,9 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 write_private(directory / "bound-lock.png", client.request("/render?surface=lock"))
                 source(client)
                 client.command("media.previous")
-                returned = wait_for(client.request, lambda s: s["media"].get("seekTarget") not in (target, current),
+                returned = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("supportsSeek") and bool(s["media"].get("seekTarget"))
+                    and s["media"]["seekTarget"] not in (target, current),
                                     "Returning to an earlier item reused a retired seek target.")
                 require(returned["media"]["title"] == first["media"]["title"], "Own identical metadata changed unexpectedly.")
                 source(client)
@@ -3305,7 +3521,7 @@ def main():
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
     parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
-    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "compact-motion", "media-refresh", "weather", "motion", "displays", "activities", "compact", "dismissal", "shape", "outline", "preferences", "timers", "timer-presentation", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "compact-motion", "media-refresh", "weather", "motion", "hud-timing", "displays", "activities", "compact", "dismissal", "shape", "outline", "preferences", "timers", "timer-presentation", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
@@ -3329,6 +3545,7 @@ def main():
                   ("timers", runtime.timers), ("timer-corruption", runtime.timer_corruption),
                   ("calendar", runtime.calendar), ("files", runtime.files)]
         if args.only != "storage":
+            groups.append(("hud-timing", runtime.hud_timing))
             groups.append(("timer-presentation", runtime.timer_presentation))
             groups.append(("motion", runtime.motion))
             groups.append(("displays", runtime.displays))

@@ -26,7 +26,7 @@ final class NotchPanelController: NSObject {
         var preferences: CovePreferences
         var expanded: Bool
         var tab: CoveTab
-        var hud: Bool
+        var hud: HUDKind?
         var media: Bool
         var compactActivity: CoveCompactActivity
         var mediaPeek: Bool
@@ -36,7 +36,7 @@ final class NotchPanelController: NSObject {
     private var lastLayoutInputs: LayoutInputs?
     private var layoutInputs: LayoutInputs {
         LayoutInputs(preferences: store.preferences, expanded: store.isExpanded, tab: store.selectedTab,
-                     hud: store.hud != nil,
+                     hud: store.hud?.kind,
                      media: store.isCompactActivityVisible(.media),
                      compactActivity: store.compactActivity,
                      mediaPeek: store.showsMediaPeek,
@@ -322,16 +322,17 @@ final class NotchPanelController: NSObject {
 
     private func apply(frame: NSRect, to surface: CovePanelSurface, animated: Bool, hideContent: Bool,
                        preferences: CovePreferences) {
-        let duration = animated ? CoveMotion.duration(preferences: preferences, hud: store.hud != nil) : 0
+        let duration = animated ? CoveMotion.duration(preferences: preferences, hud: !store.isExpanded && store.hud != nil, kind: store.hud?.kind) : 0
         let wasAnimating = surface.frameAnimationInFlight
-        // Reduce Motion can change without changing the destination. Settle the
-        // running animator too; comparing target frames alone leaves it moving.
-        guard surface.targetFrame != frame || (wasAnimating && duration == 0) else { return }
+        // A replacement HUD or Reduce Motion can change timing without changing
+        // the destination. Retarget active motion only when its duration changes.
+        guard surface.targetFrame != frame || (wasAnimating && surface.frameAnimationDuration != duration) else { return }
         surface.targetFrame = frame
         surface.hasLayout = true
         surface.layoutRevision &+= 1
         let revision = surface.layoutRevision
         surface.frameAnimationInFlight = duration > 0
+        surface.frameAnimationDuration = duration
         if duration > 0 {
             let currentFrame = surface.panel.frame
             let startFrame = CovePanelFrameAnchor(target: frame, screen: surface.screenFrame, scale: surface.scale)
@@ -358,6 +359,7 @@ final class NotchPanelController: NSObject {
                 Task { @MainActor in
                     guard let self, let surface, surface.layoutRevision == revision, self.started else { return }
                     surface.frameAnimationInFlight = false
+                    surface.frameAnimationDuration = 0
                     surface.panel.setFrame(frame, display: true)
                     surface.content.hosting.isHidden = hideContent
                     self.reconcileHover()
@@ -690,6 +692,7 @@ private final class CovePanelSurface {
     var scale: CGFloat = 1
     var layoutRevision: UInt = 0
     var frameAnimationInFlight = false
+    var frameAnimationDuration: TimeInterval = 0
     var gestureStripHeight: CGFloat = 32
     var scroll = CovePanelScroll()
 

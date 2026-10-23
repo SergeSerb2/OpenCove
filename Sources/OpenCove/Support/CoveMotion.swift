@@ -14,19 +14,20 @@ enum CoveMotion {
     static let audioBarRestHeights = [7.0, 13, 18, 11, 6]
     static func audioBarPeriod(index: Int) -> Double { 2 * .pi / (3.4 + Double(index) * 0.45) }
 
-    static func duration(preferences: CovePreferences, hud: Bool) -> Double {
-        let base: Double = hud && preferences.hudSpeed == "instant" ? 0
-            : hud && preferences.hudSpeed == "fast" ? 0.12 : 0.22
+    static func duration(preferences: CovePreferences, hud: Bool, kind: HUDKind? = nil) -> Double {
+        let speed = preferences.speed(for: kind)
+        let base: Double = hud && speed == "instant" ? 0
+            : hud && speed == "fast" ? 0.12 : 0.22
         return base / min(2, max(0.25, preferences.animationSpeed))
     }
 
-    static func animation(preferences: CovePreferences, hud: Bool) -> Animation? {
-        let seconds = duration(preferences: preferences, hud: hud)
+    static func animation(preferences: CovePreferences, hud: Bool, kind: HUDKind? = nil) -> Animation? {
+        let seconds = duration(preferences: preferences, hud: hud, kind: kind)
         return seconds > 0 ? .timingCurve(0.32, 0.72, 0, 1, duration: seconds) : nil
     }
 
-    static func contentAnimation(preferences: CovePreferences, hud: Bool, entering: Bool) -> Animation? {
-        let seconds = duration(preferences: preferences, hud: hud)
+    static func contentAnimation(preferences: CovePreferences, hud: Bool, entering: Bool, kind: HUDKind? = nil) -> Animation? {
+        let seconds = duration(preferences: preferences, hud: hud, kind: kind)
         guard seconds > 0 else { return nil }
         // Let the viewport open before revealing fixed-size controls. Departing
         // controls clear sooner, rather than lingering over the next activity.

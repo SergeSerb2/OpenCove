@@ -236,6 +236,7 @@ final class CoveStore: ObservableObject {
         return savePreferences() ? .success(()) : .failure(.saveFailed(lastError ?? "Display settings could not be saved."))
     }
     private var hudDismiss: Task<Void, Never>?
+    private var hudDeadline: ContinuousClock.Instant?
     private var appliedPreferences: CovePreferences
     private var subscriptions = Set<AnyCancellable>()
     private var started = false
@@ -260,6 +261,12 @@ final class CoveStore: ObservableObject {
         guard showsMediaPeek, let mediaPeekDeadline else { return nil }
         let remaining = mediaIdleClock.now.duration(to: mediaPeekDeadline).components
         return max(0, Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18)
+    }
+
+    var hudRemaining: Double? {
+        guard hud != nil, let hudDeadline else { return nil }
+        let value = mediaIdleClock.now.duration(to: hudDeadline).components
+        return max(0, Double(value.seconds) + Double(value.attoseconds) / 1e18)
     }
 
     private var mayPresentMediaPeek: Bool {
@@ -619,12 +626,53 @@ final class CoveStore: ObservableObject {
         dismissMediaPeek()
         hudDismiss?.cancel()
         hud = value
-        if preferences.enableHaptics { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default) }
+        let deadline = mediaIdleClock.now.advanced(by: .seconds(preferences.duration(for: value.kind)))
+        hudDeadline = deadline
+        if value.origin != "preview", preferences.enableHaptics { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default) }
         hudDismiss = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(max(0.5, self?.preferences.hudDuration ?? 2)))
+            do { try await ContinuousClock().sleep(until: deadline) }
+            catch { return }
             guard !Task.isCancelled else { return }
             self?.hud = nil
+            self?.hudDeadline = nil
         }
+    }
+
+    /// A labelled presentation preview. Read available values only; never
+    /// change hardware, request permission, or post a system notification.
+    func previewHUD(_ kind: HUDKind) -> String? {
+        guard started, sessionActive, !system.state.isLocked else { return "Overlays are unavailable in this session." }
+        guard !isExpanded else { return "Collapse the panel before previewing an overlay." }
+        var value = CoveHUD(kind: kind, title: kind.title + " preview", subtitle: "Preview", symbol: "bell.fill", origin: "preview")
+        guard isHUDEnabled(value) else { return "Enable this overlay before previewing it." }
+        let state = system.state
+        switch kind {
+        case .volume:
+            value.symbol = state.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
+            value.value = state.volumeAvailable ? state.volume : nil
+            value.subtitle = state.volumeAvailable ? "Preview · current output" : "Preview · reading unavailable"
+        case .brightness:
+            value.symbol = "sun.max.fill"
+            value.value = state.brightnessAvailable ? state.brightness : nil
+            value.subtitle = state.brightnessAvailable ? "Preview · current display" : "Preview · reading unavailable"
+        case .battery:
+            value.symbol = state.isCharging ? "battery.100.bolt" : "battery.100percent"
+            value.value = state.batteryAvailable && state.hasBattery ? Double(state.batteryPercent) / 100 : nil
+            value.subtitle = value.value != nil ? "Preview · current charge" : "Preview · no battery reading"
+        case .bluetooth:
+            value.symbol = "headphones"
+            value.subtitle = state.bluetoothAvailable ? "Preview · \(state.bluetoothDevices.count) connected" : "Preview · reading unavailable"
+        case .focus:
+            value.symbol = "moon.fill"
+            value.subtitle = state.focusAvailable ? "Preview · \(state.focusEnabled ? "on" : "off")" : "Preview · reading unavailable"
+        case .notification:
+            value.subtitle = "Preview only · no system notification"
+        case .lock:
+            value.symbol = "lock.open.fill"
+            value.subtitle = state.lockStateKnown ? "Preview · unlocked session" : "Preview · session reading unavailable"
+        }
+        showHUD(value)
+        return nil
     }
 
     private func isHUDEnabled(_ value: CoveHUD) -> Bool {

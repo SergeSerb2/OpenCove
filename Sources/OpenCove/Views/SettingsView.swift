@@ -6,6 +6,7 @@ import SwiftUI
 
 @MainActor
 struct SettingsView: View {
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @ObservedObject var store: CoveStore
     @ObservedObject private var activities: ActivityController
     @ObservedObject private var media: MediaController
@@ -17,6 +18,8 @@ struct SettingsView: View {
     @State private var selection: CoveSettingsPage? = .general
     @State private var showsResetConfirmation = false
     @State private var showsOnboarding = false
+    @State private var selectedHUD: HUDKind = .volume
+    @State private var hudPreviewMessage: String?
 
     init(store: CoveStore, initialPage: CoveSettingsPage = .general) {
         self.store = store
@@ -223,7 +226,7 @@ struct SettingsView: View {
 
             Section("Motion & feedback") {
                 Toggle("Reduce motion", isOn: preference(\.reduceMotion))
-                Picker("Overlay animation", selection: preference(\.hudSpeed)) {
+                Picker("Default overlay animation", selection: preference(\.hudSpeed)) {
                     Text("Smooth").tag("smooth")
                     Text("Fast").tag("fast")
                     Text("Instant").tag("instant")
@@ -233,7 +236,7 @@ struct SettingsView: View {
                     title: "Animation speed", value: preference(\.animationSpeed),
                     range: 0.25...2, step: 0.05, format: "%.2f×"
                 )
-                .disabled(store.preferences.reduceMotion || store.preferences.hudSpeed == "instant")
+                .disabled(store.preferences.reduceMotion)
                 Toggle("Haptic feedback", isOn: preference(\.enableHaptics))
                 CoveSettingsNote("Haptic feedback requires a supported trackpad.")
             }
@@ -335,9 +338,49 @@ struct SettingsView: View {
                 Toggle("Bluetooth & audio devices", isOn: preference(\.enableBluetooth))
                 Toggle("Focus status", isOn: preference(\.enableFocus))
                 CovePreferenceSlider(
-                    title: "Overlay duration", value: preference(\.hudDuration),
+                    title: "Default overlay duration", value: preference(\.hudDuration),
                     range: 0.5...10, step: 0.5, format: "%.1f s"
                 )
+            }
+
+            Section("Overlay timing") {
+                Picker("Category", selection: $selectedHUD) {
+                    ForEach(HUDKind.allCases) { kind in Text(kind.title).tag(kind) }
+                }
+                .onChange(of: selectedHUD) { _, _ in hudPreviewMessage = nil }
+                Toggle("Use default duration", isOn: Binding(
+                    get: { store.preferences[keyPath: selectedHUD.durationKey] == 0 },
+                    set: { useGlobal in
+                        store.preferences[keyPath: selectedHUD.durationKey] = useGlobal ? 0 : store.preferences.hudDuration
+                        store.savePreferences()
+                    }))
+                CovePreferenceSlider(title: "Duration", value: Binding(
+                    get: { store.preferences.duration(for: selectedHUD) },
+                    set: { value in
+                        store.preferences[keyPath: selectedHUD.durationKey] = value
+                        store.savePreferences()
+                    }), range: 0.5...10, step: 0.5, format: "%.1f s")
+                    .disabled(store.preferences[keyPath: selectedHUD.durationKey] == 0)
+                Picker("Appearance animation", selection: preference(selectedHUD.speedKey)) {
+                    Text("Use default").tag("global")
+                    Text("Smooth").tag("smooth")
+                    Text("Fast").tag("fast")
+                    Text("Instant").tag("instant")
+                }
+                .disabled(store.preferences.reduceMotion || systemReduceMotion)
+                HStack {
+                    Button("Preview overlay") { hudPreviewMessage = store.previewHUD(selectedHUD) }
+                        .disabled(store.isExpanded)
+                    Button("Reset category timing") {
+                        store.preferences[keyPath: selectedHUD.durationKey] = 0
+                        store.preferences[keyPath: selectedHUD.speedKey] = "global"
+                        store.savePreferences()
+                    }
+                }
+                CoveSettingsNote(store.isExpanded ? "Collapse the panel to preview an overlay."
+                    : "Preview uses available readings. It does not change volume or brightness, or post a system notification.")
+                CoveSettingsNote("Duration changes apply to the next overlay. Repeated events restart its duration.")
+                if let hudPreviewMessage { Text(hudPreviewMessage).font(.caption).foregroundStyle(.secondary) }
             }
 
             Section("Activities") {

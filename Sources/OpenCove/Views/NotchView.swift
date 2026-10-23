@@ -127,7 +127,7 @@ struct NotchView: View {
 
     private var motion: Animation? {
         guard !systemReduceMotion && !store.preferences.reduceMotion else { return nil }
-        return CoveMotion.animation(preferences: store.preferences, hud: store.hud != nil)
+        return CoveMotion.animation(preferences: store.preferences, hud: !store.isExpanded && store.hud != nil, kind: store.hud?.kind)
     }
 
     private var compactMode: CoveCompactMode {
@@ -142,12 +142,12 @@ struct NotchView: View {
 
     private var usesImmediateMotion: Bool {
         systemReduceMotion || store.preferences.reduceMotion
-            || (store.hud != nil && store.preferences.hudSpeed == "instant")
+            || (!store.isExpanded && store.hud != nil && store.preferences.speed(for: store.hud?.kind) == "instant")
     }
 
     private var compactMotion: Animation? {
         guard !systemReduceMotion && !store.preferences.reduceMotion else { return nil }
-        return CoveMotion.contentAnimation(preferences: store.preferences, hud: store.hud != nil, entering: false)
+        return CoveMotion.contentAnimation(preferences: store.preferences, hud: !store.isExpanded && store.hud != nil, entering: false, kind: store.hud?.kind)
     }
 
     private func contentTransition(mode: CovePanelMode) -> AnyTransition {
@@ -160,9 +160,9 @@ struct NotchView: View {
         if case .compact = mode { return fade.animation(compactMotion) }
         return .asymmetric(
             insertion: fade.animation(CoveMotion.contentAnimation(
-                preferences: store.preferences, hud: store.hud != nil, entering: true)),
+                preferences: store.preferences, hud: !store.isExpanded && store.hud != nil, entering: true, kind: store.hud?.kind)),
             removal: fade.animation(CoveMotion.contentAnimation(
-                preferences: store.preferences, hud: store.hud != nil, entering: false)))
+                preferences: store.preferences, hud: !store.isExpanded && store.hud != nil, entering: false, kind: store.hud?.kind)))
     }
 
     private var enabledTabs: [CoveTab] { store.enabledTabs }
