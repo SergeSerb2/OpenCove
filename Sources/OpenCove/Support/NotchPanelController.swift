@@ -22,6 +22,7 @@ final class NotchPanelController: NSObject {
     private var sessionActive = false
     private var menuTrackingDepth = 0
     private var lifecycleRevision: UInt = 0
+    private var acceptingMiddleClick = false
     private struct LayoutInputs: Equatable {
         var preferences: CovePreferences
         var expanded: Bool
@@ -318,6 +319,67 @@ final class NotchPanelController: NSObject {
 
     static func contentIsHidden(in window: NSWindow) -> Bool? {
         (window.contentView as? CovePanelTrackingView)?.hosting.isHidden
+    }
+
+    /// Request-scoped native dispatch for the authenticated, opt-in controls.
+    /// No global input is posted and no user pointer or focus is moved. Observe
+    /// the original window handler synchronously; there is no queued event left
+    /// behind after cancellation, timeout, or a later panel lifecycle change.
+    func acceptMiddleClick(region: String) throws -> [String: Any] {
+        guard ProcessInfo.processInfo.arguments.contains("--control-port"),
+              CovePaths.isDevelopment, !acceptingMiddleClick, mayHandleMenuAction else {
+            throw ControlError.rejected("Native input acceptance needs an active development-control launch.")
+        }
+        let eligible = surfaces.values.filter {
+            $0.panel.isVisible && !$0.content.hosting.isHidden && !$0.frameAnimationInFlight
+                && $0.panel.attachedSheet == nil && $0.panel.contentView === $0.content
+        }
+        guard eligible.count == 1, let surface = eligible.first,
+              let original = surface.panel.onEvent else {
+            throw ControlError.rejected("Native input acceptance needs exactly one visible, settled owned panel.")
+        }
+        let bounds = surface.content.bounds
+        let y: CGFloat
+        switch region {
+        case "gestureStrip": y = bounds.maxY - min(bounds.height, surface.gestureStripHeight) / 2
+        case "body":
+            guard store.isExpanded, bounds.height > surface.gestureStripHeight + 4 else {
+                throw ControlError.rejected("The expanded body is unavailable.")
+            }
+            y = bounds.minY + (bounds.height - surface.gestureStripHeight) / 2
+        default: throw ControlError.invalid("Choose gestureStrip or body.")
+        }
+        let point = NSPoint(x: bounds.midX, y: y)
+        guard bounds.contains(point), surface.panel.windowNumber > 0,
+              let event = NSEvent.mouseEvent(with: .otherMouseDown, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: surface.panel.windowNumber,
+                context: nil, eventNumber: 1, clickCount: 1, pressure: 1),
+              event.buttonNumber == 2 else {
+            throw ControlError.rejected("AppKit could not construct the owned middle-button event.")
+        }
+        let revision = lifecycleRevision
+        acceptingMiddleClick = true
+        var receipt: [String: Any]?
+        surface.panel.onEvent = { received in
+            let handled = original(received)
+            if received === event {
+                receipt = ["dispatch": "NSApplication.sendEvent", "handlerReceived": true,
+                           "buttonNumber": received.buttonNumber, "windowNumber": received.windowNumber,
+                           "targetWindowNumber": surface.panel.windowNumber,
+                           "pid": ProcessInfo.processInfo.processIdentifier, "region": region,
+                           "handled": handled]
+            }
+            return handled
+        }
+        defer {
+            acceptingMiddleClick = false
+            if started, lifecycleRevision == revision, surfaces.values.contains(where: { $0 === surface }) {
+                surface.panel.onEvent = original
+            }
+        }
+        NSApp.sendEvent(event)
+        guard let receipt else { throw ControlError.rejected("The owned native window did not receive the event.") }
+        return receipt
     }
 
     private func apply(frame: NSRect, to surface: CovePanelSurface, animated: Bool, hideContent: Bool,
