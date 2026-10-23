@@ -626,6 +626,30 @@ final class DevelopmentServer {
         guard !rendererBusy else { throw ControlError.rejected("A native capture is already in progress. Retry after it finishes.") }
         rendererBusy = true
         defer { rendererBusy = false }
+        if surface == "live-notch-compositor" {
+            // The explicit authenticated surface captures only the mounted app
+            // panel. Selection does not retain its NSWindow across an await.
+            do {
+                guard let capture = try NSApp.windows.first(where: {
+                    $0.isVisible && NotchPanelController.contentIsHidden(in: $0) == false
+                }).map({ try OwnedWindowCapture(window: $0) }) else {
+                    throw ControlError.rejected("No visible native notch content is available.")
+                }
+                let source = store.media.state.sourceBundleIdentifier
+                let target = store.media.state.seekTarget
+                let available = store.media.state.available
+                return try await capture.png {
+                    guard !self.store.system.state.isLocked,
+                          self.store.media.state.sourceBundleIdentifier == source,
+                          self.store.media.state.seekTarget == target,
+                          self.store.media.state.available == available else {
+                        throw ControlError.rejected("The session or media source changed during owned-window capture. Read fresh state and retry.")
+                    }
+                }
+            } catch let failure as OwnedWindowCapture.Failure {
+                throw ControlError.rejected(failure.localizedDescription)
+            }
+        }
         if surface == "live-notch" {
             guard let window = NSApp.windows.first(where: {
                 $0.isVisible && NotchPanelController.contentIsHidden(in: $0) == false
