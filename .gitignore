@@ -19,3 +19,5 @@ __pycache__/
 /docs/audits/
 /docs/review-*.md
 /docs/verification.md
+
+.wrangler/

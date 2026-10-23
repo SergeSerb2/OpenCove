@@ -41,7 +41,8 @@ async function publishedRelease(bucket) {
   const match = typeof release.path === "string" && RELEASE_PATH.exec(release.path);
   if (!match || match[1].includes("..") || match[2].includes("..") ||
       !/\.(?:zip|dmg)$/.test(match[2]) || release.version !== match[1] ||
-      !/^[a-f0-9]{64}$/.test(release.sha256) || !Number.isSafeInteger(release.bytes) || release.bytes <= 0 ||
+      typeof release.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(release.sha256) ||
+      !Number.isSafeInteger(release.bytes) || release.bytes <= 0 ||
       release.architecture !== "universal2" || release.minimumSystemVersion !== "15.0" || release.notarized !== true) return null;
   const archive = await bucket.head(release.path.slice(1));
   if (archive === null || archive.size !== release.bytes) return null;

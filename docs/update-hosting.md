@@ -251,7 +251,7 @@ bytes; it does not create or sign feeds and does not validate their contents.
 Use a fresh bounded version directory and safe asset names, for example
 `releases/0.1.0-beta.1/OpenCove-0.1.0-beta.1.zip`. Enclosure URLs must use the exact
 HTTPS host, point to the immutable archive key, and contain the actual byte
-length and Sparkle EdDSA signature from the other implementation agent's signing
+length and Sparkle EdDSA signature from Sparkle's signing
 CLI. Check version/build ordering and the minimum macOS version against the
 packaged app. A detached archive signature and SHA-256 file are public data;
 they do not replace the `sparkle:edSignature` enclosure attribute or app signing.
@@ -286,13 +286,45 @@ Publish in this order:
    the local files. Verify signatures with the approved release workflow. Confirm
    a nonexistent archive still returns `404`. Keep copies of the prior feed and
    any detached feed signature before replacing them.
-4. If the integrated client uses `/appcast.xml.sig`, upload its matching public
+4. Create `release.json` from the final validated release metadata and archive.
+   Set `OPENCOVE_RELEASE_JSON`, `OPENCOVE_ARCHIVE_FILE`, and
+   `OPENCOVE_DESCRIPTOR_FILE` to those reviewed local paths. This command emits
+   only public release metadata; it reads no signing credential.
+
+   ```sh
+   python3 - <<'PY_DESCRIPTOR'
+   import hashlib, json, os
+   from pathlib import Path
+   metadata = json.loads(Path(os.environ["OPENCOVE_RELEASE_JSON"]).read_text())
+   archive = Path(os.environ["OPENCOVE_ARCHIVE_FILE"])
+   assert metadata["notarized"] is True and metadata["architecture"] == "universal2"
+   assert metadata["signing"] == "developer-id"
+   version = metadata["version"]
+   label = version["version"] + ("-" + version["prerelease"] if version["prerelease"] else "")
+   value = {"version": label, "path": "/releases/" + label + "/" + archive.name,
+            "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+            "bytes": archive.stat().st_size, "architecture": "universal2",
+            "minimumSystemVersion": "15.0", "notarized": True}
+   output = Path(os.environ["OPENCOVE_DESCRIPTOR_FILE"])
+   with output.open("x") as file: json.dump(value, file, indent=2)
+   PY_DESCRIPTOR
+   opencove_wrangler r2 object put opencove-releases/release.json \
+     --remote --file "$OPENCOVE_DESCRIPTOR_FILE" --content-type application/json \
+     --cache-control 'no-store, max-age=0'
+   ```
+
+   Publish this descriptor only after step3's remote archive hash/signature
+   checks. GET `/release.json`, `/download`, and `/` through public HTTPS. Require
+   the expected descriptor, a302to its relative archive path, and the matching
+   visible download link. This prepares the direct download before the feed's
+   final switch. Retain the prior descriptor with the prior feed for rollback.
+5. If the integrated client uses `/appcast.xml.sig`, upload its matching public
    signature after validating it. Separate feed/signature keys have no atomic
    swap; the client must tolerate a short mismatch window, or use its approved
    atomic/versioned signature design. Do not enable detached feed signatures
    until that client contract is settled. Sparkle's signed enclosure attributes
    do not need this endpoint.
-5. Upload `appcast.xml` **last**, only after every referenced archive and public
+6. Upload `appcast.xml` **last**, only after every referenced archive and public
    sidecar passes the live checks:
 
    ```sh
@@ -301,13 +333,15 @@ Publish in this order:
      --cache-control 'no-store, max-age=0'
    ```
 
-6. GET/HEAD the live feed and compare it byte-for-byte with the approved feed.
+7. GET/HEAD the live feed and compare it byte-for-byte with the approved feed.
    Check `no-store`, current enclosures, signatures, root status, and health.
    Run a real Sparkle update from the previous installed version to the published
    signed version. Source review and host HTTP checks do not replace that gate.
 
-If publication must be rolled back, restore the last approved feed (and matching
-feed signature if used) through authenticated Wrangler. Keep referenced archives
+If publication must be rolled back, restore the last approved release descriptor
+and feed (and matching feed signature if used) through authenticated Wrangler.
+When withdrawing the first release, remove `release.json` as well as the feed so
+`/download` returns503 and the page omits the installer link. Keep referenced archives
 available. Removing a first, invalid feed restores the explicit `503` state;
 do not replace it with an empty success feed. Worker code rollback and feed
 rollback are separate actions. Do not remove the bucket, domain, or old archives
