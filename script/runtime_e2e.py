@@ -2898,13 +2898,23 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 "hudDuration": 0.5, "compactActivity": "timer"})
             observations = []
 
-            def own_peek(client):
+            def peek_state(client):
                 require(child.poll() is None and json.loads(fixture_state.read_bytes())["pid"] == child.pid,
                         "Own peek fixture stopped or changed PID; no command sent.")
-                state = client.request()
+                return client.request()
+
+            def own_peek(client):
+                state = peek_state(client)
                 require(state["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
                         "Peek app source changed; no command sent.")
                 return state
+
+            def wait_peek(client, predicate, message, timeout=12):
+                # A submitted item transition can temporarily clear metadata.
+                # Read only while waiting; commands still use own_peek and the
+                # fresh independent native-source guard below.
+                return wait_for(lambda: peek_state(client), lambda s:
+                    s["media"].get("sourceBundleIdentifier") == FIXTURE_ID and predicate(s), message, timeout)
 
             def change_item(client, action):
                 before = own_peek(client)
@@ -2913,12 +2923,12 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 item = before["media"].get("contentItemIdentifier")
                 require(item, "Own peek source has no opaque item identity.")
                 client.command(action)
-                return wait_for(lambda: own_peek(client), lambda s: bool(s["media"].get("contentItemIdentifier"))
+                return wait_peek(client, lambda s: bool(s["media"].get("contentItemIdentifier"))
                     and s["media"]["contentItemIdentifier"] != item,
                     "Own identical-metadata source did not change its actual item.")
 
             def peek(client, visible):
-                state = wait_for(lambda: own_peek(client), lambda s: s["mediaPeekVisible"] is visible,
+                state = wait_peek(client, lambda s: s["mediaPeekVisible"] is visible,
                                  "Song-change peek did not reach its expected real state.")
                 observations.append({"visible": state["mediaPeekVisible"], "expanded": state["expanded"],
                     "compact": state["compactActivity"], "tab": state["visibleTab"],
@@ -2976,7 +2986,7 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                         "A preference update extended the actual monotonic peek deadline.")
                 if elapsed < initial_remaining - 0.35:
                     require(saved["mediaPeekVisible"], "Unrelated save dismissed the active peek before its deadline.")
-                wait_for(lambda: own_peek(client), lambda s: not s["mediaPeekVisible"],
+                wait_peek(client, lambda s: not s["mediaPeekVisible"],
                          "Metadata or preference updates extended the original peek deadline.", max(0.5, initial_remaining - elapsed + 0.75))
                 client.command("preferences", values={"mediaPeekDuration": 6})
                 change_item(client, "media.next")
@@ -2990,7 +3000,7 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                         replacement_at + replacement["mediaPeekRemaining"] > old_deadline + 0.5,
                         "Actual command latency prevented observing overlapping peek deadlines.")
                 client.command("preferences", values={"showPlaybackIndicator": False})
-                off_peek = wait_for(lambda: own_peek(client), lambda s: not s["playbackIndicatorMotion"],
+                off_peek = wait_peek(client, lambda s: not s["playbackIndicatorMotion"],
                                     "Indicator off retained native layers in the actual song peek.")
                 require(off_peek["mediaPeekVisible"], "Indicator opt-out changed the active peek.")
                 write_private(directory / "peek-indicator-off.png", client.request("/render?surface=live-notch"))
@@ -3006,7 +3016,7 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                     "afterSaveRemaining": saved["mediaPeekRemaining"], "oldDeadline": old_deadline,
                     "replacementObservedAt": replacement_at, "replacementRemaining": replacement["mediaPeekRemaining"],
                     "retainedRemaining": retained["mediaPeekRemaining"], "overlapObserved": True}))
-                wait_for(lambda: own_peek(client), lambda s: not s["mediaPeekVisible"],
+                wait_peek(client, lambda s: not s["mediaPeekVisible"],
                          "Replacement peek did not retire.", retained["mediaPeekRemaining"] + 0.75)
                 client.command("preferences", values={"mediaPeekDuration": 3, "showPlaybackIndicator": True})
                 wait_for(client.request, lambda s: not s["playbackIndicatorMotion"],
@@ -3056,12 +3066,12 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
                         "Native source changed; no pause command sent.")
                 client.command("media.playPause")
-                wait_for(lambda: own_peek(client), lambda s: not s["media"]["isPlaying"]
+                wait_peek(client, lambda s: not s["media"]["isPlaying"]
                     and not s["mediaPeekVisible"], "Pause did not dismiss the actual peek.")
                 require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
                         "Native source changed; no resume command sent.")
                 client.command("media.playPause")
-                wait_for(lambda: own_peek(client), lambda s: s["media"]["isPlaying"], "Own source did not resume.")
+                wait_peek(client, lambda s: s["media"]["isPlaying"], "Own source did not resume.")
                 peek(client, False)
                 change_item(client, "media.previous")
                 peek(client, True)
