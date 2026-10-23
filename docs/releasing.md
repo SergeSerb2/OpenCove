@@ -19,6 +19,12 @@ Run the [real integration workflow](quality.md), inspect its native renders, and
 
 ## Local ad-hoc archive
 
+Release builds include the native Sparkle updater. First supply the real public
+`OPENCOVE_UPDATE_FEED_URL` and `OPENCOVE_UPDATE_PUBLIC_ED_KEY` configuration in
+[the update guide](updates.md). Missing configuration stops before compilation.
+The intended feed is on OpenCove's owned Cloudflare domain, pending deployment
+confirmation. No feed or release is published by the packaging command.
+
 ```sh
 python3 script/package_release.py package --arch arm64 --signing adhoc
 ```
@@ -30,7 +36,7 @@ The default output is `dist/releases/OpenCove-0.1.0-beta.1-arm64-adhoc/`:
 - `OpenCove-0.1.0-beta.1-arm64-adhoc-release.json` — exact version, architecture, source hashes, toolchain, and signing/notarization status.
 - `SHA256SUMS` — SHA-256 hashes for the other three files.
 
-Use `--output-dir` for a different fresh directory. Existing output directories fail rather than silently replacing a prior release. Packaging verifies the completed ZIPs after extraction, executable modes, source hashes, app signature, architecture, and checksums. It never installs or launches the app.
+Use `--output-dir` for a different fresh directory. Existing output directories fail rather than silently replacing a prior release. Packaging verifies the completed ZIPs after extraction, framework symlinks, executable modes, source hashes, nested signatures, architecture, and checksums. It never installs or launches the app. Metadata includes the public Sparkle feed/key policy. The source manifest records the exact SDK identity and checksum.
 
 An ad-hoc signature is a local code-integrity signature. It is not an Apple distribution identity or notarization, and macOS can block a downloaded archive. Label it clearly if publishing it for beta use. Source builds remain the current primary installation path.
 
@@ -45,7 +51,31 @@ OPENCOVE_SIGN_IDENTITY='Developer ID Application: Your Name (TEAMID1234)' \
 python3 script/package_release.py package --arch arm64 --signing developer-id
 ```
 
+For an identity in an existing isolated keychain, also set
+`OPENCOVE_SIGN_KEYCHAIN` to its absolute path. It must be a regular file owned by
+the current user. The parent prepares/unlocks that keychain separately; these
+scripts never create, import, unlock, or change a keychain search list. Identity
+discovery uses `security find-identity -v -p codesigning <keychain-path>`; every
+host/framework/helper signing command uses `codesign --keychain <keychain-path>`.
+The system tool help confirms that `security` takes a positional keychain operand
+and `codesign` uses the named flag. Apple's `codesign` manual says intermediate
+certificate-chain lookup can still consult the existing search list. It is never
+mutated here. Supply a complete, valid identity/chain through the parent's setup.
+
+The bundle validator accepts the same optional path and checks its ownership and
+type. Verification inspects embedded signatures, certificate class, and team
+through Security.framework; it does not find or read private keys. The
+`codesign --keychain` option selects an identity only during signing, so it is
+not applied to `codesign --verify`. A signature remains portable to machines
+without the signing keychain. The notary-profile path is unchanged and independent
+of this signing-keychain option.
+
 This enables hardened runtime and a secure signing timestamp. The only added entitlement is `com.apple.security.automation.apple-events`, for the optional Music/Spotify Apple Events path. There is no App Sandbox, `get-task-allow`, disabled library validation, or blanket entitlement inheritance. Do not add exceptions without a demonstrated feature need and revalidation.
+
+Sparkle's nested helpers and framework are signed individually from the inside
+out before the host. Its optional Downloader entitlements are preserved and
+checked separately. The host entitlement above is not copied to helpers. See
+[the framework and appcast workflow](updates.md) before shipping updates.
 
 Validation checks each Mach-O architecture through the Security framework. An Apple certificate requirement verifies the Developer ID Application certificate class and binds its team to the signed team identifier. Structured fields must show hardened runtime, a timestamp authority's signing timestamp, the same team across slices, and exactly the entitlement above. Human-readable `codesign` diagnostics are not signing evidence. The helper requires the selected Xcode Swift toolchain even for a standalone bundle check.
 

@@ -22,6 +22,7 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     private var statusItem: NSStatusItem?
     private var control: DevelopmentServer?
     private var instanceLock: InstanceLock?
+    private var updater: CoveUpdater!
     private var readyForIncomingURLs = false
     private var startupFailed = false
     private var pendingURLs: [URL] = []
@@ -39,6 +40,7 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             return
         }
         store = CoveStore()
+        updater = CoveUpdater()
         store.onOpenSettings = { [weak self] in self?.showSettings() }
         store.onPreferencesChange = { [weak self] in self?.notch?.refreshLayout(); self?.lockWidgets?.refreshLayout() }
         configureStatusItem()
@@ -157,6 +159,7 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         let menu = NSMenu()
         menu.addItem(withTitle: "Open OpenCove", action: #selector(toggleNotch), keyEquivalent: "o").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(settingsAction), keyEquivalent: ",").target = self
+        menu.addItem(updater.makeMenuItem())
         menu.addItem(.separator())
         menu.addItem(withTitle: "Refresh Activities", action: #selector(refresh), keyEquivalent: "r").target = self
         menu.addItem(.separator())
@@ -173,7 +176,7 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     private func showSettings() {
         store.settingsVisible = true
         if let settingsWindow { settingsWindow.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
-        let content = OpenCoveSettingsRoot(store: store)
+        let content = OpenCoveSettingsRoot(store: store, updater: updater)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 580), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "OpenCove"
         window.identifier = NSUserInterfaceItemIdentifier("OpenCove.Settings")
@@ -196,9 +199,10 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
 private struct OpenCoveSettingsRoot: View {
     @ObservedObject var store: CoveStore
+    let updater: CoveUpdater
     var body: some View {
         Group {
-            if store.preferences.completedOnboarding { SettingsView(store: store) }
+            if store.preferences.completedOnboarding { SettingsView(store: store, updater: updater) }
             else { OnboardingView(store: store) }
         }
     }

@@ -15,13 +15,14 @@ An independent, MIT-licensed macOS notch app, written in SwiftUI and AppKit.
 - Shows volume, brightness, battery, Bluetooth, and shared Focus status when available.
 - Offers an optional contrast outline for attached notches and floating pills, with automatic support for Increase Contrast.
 - Offers optional conditions, sun and precipitation weather views with a 24-hour and 7-day forecast, time-to-leave alerts, system audio levels, notification-banner mirroring, lock widgets, a file tray, and a persistent timer.
+- Integrates Sparkle's native update UI, with manual checks and consent-based automatic checks/downloads in configured release builds. Development and control launches keep updates off by default. See [updates](docs/updates.md) for the required trust and feed configuration.
 - Uses native or simulated notch presentation, a floating pill on notchless displays, native windows, multiple-display policies, preferred compact activities, reduced motion, and configurable hover behavior. No web wrapper, account, or paid subscription is required.
 
 ## Requirements
 
 The deployment target is **macOS 15+**. Local app/API runtime evidence is **Apple silicon, macOS 27.2**. Automated packaged-app/API/CLI smoke checks have also passed on the macOS 15 arm64 CI runner; full macOS 15/26 and Intel feature coverage is still open. Glass effects use macOS 26 APIs with an older-system fallback.
 
-Building needs **Xcode 26+ with the macOS 26 SDK**, Swift 6+, and Python 3.9+. Local builds use **Xcode 27.1 / Swift 6.4 / macOS 27 SDK**. Hosted CI has also passed with **Xcode 26.2 / Swift 6.2.3 / macOS 26.2 SDK**. There are no third-party Swift packages.
+Building needs **Xcode 26+ with the macOS 26 SDK**, Swift 6+, and Python 3.9+. Local builds use **Xcode 27.1 / Swift 6.4 / macOS 27 SDK**. Hosted CI has also passed with **Xcode 26.2 / Swift 6.2.3 / macOS 26.2 SDK**. SwiftPM downloads the official Sparkle 2.10.0 SDK from its pinned URL and verifies its SHA-256 checksum.
 
 When macOS denies direct media reads, an isolated adapter uses the built-in `/usr/bin/osascript` JavaScript host. This path does not need developer tools at runtime and does not send Apple Events. A legacy Swift adapter is retained for diagnostics and needs Xcode or Command Line Tools. Music/Spotify Automation is a separate opt-in fallback.
 
@@ -42,7 +43,7 @@ The expanded layout sets the startup section and the combined Media & Calendar p
 
 Appearance → Simulate a notch uses an attached panel with center clearance from Width and Height. The real camera housing always sets the minimum; simulation does not change reported hardware geometry. With simulation off, a display without a notch uses the floating pill. Hide when idle still applies to the simulated panel.
 
-For an optimized local app, run `./script/build_and_run.sh --release`, then copy `dist/release/OpenCove.app` to your Applications folder with Finder. These builds are **ad-hoc signed**, not Developer ID signed or notarized; macOS may block a downloaded copy. Do not treat ad-hoc archives as trusted distribution builds. Future approved downloads belong on [GitHub Releases](https://github.com/SergeSerb2/OpenCove/releases), with checksums and a stated signing status.
+For an optimized local app, supply the real public feed/key configuration in [updates](docs/updates.md), then run `./script/build_and_run.sh --release`. The resulting bundle is `dist/release/OpenCove.app`. These builds are **ad-hoc signed**, not Developer ID signed or notarized; macOS may block a downloaded copy. Do not treat ad-hoc archives as trusted distribution builds. The intended download/update host is `opencove.sergeserbinenko.com`, pending owned-domain deployment confirmation, with checksums and a stated signing status. No feed or download is claimed published.
 
 [Build instructions](docs/building.md) cover source ZIPs without Git, architecture selection, isolated paths, and real app controls. [Quality checks](docs/quality.md) define the real integration workflow and manual gates. [Release instructions](docs/releasing.md) cover manual packaging and the opt-in Developer ID/notarization path.
 

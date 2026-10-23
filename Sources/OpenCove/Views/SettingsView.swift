@@ -8,6 +8,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @ObservedObject var store: CoveStore
+    private let updater: CoveUpdater?
     @ObservedObject private var activities: ActivityController
     @ObservedObject private var media: MediaController
     @ObservedObject private var notificationMirror: NotificationMirror
@@ -21,8 +22,9 @@ struct SettingsView: View {
     @State private var selectedHUD: HUDKind = .volume
     @State private var hudPreviewMessage: String?
 
-    init(store: CoveStore, initialPage: CoveSettingsPage = .general) {
+    init(store: CoveStore, initialPage: CoveSettingsPage = .general, updater: CoveUpdater? = nil) {
         self.store = store
+        self.updater = updater
         self._selection = State(initialValue: initialPage)
         self.activities = store.activities
         self.media = store.media
@@ -524,6 +526,11 @@ struct SettingsView: View {
                     }
                 }
                 .padding(.vertical, 8)
+            }
+
+            Section("Updates") {
+                if let updater { CoveUpdaterSettings(updater: updater) }
+                else { CoveSettingsNote("Updates are off in this verification view.") }
             }
 
             Section("Open source") {
