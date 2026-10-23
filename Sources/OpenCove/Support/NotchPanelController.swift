@@ -320,16 +320,6 @@ final class NotchPanelController: NSObject {
         (window.contentView as? CovePanelTrackingView)?.hosting.isHidden
     }
 
-    /// Returns only the real hosting view mounted in one of our ordinary panels.
-    /// The tracking wrapper's accessibility children need not expose this root.
-    static func mountedHostingView(in window: NSWindow) -> NSView? {
-        guard window is CoveNotchPanel,
-              let content = window.contentView as? CovePanelTrackingView,
-              content.window === window, content.hosting.window === window,
-              content.hosting.superview === content else { return nil }
-        return content.hosting
-    }
-
     private func apply(frame: NSRect, to surface: CovePanelSurface, animated: Bool, hideContent: Bool,
                        preferences: CovePreferences) {
         let duration = animated ? CoveMotion.duration(preferences: preferences, hud: !store.isExpanded && store.hud != nil, kind: store.hud?.kind) : 0

@@ -238,17 +238,19 @@ final class DevelopmentServer {
             do { respond(connection, status: 200, json: try snapshot()) }
             catch { fail(connection, 500, "App state could not be encoded.") }
         case "/accessibility/compact":
+            guard !store.isExpanded, !store.system.state.isLocked else {
+                fail(connection, 409, "A visible compact control in an unlocked session is required."); return
+            }
             do {
-                var value = try OwnedAccessibility.compact {
-                    guard !self.store.isExpanded, !self.store.system.state.isLocked else {
-                        throw OwnedAccessibility.Failure(.unavailable, "compactUnlockedState")
-                    }
-                }
+                guard let window = NSApp.windows.first(where: {
+                    $0.isVisible && NotchPanelController.contentIsHidden(in: $0) == false
+                }) else { throw OwnedAccessibility.Failure.unavailable }
+                var value = try OwnedAccessibility.compact(in: window)
                 value["pid"] = ProcessInfo.processInfo.processIdentifier
                 value["sourceTreeSHA256"] = sourceTree
                 respond(connection, status: 200, json: value)
             } catch let error as OwnedAccessibility.Failure {
-                respond(connection, status: 409, json: error.response)
+                fail(connection, 409, error.localizedDescription)
             } catch { fail(connection, 500, "The owned accessibility read failed.") }
         case "/render":
             let query = URLComponents(string: target)?.queryItems ?? []
