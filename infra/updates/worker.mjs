@@ -13,7 +13,9 @@ const SECURITY_HEADERS = {
 };
 
 function respond(request, body, status = 200, extra = {}) {
-  const headers = new Headers({ ...SECURITY_HEADERS, "Cache-Control": NO_CACHE, ...extra });
+  const headers = new Headers(SECURITY_HEADERS);
+  headers.set("Cache-Control", NO_CACHE);
+  for (const [name, value] of new Headers(extra)) headers.set(name, value);
   return new Response(request.method === "HEAD" ? null : body, { status, headers });
 }
 
@@ -180,7 +182,9 @@ export default {
       });
     }
     try {
-      // Reject encoded names and dot segments before URL normalizes its pathname.
+      // Reject encoded names and dot segments still visible in Request.url.
+      // The runtime can canonicalize literal separators before this handler;
+      // canonical paths still pass only the fixed public-route allowlist.
       const rawPath = /^https?:\/\/[^/]+(\/[^?#]*)?/.exec(request.url)?.[1] ?? "/";
       if (/[\\%]/.test(rawPath) || /\/(?:\.|\.\.)(?:\/|$)/.test(rawPath)) return missing(request);
       const path = new URL(request.url).pathname;
