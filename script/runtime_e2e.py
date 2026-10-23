@@ -1304,8 +1304,33 @@ print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding:
             write_private(replacement / "native-frames.json", json_bytes({"target": target,
                 "during": panels(during), "replacement": panels(immediate)}))
             write_private(replacement / "instant-replacement.png", client.request("/render?surface=live-notch"))
+            policies = []
+            if not during["systemReduceMotion"]:
+                for speed in ("smooth", "fast"):
+                    client.command("preferences", values={"enableVolumeHUD": False,
+                        "enableNotifications": False, "reduceMotion": True})
+                    time.sleep(0.15)
+                    client.command("preferences", values={"enableVolumeHUD": True,
+                        "enableNotifications": True, "reduceMotion": False,
+                        "notificationHUDSpeed": speed, "notificationHUDDuration": 3})
+                    time.sleep(0.15)
+                    client.command("hud.preview", kind="volume")
+                    time.sleep(0.08)
+                    first = panels(client.request())
+                    client.command("hud.preview", kind="notification")
+                    time.sleep(0.2)
+                    later = panels(client.request())
+                    gains = [(b["width"] - a["width"]) / (t["width"] - a["width"])
+                        for a, b, t in zip(first, later, target) if t["width"] - a["width"] > 20]
+                    policies.append({"speed": speed, "before": first, "after": later, "gains": gains})
+                write_private(replacement / "positive-policies.json", json_bytes(policies))
+                if policies[0]["gains"] and policies[1]["gains"]:
+                    require(min(policies[1]["gains"]) > max(policies[0]["gains"]) + 0.04,
+                            "Fast category replacement retained the prior Smooth native motion.")
         self.record("overlay replacement: instant category settles an interrupted smooth native transition",
                     observedAnimation=not during["systemReduceMotion"])
+        self.record("overlay replacement: actual Fast native motion advances ahead of unchanged Smooth policy",
+                    observedGeometry=bool(policies and all(row["gains"] for row in policies)))
         raw = json_bytes({**SAFE, "volumeHUDDuration": "bad", "brightnessHUDSpeed": "bad",
             "notificationHUDDuration": 20, "focusHUDDuration": True, "hudDuration": 4})
         damaged = self.directory("hud-timing-recovery", raw=raw)
