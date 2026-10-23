@@ -224,7 +224,7 @@ final class DevelopmentServer {
         let path = String(target.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0])
         let allowedMethod: String
         switch path {
-        case "/", "/state", "/render": allowedMethod = "GET"
+        case "/", "/state", "/render", "/accessibility/compact": allowedMethod = "GET"
         case "/command": allowedMethod = "POST"
         default: fail(connection, 404, "Unknown development endpoint."); return
         }
@@ -237,6 +237,21 @@ final class DevelopmentServer {
         case "/state":
             do { respond(connection, status: 200, json: try snapshot()) }
             catch { fail(connection, 500, "App state could not be encoded.") }
+        case "/accessibility/compact":
+            guard !store.isExpanded, !store.system.state.isLocked else {
+                fail(connection, 409, "A visible compact control in an unlocked session is required."); return
+            }
+            do {
+                guard let window = NSApp.windows.first(where: {
+                    $0.isVisible && NotchPanelController.contentIsHidden(in: $0) == false
+                }) else { throw OwnedAccessibility.Failure.unavailable }
+                var value = try OwnedAccessibility.compact(in: window)
+                value["pid"] = ProcessInfo.processInfo.processIdentifier
+                value["sourceTreeSHA256"] = sourceTree
+                respond(connection, status: 200, json: value)
+            } catch let error as OwnedAccessibility.Failure {
+                fail(connection, 409, error.localizedDescription)
+            } catch { fail(connection, 500, "The owned accessibility read failed.") }
         case "/render":
             let query = URLComponents(string: target)?.queryItems ?? []
             guard query.count <= 1, query.allSatisfy({ $0.name == "surface" && $0.value != nil }) else { fail(connection, 400, "Use one render surface."); return }

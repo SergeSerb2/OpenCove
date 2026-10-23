@@ -17,6 +17,7 @@ def main():
     parser.add_argument("--data-dir", type=Path, default=Path(os.environ.get("OPENCOVE_DATA_DIR", ROOT / ".local/runtime")))
     commands = parser.add_subparsers(dest="operation", required=True)
     commands.add_parser("state")
+    commands.add_parser("accessibility", help="Read the real owned compact control's native accessibility semantics")
     commands.add_parser("url", help="Print the explicit local browser URL, with its private token in the fragment")
     command = commands.add_parser("command")
     command.add_argument("json", help="JSON object, or - to read at most 65536 bytes from standard input")
@@ -42,6 +43,8 @@ def main():
             if not isinstance(value, dict):
                 raise ControlFailure("Command must be a JSON object.")
             state = client.request("/command", value)
+        elif args.operation == "accessibility":
+            state = client.request("/accessibility/compact")
         elif args.operation == "render":
             data = client.request("/render?surface=" + args.surface)
             output = args.output.expanduser()
