@@ -167,7 +167,7 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
     @objc private func toggleNotch() { store.toggleExpanded() }
     @objc private func settingsAction() { store.openSettings() }
-    @objc private func refresh() { store.media.refresh(); store.system.refresh(); store.activities.refreshCalendar() }
+    @objc private func refresh() { store.media.refreshFromUser(); store.system.refresh(); store.activities.refreshCalendar() }
     @objc private func quit() { NSApp.terminate(nil) }
 
     private func showSettings() {

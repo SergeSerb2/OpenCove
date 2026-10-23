@@ -579,7 +579,7 @@ struct CoveMediaSurface: View {
             } else {
                 CoveEmptySurface(symbol: "music.note", title: "Nothing playing",
                                  message: media.lastError ?? "Play something in your favorite app.",
-                                 actionTitle: "Refresh", action: media.refresh)
+                                 actionTitle: "Refresh", action: media.refreshFromUser)
             }
         }
     }

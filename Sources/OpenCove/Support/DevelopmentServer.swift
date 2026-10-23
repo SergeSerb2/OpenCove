@@ -392,7 +392,7 @@ final class DevelopmentServer {
             store.preferences.completedOnboarding = true
             guard store.savePreferences() else { throw ControlError.failed(store.lastError ?? "Setup could not be saved.") }
         case "settings": store.openSettings()
-        case "media.refresh": store.media.refresh()
+        case "media.refresh": store.media.refreshFromUser()
         case "media.playPause":
             try requireCapability(store.media.state.supportsPlayPause, "Play/pause is unavailable for this source.")
             store.media.playPause()

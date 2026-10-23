@@ -154,6 +154,14 @@ final class MediaController: ObservableObject {
         lastError = nil
     }
 
+    /// Explicit refresh asks the existing adapter for fresh metadata. Internal
+    /// refreshes still consume its cache without changing the reader cadence.
+    func refreshFromUser() {
+        guard running else { return }
+        adapterWatch.requestRefresh()
+        refresh()
+    }
+
     func refresh() {
         guard running else { return }
         guard !refreshing else { refreshAgain = true; return }
