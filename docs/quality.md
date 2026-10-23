@@ -178,3 +178,15 @@ interrupted presentation opacity. Bracket captured pixels with native samples
 and check displacement in both directions. Insufficient interruption or sampling
 coverage stays pending. AppKit caching captures do not establish WindowServer
 frame cadence; final correct artwork alone does not prove continuity.
+
+`artworkTransitionMotion.distinctInput` observes a decoded input that differs
+from both installed native slots while an existing fade is active. This bounded
+development-only record holds scalar timing, revision and equality checks; the
+input identity is non-retaining and is never returned. The record also notes
+when that same input reaches a slot. Require a ready observation before the old
+native deadline, unchanged incoming slots/revision at that observation, and
+consumption after the old animation ends. Use calibrated real A/B/C cover
+references and bracket both fade phases with native opacity samples. An item ID
+change or a third cover that decodes only after completion does not establish
+three-cover interruption coverage. The record is cleared on source/input
+replacement, hiding and retirement and adds no timer or model publication.

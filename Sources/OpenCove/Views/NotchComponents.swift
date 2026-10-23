@@ -213,6 +213,7 @@ struct CoveArtwork: View {
                 // Fixed slots retarget on A/B/A without accumulating removal
                 // transitions. An opaque lower slot prevents a dark midpoint.
                 CoveArtworkTransition(first: retainedImage(first), second: retainedImage(second),
+                                      inputIdentity: input.image,
                                       showsSecond: showsSecond, sourceIdentifier: sourceIdentifier,
                                       revision: fadeRevision, fading: fadePhase == .fading(fadeRevision), size: size) { revision in
                     guard fadeRevision == revision, fadePhase == .fading(revision) else { return }
