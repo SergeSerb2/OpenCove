@@ -89,7 +89,7 @@ final class CoveUpdater: ObservableObject {
     }
 
     func setAutomaticDownloads(_ enabled: Bool) {
-        guard allowsAutomaticUpdates else { return }
+        guard !enabled || allowsAutomaticUpdates else { return }
         controller?.updater.automaticallyDownloadsUpdates = enabled
     }
 
@@ -110,10 +110,10 @@ struct CoveUpdaterSettings: View {
 
     var body: some View {
         Toggle("Automatically check for updates", isOn: Binding(
-            get: { updater.automaticallyChecksForUpdates }, set: updater.setAutomaticChecks))
+            get: { updater.automaticallyChecksForUpdates }, set: { updater.setAutomaticChecks($0) }))
             .disabled(updater.controller == nil)
         Toggle("Automatically download and install updates", isOn: Binding(
-            get: { updater.automaticallyDownloadsUpdates }, set: updater.setAutomaticDownloads))
+            get: { updater.automaticallyDownloadsUpdates }, set: { updater.setAutomaticDownloads($0) }))
             .disabled(updater.controller == nil || !updater.allowsAutomaticUpdates)
         Button("Check for Updates…", action: updater.checkForUpdates)
             .disabled(!updater.canCheckForUpdates)
