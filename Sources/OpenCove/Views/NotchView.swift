@@ -69,6 +69,124 @@ private struct CovePanelFade: AnimatableModifier {
     }
 }
 
+private struct CoveExpandedSection: Hashable {
+    let tab: CoveTab?
+    let duo: Bool
+}
+
+private struct CoveExpandedSectionIdentity: Hashable {
+    let section: CoveExpandedSection
+    let revision: UInt64
+}
+
+private struct CoveExpandedSectionPresentation: Equatable {
+    var active: CoveExpandedSectionIdentity
+    var outgoing: CoveExpandedSectionIdentity?
+    var settled = false
+
+    init(section: CoveExpandedSection) {
+        active = CoveExpandedSectionIdentity(section: section, revision: 0)
+    }
+
+    func targeting(_ section: CoveExpandedSection) -> Self {
+        guard section != active.section else { return self }
+        var next = self
+        next.outgoing = active
+        next.active = CoveExpandedSectionIdentity(section: section, revision: active.revision &+ 1)
+        next.settled = false
+        return next
+    }
+}
+
+private struct CoveExpandedSectionPermissions {
+    var mediaEnabled = false
+    var mediaAvailable = false
+    var calendarEnabled = false
+    var calendarDetailsVisible = false
+    var filesEnabled = false
+    var timerEnabled = false
+
+    func permits(_ section: CoveExpandedSection, outgoing: Bool) -> Bool {
+        switch section.tab {
+        case .media:
+            return mediaEnabled && (!outgoing || mediaAvailable)
+                && (!section.duo || (calendarEnabled && (!outgoing || calendarDetailsVisible)))
+        case .calendar: return calendarEnabled && (!outgoing || calendarDetailsVisible)
+        case .files: return filesEnabled
+        case .timer: return timerEnabled
+        case nil: return true
+        }
+    }
+}
+
+private struct CoveExpandedSectionContext {
+    var presentation = CoveExpandedSectionPresentation(section: CoveExpandedSection(tab: nil, duo: false))
+    var permissions = CoveExpandedSectionPermissions()
+    var expanded = false
+}
+
+private struct CoveExpandedSectionKey: EnvironmentKey {
+    static let defaultValue = CoveExpandedSectionContext()
+}
+
+private extension EnvironmentValues {
+    var coveExpandedSection: CoveExpandedSectionContext {
+        get { self[CoveExpandedSectionKey.self] }
+        set { self[CoveExpandedSectionKey.self] = newValue }
+    }
+}
+
+/// Keep permission and input checks live inside SwiftUI's retained exit tree.
+/// Drop the subtree when it is no longer permitted, so opacity cannot keep
+/// disabled or private content mounted.
+private struct CoveExpandedSectionContent<Content: View>: View {
+    let identity: CoveExpandedSectionIdentity
+    @ViewBuilder var content: () -> Content
+    @Environment(\.coveExpandedSection) private var context
+
+    var body: some View {
+        let selected = identity == context.presentation.active
+        let active = selected && context.expanded
+        let retained = identity == context.presentation.outgoing && !context.presentation.settled
+        Group {
+            if (selected || retained) && context.permissions.permits(identity.section, outgoing: !selected) {
+                content()
+                    .disabled(!active)
+                    .allowsHitTesting(active)
+                    .accessibilityHidden(!active)
+            }
+        }
+        // Section motion belongs to the wrapper, never nested data or
+        // permission changes (including calendar's privacy branches).
+        .transaction { $0.animation = nil }
+    }
+}
+
+private struct CoveExpandedSectionFade: AnimatableModifier {
+    var opacity: Double
+    let identity: CoveExpandedSectionIdentity
+    @Environment(\.coveExpandedSection) private var context
+
+    var animatableData: Double {
+        get { opacity }
+        set { opacity = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        let selected = identity == context.presentation.active
+        let retained = identity == context.presentation.outgoing && !context.presentation.settled
+        let permitted = (selected || retained) && context.permissions.permits(identity.section, outgoing: !selected)
+        let active = selected && context.expanded && permitted
+        // SwiftUI can retain a rendered exit tree after its content is removed.
+        // Fence that image at the transition itself as well as the live subtree.
+        content.opacity(!permitted ? 0 : context.presentation.settled ? (selected ? 1 : 0) : opacity)
+            .transaction { $0.animation = nil }
+            .disabled(!active)
+            .allowsHitTesting(active)
+            .accessibilityHidden(!active)
+    }
+}
+
 @MainActor
 struct NotchView: View {
     @ObservedObject var store: CoveStore
@@ -80,6 +198,7 @@ struct NotchView: View {
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var settledPresentation: CovePanelMode?
+    @State private var lastExpandedSection: CoveExpandedSectionPresentation?
 
     init(store: CoveStore, cutout: CGSize? = nil) {
         self.store = store
@@ -173,6 +292,42 @@ struct NotchView: View {
             && store.preferences.enableMedia && store.preferences.enableCalendar
     }
 
+    private var expandedSectionPermissions: CoveExpandedSectionPermissions {
+        CoveExpandedSectionPermissions(
+            mediaEnabled: store.preferences.enableMedia && !system.state.isLocked,
+            mediaAvailable: media.state.available,
+            calendarEnabled: store.preferences.enableCalendar && activities.calendarEnabled,
+            calendarDetailsVisible: !activities.calendarDetailsHidden,
+            filesEnabled: store.preferences.enableFileTray,
+            timerEnabled: store.preferences.enableTimer)
+    }
+
+    private var expandedSectionPresentation: CoveExpandedSectionPresentation {
+        let section = CoveExpandedSection(tab: visibleTab, duo: showsDuo)
+        var next = lastExpandedSection?.targeting(section) ?? CoveExpandedSectionPresentation(section: section)
+        if usesImmediateMotion {
+            next.settled = true
+            next.outgoing = nil
+        }
+        if let outgoing = next.outgoing,
+           !expandedSectionPermissions.permits(outgoing.section, outgoing: true) {
+            next.outgoing = nil
+        }
+        return next
+    }
+
+    private var expandedSectionMotion: Animation? {
+        guard !systemReduceMotion && !store.preferences.reduceMotion else { return nil }
+        // Replacements use the existing short fade, with no viewport-open delay.
+        return CoveMotion.contentAnimation(preferences: store.preferences, hud: false, entering: false)
+    }
+
+    private func expandedSectionTransition(_ identity: CoveExpandedSectionIdentity) -> AnyTransition {
+        .modifier(active: CoveExpandedSectionFade(opacity: 0, identity: identity),
+                  identity: CoveExpandedSectionFade(opacity: 1, identity: identity))
+            .animation(expandedSectionMotion)
+    }
+
     private static func presentationCutout(store: CoveStore, physical: CGSize?) -> CGSize {
         CoveNotchCutout.resolve(physical: physical ?? CGSize(width: store.physicalNotchWidth,
             height: store.physicalNotchHeight), preferences: store.preferences)
@@ -186,8 +341,11 @@ struct NotchView: View {
     }
 
     var body: some View {
+        let section = expandedSectionPresentation
         surface
             .environment(\.colorScheme, .dark)
+            .environment(\.coveExpandedSection, CoveExpandedSectionContext(
+                presentation: section, permissions: expandedSectionPermissions, expanded: store.isExpanded))
             .environment(\.covePanelPresentation, CovePanelPresentation(
                 mode: panelMode,
                 immediate: usesImmediateMotion || settledPresentation == panelMode,
@@ -203,6 +361,11 @@ struct NotchView: View {
             }
             .onChange(of: panelMode) { _, mode in
                 settledPresentation = usesImmediateMotion ? mode : nil
+            }
+            .onChange(of: section, initial: true) { _, presentation in
+                // Persist revocations and Reduce Motion settlement. A later
+                // distinct section gets a fresh revision and can animate again.
+                lastExpandedSection = presentation
             }
             .onExitCommand(perform: store.collapse)
     }
@@ -429,45 +592,18 @@ struct NotchView: View {
     }
 
     private var expanded: some View {
-        VStack(spacing: 0) {
-            Group {
-                switch visibleTab {
-                case .media:
-                    if showsDuo {
-                        HStack(alignment: .top, spacing: 13) {
-                            CoveMediaSurface(media: media, system: system, waveform: waveform,
-                                             showPlaybackIndicator: store.preferences.showPlaybackIndicator,
-                                         showLiveWaveform: store.preferences.showLiveWaveform, condensed: true,
-                                             musicColorAccent: store.preferences.musicColorAccent,
-                                             reduceMotion: store.preferences.reduceMotion)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            Rectangle().fill(.white.opacity(0.09)).frame(width: 1)
-                            CoveCalendarView(activities: activities, condensed: true)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        }
-                    } else {
-                        CoveMediaSurface(media: media, system: system, waveform: waveform,
-                                         showPlaybackIndicator: store.preferences.showPlaybackIndicator,
-                                         showLiveWaveform: store.preferences.showLiveWaveform,
-                                         musicColorAccent: store.preferences.musicColorAccent,
-                                         reduceMotion: store.preferences.reduceMotion)
-                    }
-                case .calendar:
-                    CoveCalendarView(activities: activities)
-                case .files:
-                    CoveFileSurface(activities: activities)
-                case .timer:
-                    CoveTimerSurface(activities: activities, color: CoveNotchStyle.accent(store.preferences.accent),
-                                     reduceMotion: systemReduceMotion || store.preferences.reduceMotion)
-                case nil:
-                    CoveEmptySurface(symbol: "sparkle", title: "Your quiet space",
-                                     message: "Choose what appears here in Settings.",
-                                     actionTitle: "Open Settings", action: store.openSettings)
+        let identity = expandedSectionPresentation.active
+        return VStack(spacing: 0) {
+            ZStack {
+                CoveExpandedSectionContent(identity: identity) {
+                    expandedContent(section: identity.section)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .id(identity)
+                .transition(expandedSectionTransition(identity))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .id(visibleTab)
-            .transition(.opacity)
+            .animation(expandedSectionMotion, value: identity)
             .padding(.bottom, 6)
             HStack(spacing: 8) {
                 if let hud = store.hud {
@@ -500,7 +636,42 @@ struct NotchView: View {
         .padding(.horizontal, 20)
         .padding(.top, 16 + cutoutHeight)
         .padding(.bottom, 10)
-        .animation(motion, value: visibleTab)
+    }
+
+    @ViewBuilder private func expandedContent(section: CoveExpandedSection) -> some View {
+        switch section.tab {
+        case .media:
+            if section.duo {
+                HStack(alignment: .top, spacing: 13) {
+                    CoveMediaSurface(media: media, system: system, waveform: waveform,
+                                     showPlaybackIndicator: store.preferences.showPlaybackIndicator,
+                                     showLiveWaveform: store.preferences.showLiveWaveform, condensed: true,
+                                     musicColorAccent: store.preferences.musicColorAccent,
+                                     reduceMotion: store.preferences.reduceMotion)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Rectangle().fill(.white.opacity(0.09)).frame(width: 1)
+                    CoveCalendarView(activities: activities, condensed: true)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
+                CoveMediaSurface(media: media, system: system, waveform: waveform,
+                                 showPlaybackIndicator: store.preferences.showPlaybackIndicator,
+                                 showLiveWaveform: store.preferences.showLiveWaveform,
+                                 musicColorAccent: store.preferences.musicColorAccent,
+                                 reduceMotion: store.preferences.reduceMotion)
+            }
+        case .calendar:
+            CoveCalendarView(activities: activities)
+        case .files:
+            CoveFileSurface(activities: activities)
+        case .timer:
+            CoveTimerSurface(activities: activities, color: CoveNotchStyle.accent(store.preferences.accent),
+                             reduceMotion: systemReduceMotion || store.preferences.reduceMotion)
+        case nil:
+            CoveEmptySurface(symbol: "sparkle", title: "Your quiet space",
+                             message: "Choose what appears here in Settings.",
+                             actionTitle: "Open Settings", action: store.openSettings)
+        }
     }
 
     private var timerAccessibilityText: Text {
