@@ -51,6 +51,6 @@ struct AudioOutputPicker: View {
         } message: {
             Text(selectionError ?? "Choose an available output.")
         }
-        .onAppear { system.refresh() }
+        .onAppear { system.refreshAudio() }
     }
 }
