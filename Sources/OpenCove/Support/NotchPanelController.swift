@@ -561,6 +561,15 @@ final class NotchPanelController: NSObject {
         let inGestureStrip = !store.isExpanded || event.locationInWindow.y >= surface.panel.frame.height - surface.gestureStripHeight
         guard inGestureStrip else { surface.scroll.reset(); return false }
         switch event.type {
+        case .otherMouseDown:
+            guard event.buttonNumber == 2, !surface.content.hosting.isHidden,
+                  surface.content.bounds.contains(event.locationInWindow) else { return false }
+            let targets = enabledTabs.filter { $0 == .media || $0 == .calendar }
+            guard !targets.isEmpty else { return false }
+            cancelHoverWork()
+            let next = targets.firstIndex(of: store.selectedTab).map { ($0 + 1) % targets.count } ?? 0
+            store.selectTab(targets[next], expand: true)
+            return true
         case .rightMouseDown:
             showContextMenu(event: event, view: surface.content)
             return true

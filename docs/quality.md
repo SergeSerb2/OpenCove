@@ -17,6 +17,31 @@ This builds without launching or replacing a shared app. `--allow-dirty` records
 
 ## Exercise the real interface
 
+The opt-in development server also accepts one app-local middle-button event:
+
+```sh
+./script/opencovectl --data-dir "$OPENCOVE_DATA_DIR" command \
+  '{"action":"input.middleClick","region":"gestureStrip"}'
+```
+
+`region` is either `gestureStrip` or the expanded `body`. Arbitrary coordinates,
+buttons, windows and PIDs are rejected. The controller requires one visible,
+settled owned panel in the active session. It constructs a real middle-button
+`NSEvent` through the public Core Graphics bridge, checks that the owned window
+and local point survive, then uses `NSApplication.sendEvent` synchronously.
+The request observes the original native handler and returns `nativeInput`
+with its button number, window/target numbers, PID, receipt and handled result.
+No queued event remains when the request ends. No desktop input, pointer move,
+global event post, monitor, event tap or permission request is used.
+
+Require receipt and target identity before checking Media → Calendar → Media,
+disabled-section skipping, Files/Timer exclusion and the empty case. Check the
+mounted native surface after selection. `handled: false` is expected for the
+expanded body and when both cycle targets are disabled. Hidden, ambiguous or
+moving panels return `409`. This proves app-local dispatch and native routing;
+physical mouse delivery, secure-screen behavior and reference hit-area parity
+remain separate coverage.
+
 ```sh
 python3 -B script/smoke.py --app "$OPENCOVE_CHECK_ROOT/bundle/OpenCove.app" \
   --slow --render

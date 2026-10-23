@@ -35,7 +35,7 @@ cd OpenCove
 ./script/build_and_run.sh            # Build and launch the development app
 ```
 
-Quit a running copy before rebuilding its bundle, or select an isolated output directory. The menu bar icon opens the notch, Settings, or Quit. Hover expands the notch; Escape closes it. The expanded panel’s ellipsis menu selects sections and opens Settings. Right-click and swipe navigation are also available.
+Quit a running copy before rebuilding its bundle, or select an isolated output directory. The menu bar icon opens the notch, Settings, or Quit. Hover expands the notch; Escape closes it. The expanded panel’s ellipsis menu selects sections and opens Settings. Middle-click the compact panel or expanded header to cycle between enabled Media and Calendar sections. Right-click and swipe navigation are also available; swipes retain their separate enabled-section order.
 
 Settings → General → Displays chooses Built-in, Main, All, or an individual connected display. Individual choices use the display's saved system identity. If it is unavailable, the app keeps that choice and uses the main available display temporarily. All overrides the saved choice; choosing Built-in or Main clears it. The same choice applies to optional lock widgets. Mixed-display and secure-screen behavior still need the checks in [compatibility](docs/compatibility.md).
 

@@ -1,6 +1,13 @@
 # OpenCove architecture
 
-OpenCove is an independent MIT application. SwiftUI views run in AppKit windows and panels. The deployment target is macOS 15. The package has no third-party Swift dependencies. No proprietary application code, artwork, binaries, or license service is included.
+OpenCove is an independent MIT application. SwiftUI views run in AppKit windows and panels. The deployment target is macOS 15. Sparkle is a pinned binary dependency for updates; see [its trust and packaging policy](updates.md). No proprietary application code, artwork, binaries, or license service is included.
+
+Middle-button navigation uses the existing native panel event handler. Button 2
+in the compact panel or expanded gesture strip cycles enabled Media and Calendar
+sections and expands the result. Files and Timer are outside that cycle. With
+neither target enabled, the event does not change selection. Expanded content
+keeps its normal event path. Swipe and scroll navigation retain their existing
+enabled-section order. The handler adds no timer, event tap or global monitor.
 
 ## State and service ownership
 
