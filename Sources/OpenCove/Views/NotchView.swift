@@ -1,9 +1,38 @@
 import SwiftUI
 import AppKit
 
+private enum CoveCompactMode: Hashable {
+    case activity(CoveCompactActivity)
+    case hud(HUDKind)
+    case peek
+}
+
+private enum CovePanelMode: Equatable {
+    case expanded
+    case compact(CoveCompactMode)
+}
+
 private struct CovePanelPresentation {
-    var expanded = false
-    var reduceMotion = false
+    var mode: CovePanelMode = .compact(.activity(.clock))
+    var immediate = false
+    var mediaAvailable = false
+    var timerAvailable = false
+    var calendarAvailable = false
+    var calendarDetailsVisible = false
+    var peekEnabled = false
+    var hud: HUDKind?
+
+    func mayRetain(_ mode: CovePanelMode) -> Bool {
+        switch mode {
+        case .expanded: return true
+        case .compact(.activity(.media)): return mediaAvailable
+        case .compact(.activity(.timer)): return timerAvailable
+        case .compact(.activity(.calendar)): return calendarAvailable && calendarDetailsVisible
+        case .compact(.activity(.clock)): return true
+        case .compact(.peek): return mediaAvailable && peekEnabled
+        case .compact(.hud(let kind)): return hud == kind
+        }
+    }
 }
 
 private struct CovePanelPresentationKey: EnvironmentKey {
@@ -22,7 +51,7 @@ private extension EnvironmentValues {
 /// immediately, rather than waiting for an already scheduled fade or delay.
 private struct CovePanelFade: AnimatableModifier {
     var opacity: Double
-    let expanded: Bool
+    let mode: CovePanelMode
     @Environment(\.covePanelPresentation) private var presentation
 
     var animatableData: Double {
@@ -31,8 +60,12 @@ private struct CovePanelFade: AnimatableModifier {
     }
 
     func body(content: Content) -> some View {
-        content.opacity(presentation.reduceMotion ? (expanded == presentation.expanded ? 1 : 0) : opacity)
+        let active = mode == presentation.mode
+        let permitted = active || presentation.mayRetain(mode)
+        content.opacity(!permitted ? 0 : presentation.immediate ? (active ? 1 : 0) : opacity)
             .transaction { $0.animation = nil }
+            .allowsHitTesting(active)
+            .accessibilityHidden(!active)
     }
 }
 
@@ -46,6 +79,7 @@ struct NotchView: View {
     private let waveform: AudioWaveformController
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
+    @State private var settledPresentation: CovePanelMode?
 
     init(store: CoveStore, cutout: CGSize? = nil) {
         self.store = store
@@ -96,11 +130,34 @@ struct NotchView: View {
         return CoveMotion.animation(preferences: store.preferences, hud: store.hud != nil)
     }
 
-    private func contentTransition(expanded: Bool) -> AnyTransition {
+    private var compactMode: CoveCompactMode {
+        if let hud = store.hud { return .hud(hud.kind) }
+        if store.showsMediaPeek { return .peek }
+        return .activity(store.compactActivity)
+    }
+
+    private var panelMode: CovePanelMode {
+        store.isExpanded ? .expanded : .compact(compactMode)
+    }
+
+    private var usesImmediateMotion: Bool {
+        systemReduceMotion || store.preferences.reduceMotion
+            || (store.hud != nil && store.preferences.hudSpeed == "instant")
+    }
+
+    private var compactMotion: Animation? {
+        guard !systemReduceMotion && !store.preferences.reduceMotion else { return nil }
+        return CoveMotion.contentAnimation(preferences: store.preferences, hud: store.hud != nil, entering: false)
+    }
+
+    private func contentTransition(mode: CovePanelMode) -> AnyTransition {
         let reduced = systemReduceMotion || store.preferences.reduceMotion
         guard !reduced else { return .identity }
-        let fade = AnyTransition.modifier(active: CovePanelFade(opacity: 0, expanded: expanded),
-                                         identity: CovePanelFade(opacity: 1, expanded: expanded))
+        let fade = AnyTransition.modifier(active: CovePanelFade(opacity: 0, mode: mode),
+                                         identity: CovePanelFade(opacity: 1, mode: mode))
+        // Compact controls already fit the viewport. Crossfade them together;
+        // only expanded controls wait for the native window to open first.
+        if case .compact = mode { return fade.animation(compactMotion) }
         return .asymmetric(
             insertion: fade.animation(CoveMotion.contentAnimation(
                 preferences: store.preferences, hud: store.hud != nil, entering: true)),
@@ -131,8 +188,22 @@ struct NotchView: View {
     var body: some View {
         surface
             .environment(\.colorScheme, .dark)
-            .environment(\.covePanelPresentation, CovePanelPresentation(expanded: store.isExpanded,
-                reduceMotion: systemReduceMotion || store.preferences.reduceMotion))
+            .environment(\.covePanelPresentation, CovePanelPresentation(
+                mode: panelMode,
+                immediate: usesImmediateMotion || settledPresentation == panelMode,
+                mediaAvailable: store.preferences.enableMedia && media.state.available,
+                timerAvailable: store.preferences.enableTimer && activities.timer.remaining > 0,
+                calendarAvailable: store.preferences.enableCalendar && activities.eventActivity != nil,
+                calendarDetailsVisible: !activities.calendarDetailsHidden,
+                peekEnabled: store.preferences.peekOnSongChange, hud: store.hud?.kind))
+            .onChange(of: usesImmediateMotion) { _, immediate in
+                // Keep an interrupted fade settled if Reduce Motion is turned
+                // off again before SwiftUI retires the old transition.
+                if immediate { settledPresentation = panelMode }
+            }
+            .onChange(of: panelMode) { _, mode in
+                settledPresentation = usesImmediateMotion ? mode : nil
+            }
             .onExitCommand(perform: store.collapse)
     }
 
@@ -143,6 +214,7 @@ struct NotchView: View {
                 .animation(motion, value: store.isExpanded)
                 .animation(motion, value: store.hud?.kind)
                 .animation(motion, value: store.showsMediaPeek)
+                .animation(compactMotion, value: compactMode)
                 // Lay out controls at their destination size once. AppKit owns the
                 // moving viewport; proposing every intermediate window size to the
                 // controls makes labels, spacers and sliders reflow during a morph.
@@ -176,14 +248,18 @@ struct NotchView: View {
     @ViewBuilder private var content: some View {
         let expandedSize = Self.desiredSize(store: store, cutout: cutout, expanded: true)
         let compactSize = Self.desiredSize(store: store, cutout: cutout, expanded: false)
+        let compactMode = self.compactMode
         ZStack(alignment: .top) {
             if store.isExpanded {
                 expanded
                     .frame(width: expandedSize.width, height: expandedSize.height)
-                    .transition(contentTransition(expanded: true))
+                    .transition(contentTransition(mode: .expanded))
             } else {
-                Button(action: store.openCompactActivity) {
-                    compact
+                Button {
+                    guard !store.isExpanded, compactMode == self.compactMode else { return }
+                    store.openCompactActivity()
+                } label: {
+                    compact(mode: compactMode)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .contentShape(Rectangle())
                 }
@@ -199,21 +275,21 @@ struct NotchView: View {
                     }
                 }
                 .frame(width: compactSize.width, height: compactSize.height)
-                .transition(contentTransition(expanded: false))
+                .id(compactMode)
+                .transition(contentTransition(mode: .compact(compactMode)))
             }
         }
     }
 
-    private var compactArtworkData: Data? {
-        guard !store.hidesCompactWhenIdle, store.hud == nil,
-              store.preferences.enableMedia, media.state.available,
-              store.showsMediaPeek || store.compactActivity == .media else { return nil }
+    private func compactArtworkData(mode: CoveCompactMode) -> Data? {
+        guard store.preferences.enableMedia, media.state.available else { return nil }
+        guard mode == .peek || mode == .activity(.media) else { return nil }
         return media.state.artworkData
     }
 
-    private var compact: some View {
-        CoveArtworkReader(data: compactArtworkData) { artwork in
-            compactContent(artwork: artwork)
+    private func compact(mode: CoveCompactMode) -> some View {
+        CoveArtworkReader(data: compactArtworkData(mode: mode)) { artwork in
+            compactContent(mode: mode, artwork: artwork)
         }
     }
 
@@ -222,16 +298,15 @@ struct NotchView: View {
             ?? CoveNotchStyle.accent(store.preferences.accent)
     }
 
-    @ViewBuilder private func compactContent(artwork: CoveArtworkThumbnail?) -> some View {
-        if store.hidesCompactWhenIdle {
+    @ViewBuilder private func compactContent(mode: CoveCompactMode, artwork: CoveArtworkThumbnail?) -> some View {
+        if store.hidesCompactWhenIdle && mode == compactMode {
             Color.clear
-        } else if let hud = store.hud {
+        } else if case .hud(let kind) = mode, let hud = store.hud, hud.kind == kind {
             CoveCompactHUD(hud: hud, accent: CoveNotchStyle.accent(store.preferences.accent), centerGap: compactGap)
                 .padding(.horizontal, 18)
-        } else if store.showsMediaPeek {
+        } else if mode == .peek && store.preferences.enableMedia && media.state.available {
             mediaPeek(artwork: artwork)
-                .transition(.opacity)
-        } else if store.compactActivity == .media {
+        } else if mode == .activity(.media) && store.preferences.enableMedia && media.state.available {
             HStack(spacing: 0) {
                 CoveArtwork(thumbnail: artwork, size: 23, radius: 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -270,7 +345,7 @@ struct NotchView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.horizontal, 15)
-        } else if store.compactActivity == .timer {
+        } else if mode == .activity(.timer) && store.preferences.enableTimer && activities.timer.remaining > 0 {
             HStack(spacing: 0) {
                 Image(systemName: activities.timer.running ? "timer" : "pause.fill")
                     .foregroundStyle(CoveNotchStyle.accent(store.preferences.accent))
@@ -282,7 +357,7 @@ struct NotchView: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.horizontal, 18)
-        } else if store.compactActivity == .calendar, let activity = activities.eventActivity {
+        } else if mode == .activity(.calendar), store.preferences.enableCalendar, let activity = activities.eventActivity {
             HStack(spacing: 0) {
                 HStack(spacing: 7) {
                     Image(systemName: activity.phase == .current ? "calendar.badge.clock" : "calendar")
@@ -295,7 +370,7 @@ struct NotchView: View {
                     .font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit()
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }.padding(.horizontal, 16)
-        } else {
+        } else if mode == .activity(.clock) {
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 HStack(spacing: 0) {
                     Text(context.date, format: .dateTime.hour().minute())
@@ -321,6 +396,8 @@ struct NotchView: View {
                 }
             }
             .padding(.horizontal, 16)
+        } else {
+            Color.clear
         }
     }
 
