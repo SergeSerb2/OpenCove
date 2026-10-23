@@ -76,8 +76,8 @@ struct NotchView: View {
             return CGSize(width: max(360, width, cutoutWidth + 80), height: max(height, cutoutHeight + 56))
         }
         if store.compactActivity == .media {
-            if store.preferences.enableTimer && store.activities.timer.remaining > 0 ||
-                store.preferences.enableCalendar && store.activities.eventActivity != nil {
+            if store.isCompactActivityVisible(.timer) ||
+                store.isCompactActivityVisible(.calendar) {
                 return CGSize(width: max(300, width, cutoutWidth > 0 ? cutoutWidth + 220 : 0), height: height)
             }
             return CGSize(width: max(250, width, cutoutWidth > 0 ? cutoutWidth + 140 : 0), height: height)
@@ -190,6 +190,14 @@ struct NotchView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(compactAccessibilityLabel)
                 .accessibilityHint("Show OpenCove controls")
+                .accessibilityActions {
+                    if let activity = store.compactDismissActivity, let target = store.compactDismissTarget {
+                        Button("Dismiss \(activity.title) Activity") { store.dismissCompactActivity(target: target) }
+                    }
+                    if let activity = store.compactRestoreActivity, let target = store.compactRestoreTarget {
+                        Button("Restore \(activity.title) Activity") { store.restoreCompactActivity(target: target) }
+                    }
+                }
                 .frame(width: compactSize.width, height: compactSize.height)
                 .transition(contentTransition(expanded: false))
             }
@@ -244,13 +252,13 @@ struct NotchView: View {
                                       color: mediaAccent(artwork: artwork))
                     }
                 }
-                if store.preferences.enableTimer && activities.timer.remaining > 0 ||
-                    store.preferences.enableCalendar && activities.eventActivity != nil {
+                if store.isCompactActivityVisible(.timer) ||
+                    store.isCompactActivityVisible(.calendar) {
                     VStack(alignment: .trailing, spacing: 1) {
-                        if store.preferences.enableTimer && activities.timer.remaining > 0 {
+                        if store.isCompactActivityVisible(.timer) {
                             Label(CoveNotchStyle.duration(activities.timer.remaining), systemImage: "timer")
                         }
-                        if store.preferences.enableCalendar, let activity = activities.eventActivity {
+                        if store.isCompactActivityVisible(.calendar), let activity = activities.eventActivity {
                             Label((activity.phase == .startingSoon ? "in " : "") + CoveNotchStyle.duration(Double(activity.remainingSeconds)),
                                   systemImage: "calendar")
                         }
@@ -399,6 +407,9 @@ struct NotchView: View {
                         }
                     }
                     Divider()
+                    if let activity = store.compactRestoreActivity, let target = store.compactRestoreTarget {
+                        Button("Restore \(activity.title) Activity") { store.restoreCompactActivity(target: target) }
+                    }
                     Button("Settings…", action: store.openSettings)
                     Button("Collapse", action: store.collapse)
                 } label: { Image(systemName: "ellipsis").frame(width: 24, height: 18) }
@@ -421,10 +432,10 @@ struct NotchView: View {
         }
         if store.compactActivity == .media {
             var label = "\(media.state.isPlaying ? "Playing" : "Paused"), \(media.state.title), \(media.state.artist)"
-            if store.preferences.enableTimer && activities.timer.remaining > 0 {
+            if store.isCompactActivityVisible(.timer) {
                 label += ", timer \(CoveNotchStyle.duration(activities.timer.remaining)) remaining"
             }
-            if store.preferences.enableCalendar, let activity = activities.eventActivity {
+            if store.isCompactActivityVisible(.calendar), let activity = activities.eventActivity {
                 label += ", \(activity.event.title), \(activity.phase == .current ? "ends" : "starts") in \(CoveNotchStyle.duration(Double(activity.remainingSeconds)))"
             }
             return label

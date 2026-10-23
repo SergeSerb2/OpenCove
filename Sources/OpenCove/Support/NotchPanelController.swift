@@ -37,10 +37,10 @@ final class NotchPanelController: NSObject {
     private var layoutInputs: LayoutInputs {
         LayoutInputs(preferences: store.preferences, expanded: store.isExpanded, tab: store.selectedTab,
                      hud: store.hud != nil,
-                     media: store.preferences.enableMedia && store.compactMediaVisible && store.media.state.available,
+                     media: store.isCompactActivityVisible(.media),
                      compactActivity: store.compactActivity,
                      mediaPeek: store.showsMediaPeek,
-                     timer: store.activities.timer.remaining > 0, event: store.activities.eventActivity != nil)
+                     timer: store.isCompactActivityVisible(.timer), event: store.isCompactActivityVisible(.calendar))
     }
 
     init(store: CoveStore) {
@@ -490,7 +490,7 @@ final class NotchPanelController: NSObject {
         case .swipe:
             if abs(event.deltaX) > abs(event.deltaY) { changeTab(forward: event.deltaX < 0) }
             else if event.deltaY < 0 { store.expand() }
-            else if event.deltaY > 0 { cancelHoverWork(); store.collapse() }
+            else if event.deltaY > 0 { collapseOrDismiss() }
             return true
         case .scrollWheel:
             guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else {
@@ -502,7 +502,7 @@ final class NotchPanelController: NSObject {
                 case .nextTab: changeTab(forward: true)
                 case .previousTab: changeTab(forward: false)
                 case .expand: store.expand()
-                case .collapse: cancelHoverWork(); store.collapse()
+                case .collapse: collapseOrDismiss()
                 }
             }
             return true
@@ -512,6 +512,12 @@ final class NotchPanelController: NSObject {
     }
 
     private var enabledTabs: [CoveTab] { store.enabledTabs }
+
+    private func collapseOrDismiss() {
+        cancelHoverWork()
+        if store.isExpanded { store.collapse() }
+        else if let target = store.compactDismissTarget { store.dismissCompactActivity(target: target) }
+    }
 
     private func changeTab(forward: Bool) {
         let tabs = enabledTabs
@@ -538,6 +544,16 @@ final class NotchPanelController: NSObject {
             item.representedObject = tab.rawValue
             item.state = tab == store.selectedTab ? .on : .off
         }
+        if let activity = store.compactDismissActivity, let target = store.compactDismissTarget {
+            let item = menu.addItem(withTitle: "Dismiss \(activity.title) Activity", action: #selector(dismissFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = target
+        }
+        if let activity = store.compactRestoreActivity, let target = store.compactRestoreTarget {
+            let item = menu.addItem(withTitle: "Restore \(activity.title) Activity", action: #selector(restoreFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = target
+        }
         menu.addItem(.separator())
         let settings = menu.addItem(withTitle: "Settings…", action: #selector(settingsFromMenu), keyEquivalent: "")
         settings.target = self
@@ -555,6 +571,14 @@ final class NotchPanelController: NSObject {
     @objc private func settingsFromMenu() {
         guard mayHandleMenuAction else { return }
         store.openSettings()
+    }
+    @objc private func dismissFromMenu(_ item: NSMenuItem) {
+        guard mayHandleMenuAction, let target = item.representedObject as? String else { return }
+        store.dismissCompactActivity(target: target)
+    }
+    @objc private func restoreFromMenu(_ item: NSMenuItem) {
+        guard mayHandleMenuAction, let target = item.representedObject as? String else { return }
+        store.restoreCompactActivity(target: target)
     }
     @objc private func selectFromMenu(_ item: NSMenuItem) {
         guard mayHandleMenuAction,

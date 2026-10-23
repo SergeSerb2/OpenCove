@@ -961,6 +961,127 @@ print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding:
         write_private(directory / "observations.json", json_bytes(observations))
         self.record("compact: legacy/default, real timer, disabled/empty fallback, HUD restoration and restart")
 
+    def compact_dismissal(self):
+        directory = self.directory("compact-dismissal", preferences={**SAFE, "hideWhenIdle": False,
+            "expandOnHover": False, "hideInFullscreen": False, "reduceMotion": False,
+            "enableNotifications": True, "hudDuration": 0.5})
+        observations = []
+
+        def read(client, activity):
+            state = wait_for(client.request, lambda s: s["compactActivity"] == activity,
+                             "Compact dismissal did not select the available activity.")
+            observations.append({key: state[key] for key in (
+                "compactActivity", "compactActivities", "dismissedCompactActivities", "expanded")})
+            return state
+
+        def dismiss(client):
+            state = client.request()
+            target = state["compactDismissTarget"]
+            require(target, "A real compact activity did not offer its dismissal target.")
+            preferences = (directory / "preferences.json").read_bytes()
+            timer = (directory / "activity-timer.json").read_bytes()
+            client.command("compact.dismiss", target=target)
+            require((directory / "preferences.json").read_bytes() == preferences and
+                    (directory / "activity-timer.json").read_bytes() == timer,
+                    "Dismissing presentation wrote preferences or timer state.")
+            return target
+
+        with self.app(directory) as client:
+            state = read(client, "clock")
+            require(state["compactActivities"] == [] and state["compactDismissTarget"] is None
+                    and state["compactRestoreTarget"] is None, "An empty clock offered an activity action.")
+            for action in ("compact.dismiss", "compact.restore"):
+                client.command(action, expected=400)
+                client.command(action, target="bad", expected=400)
+                client.command(action, target=str(uuid.uuid4()), expected=409)
+            client.command("timer.start", seconds=90)
+            state = read(client, "timer")
+            first = state["compactDismissTarget"]
+            time.sleep(1.1)
+            require(read(client, "timer")["compactDismissTarget"] == first,
+                    "A countdown tick replaced the current activity target.")
+            dismiss(client)
+            state = read(client, "clock")
+            require(state["dismissedCompactActivities"] == ["timer"] and state["timer"]["running"],
+                    "Dismissal canceled the real timer or retained its compact presentation.")
+            restore = state["compactRestoreTarget"]
+            client.command("timer.pause")
+            require(read(client, "clock")["compactRestoreTarget"] == restore,
+                    "Pause replaced the dismissed timer instance.")
+            client.command("timer.resume")
+            require(read(client, "clock")["compactRestoreTarget"] == restore,
+                    "Resume replaced the dismissed timer instance.")
+            client.command("expand")
+            client.command("compact.restore", target=restore)
+            state = read(client, "timer")
+            require(not state["expanded"] and state["timer"]["running"] and not state["dismissedCompactActivities"],
+                    "Restore did not bring the real timer forward in compact form.")
+            client.command("compact.restore", target=restore, expected=409)
+            client.command("compact.dismiss", target=first, expected=409)
+
+            previous = state["compactDismissTarget"]
+            client.command("timer.start", seconds=90)
+            client.command("compact.dismiss", target=previous, expected=409)
+            dismiss(client)
+            previous_restore = read(client, "clock")["compactRestoreTarget"]
+            client.command("timer.start", seconds=90)
+            require(read(client, "timer")["dismissedCompactActivities"] == [],
+                    "An earlier dismissal hid a new timer with the same duration.")
+            client.command("compact.restore", target=previous_restore, expected=409)
+            target = client.request()["compactDismissTarget"]
+            client.command("notification.post", title="Owned dismissal verification", body="Temporary HUD")
+            client.command("compact.dismiss", target=target, expected=409)
+            wait_for(client.request, lambda s: s["hud"] is None, "The real HUD did not retire.")
+            require(read(client, "timer")["dismissedCompactActivities"] == [],
+                    "A command during a HUD dismissed its underlying activity.")
+            target = client.request()["compactDismissTarget"]
+            client.command("expand")
+            client.command("compact.dismiss", target=target, expected=409)
+            require(client.request()["expanded"], "A refused expanded dismissal collapsed the panel.")
+            client.command("collapse")
+
+            client.command("preferences", values={"hideWhenIdle": True})
+            dismiss(client)
+            state = read(client, "clock")
+            restore = state["compactRestoreTarget"]
+            wait_for(client.request, lambda s: all(w["contentHidden"] and w["height"] <= 3
+                     for w in s["nativeWindows"] if w["title"] == "OpenCove")
+                     and any(w["title"] == "OpenCove" for w in s["nativeWindows"]),
+                     "All-dismissed compact content did not retire at the edge.")
+            client.command("compact.restore", target=restore)
+            read(client, "timer")
+            wait_for(client.request, lambda s: any(not w["contentHidden"] and w["height"] > 3
+                     for w in s["nativeWindows"] if w["title"] == "OpenCove"),
+                     "Restore did not reveal the real native timer.")
+            time.sleep(0.3)
+            write_private(directory / "restored-timer.png", client.request("/render?surface=live-notch"))
+            client.command("timer.start", seconds=1)
+            dismiss(client)
+            expired = read(client, "clock")["compactRestoreTarget"]
+            state = wait_for(client.request, lambda s: s["timer"]["remaining"] == 0 and s["hud"] is None,
+                             "The dismissed real timer did not complete.")
+            require(state["compactRestoreTarget"] is None and not state["dismissedCompactActivities"],
+                    "A completed timer remained restorable.")
+            client.command("compact.restore", target=expired, expected=409)
+            client.command("timer.start", seconds=90)
+            dismiss(client)
+            client.command("preferences", values={"compactActivity": "timer"})
+            require(not read(client, "timer")["dismissedCompactActivities"],
+                    "An explicit compact preference retained a hidden selection.")
+            dismiss(client)
+            client.command("preferences", values={"enableTimer": False})
+            read(client, "clock")
+            client.command("preferences", values={"enableTimer": True})
+            read(client, "timer")
+            dismiss(client)
+        with self.app(directory) as client:
+            state = read(client, "timer")
+            require(not state["dismissedCompactActivities"] and state["timer"]["running"],
+                    "Session-only dismissal persisted or canceled its timer across restart.")
+            client.command("timer.cancel")
+        write_private(directory / "observations.json", json_bytes(observations))
+        self.record("compact dismissal: real timer instance, stale actions, pause/resume, HUD guards, native hide/restore, expiry and restart")
+
     def preferences(self):
         for name, original in (
             ("field-recovery", json_bytes({**SAFE, "reduceMotion": "damaged", "notchWidth": 999,
@@ -2492,13 +2613,67 @@ print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding:
                 current = owned_compact(client, "timer")
                 require(current["media"]["elapsed"] > elapsed + 0.5 and current["media"]["isPlaying"],
                         "Compact choice interrupted the actual source or its playback clock.")
+                client.command("preferences", values={"compactActivity": "automatic"})
+                state = owned_compact(client, "media")
+                timer_remaining = state["timer"]["remaining"]
+                media_target = state["compactDismissTarget"]
+                client.command("compact.dismiss", target=media_target)
+                state = owned_compact(client, "timer")
+                require(state["dismissedCompactActivities"] == ["media"] and state["media"]["isPlaying"],
+                        "Media dismissal stopped playback or did not reveal the concurrent timer.")
+                media_restore = state["compactRestoreTarget"]
+                client.command("compact.dismiss", target=state["compactDismissTarget"])
+                state = owned_compact(client, "clock")
+                require(state["compactActivities"] == [] and state["dismissedCompactActivities"] == ["media", "timer"],
+                        "Two dismissed real activities did not yield the clock.")
+                timer_restore = state["compactRestoreTarget"]
+                client.command("compact.restore", target=timer_restore)
+                owned_compact(client, "timer")
+                client.command("compact.restore", target=media_restore)
+                owned_compact(client, "media")
+                client.command("compact.restore", target=timer_restore, expected=409)
+                client.command("compact.dismiss", target=media_target, expected=409)
+
+                client.command("preferences", values={"compactActivity": "timer"})
+                state = owned_compact(client, "timer")
+                client.command("compact.dismiss", target=state["compactDismissTarget"])
+                state = owned_compact(client, "media")
+                require(state["compactActivities"] == ["media"] and not state["timer"]["running"]
+                        and abs(state["timer"]["remaining"] - timer_remaining) < 0.25,
+                        "Dismissing the preferred timer changed its persisted pause or leaked its secondary presentation.")
+                write_private(directory / "dismissed-timer-media.png", client.request("/render?surface=live-notch"))
+                client.command("compact.restore", target=state["compactRestoreTarget"])
+                owned_compact(client, "timer")
+                client.command("preferences", values={"compactActivity": "automatic"})
+                state = owned_compact(client, "media")
+                old_item = state["media"]["contentItemIdentifier"]
+                client.command("compact.dismiss", target=state["compactDismissTarget"])
+                state = owned_compact(client, "timer")
+                retired_restore = state["compactRestoreTarget"]
+                require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
+                        "Native source changed; no next-item command sent.")
+                client.command("media.next")
+                changed = wait_for(client.request, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("contentItemIdentifier") not in (None, "", old_item)
+                    and s["compactActivity"] == "media", "A new real item inherited the previous dismissal.", 25)
+                require(changed["dismissedCompactActivities"] == [] and changed["media"]["isPlaying"],
+                        "New-item restoration changed playback or retained a stale dismissal.")
+                client.command("compact.restore", target=retired_restore, expected=409)
+                client.command("preferences", values={"compactActivity": "timer"})
+                state = owned_compact(client, "timer")
+                client.command("compact.dismiss", target=state["compactDismissTarget"])
+                state = owned_compact(client, "media")
+                client.command("compact.dismiss", target=state["compactDismissTarget"])
+                owned_compact(client, "clock")
             with self.app(directory) as client:
-                require(owned_compact(client, "timer")["preferences"]["compactActivity"] == "timer",
+                restarted = owned_compact(client, "timer")
+                require(restarted["preferences"]["compactActivity"] == "timer" and not restarted["dismissedCompactActivities"],
                         "Preferred timer did not survive restart while media stayed active.")
                 client.command("timer.cancel")
                 owned_compact(client, "media")
             write_private(directory / "observations.json", json_bytes(observations))
             self.record("compact: real concurrent media/timer preference, opening, disabled fallback and restart")
+            self.record("compact dismissal: concurrent real media/timer, bounded restore order, stale targets, new item and restart")
         finally:
             stop(child)
 
@@ -2663,7 +2838,7 @@ def main():
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
     parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
-    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "weather", "motion", "displays", "activities", "compact", "shape", "outline", "preferences", "timers", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "weather", "motion", "displays", "activities", "compact", "dismissal", "shape", "outline", "preferences", "timers", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
@@ -2691,6 +2866,7 @@ def main():
             groups.append(("displays", runtime.displays))
             groups.append(("activities", runtime.activity_selection))
             groups.append(("compact", runtime.compact_activity))
+            groups.append(("dismissal", runtime.compact_dismissal))
             groups.append(("shape", runtime.shape))
             groups.append(("outline", runtime.outline))
         if args.media_fixture and args.only != "storage":
