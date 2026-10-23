@@ -9,6 +9,7 @@ import SwiftUI
 final class DevelopmentServer {
     private let store: CoveStore
     private weak var updater: CoveUpdater?
+    private weak var notch: NotchPanelController?
     private let port: UInt16
     private let token = UUID().uuidString + UUID().uuidString
     private var listener: NWListener?
@@ -41,9 +42,10 @@ final class DevelopmentServer {
 
     private let descriptorURL = CovePaths.dataDirectory.appendingPathComponent("control.json")
 
-    init(store: CoveStore, port: UInt16, updater: CoveUpdater? = nil) {
+    init(store: CoveStore, port: UInt16, updater: CoveUpdater? = nil, notch: NotchPanelController? = nil) {
         self.store = store
         self.updater = updater
+        self.notch = notch
         self.port = port
         // Only explicitly enabled development controls observe this count.
         timerObservation = store.activities.$timer.dropFirst().sink { [weak self] _ in
@@ -259,6 +261,24 @@ final class DevelopmentServer {
                 catch { throw ControlError.invalid("The command body must be a JSON object.") }
                 guard let object = value as? [String: Any], let action = object["action"] as? String,
                       !action.isEmpty, action.utf8.count <= 128 else { throw ControlError.invalid("A command action is required.") }
+                if action == "input.middleClick" {
+                    guard Set(object.keys).isSubset(of: ["action", "region"]),
+                          let region = object["region"] as? String,
+                          ["gestureStrip", "body"].contains(region) else {
+                        throw ControlError.invalid("Choose gestureStrip or body; arbitrary input targets are not accepted.")
+                    }
+                    guard let notch else { throw ControlError.rejected("The native panel controller is unavailable.") }
+                    let receipt: [String: Any]
+                    do { receipt = try notch.acceptMiddleClick(region: region) }
+                    catch let error as NotchPanelController.InputAcceptanceError {
+                        throw ControlError.rejected(error.localizedDescription)
+                    }
+                    var state = try snapshot()
+                    state["commandStatus"] = "observed"
+                    state["nativeInput"] = receipt
+                    respond(connection, status: 200, json: state)
+                    return
+                }
                 if action == "system.refreshAudio" {
                     let caller = object["caller"] as? String ?? "developmentAPI"
                     guard object["caller"] == nil || object["caller"] is String,

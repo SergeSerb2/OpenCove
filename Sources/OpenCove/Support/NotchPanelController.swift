@@ -22,6 +22,11 @@ final class NotchPanelController: NSObject {
     private var sessionActive = false
     private var menuTrackingDepth = 0
     private var lifecycleRevision: UInt = 0
+    private var acceptingMiddleClick = false
+    struct InputAcceptanceError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
     private struct LayoutInputs: Equatable {
         var preferences: CovePreferences
         var expanded: Bool
@@ -320,6 +325,76 @@ final class NotchPanelController: NSObject {
         (window.contentView as? CovePanelTrackingView)?.hosting.isHidden
     }
 
+    /// Request-scoped native dispatch for the authenticated, opt-in controls.
+    /// No global input is posted and the user pointer is not moved. Observe
+    /// the original window handler synchronously; there is no queued event left
+    /// behind after cancellation, timeout, or a later panel lifecycle change.
+    func acceptMiddleClick(region: String) throws -> [String: Any] {
+        guard ProcessInfo.processInfo.arguments.contains("--control-port"),
+              CovePaths.isDevelopment, !acceptingMiddleClick, mayHandleMenuAction else {
+            throw InputAcceptanceError(message: "Native input acceptance needs an active development-control launch.")
+        }
+        let eligible = surfaces.values.filter {
+            $0.panel.isVisible && !$0.content.hosting.isHidden && !$0.frameAnimationInFlight
+                && $0.panel.attachedSheet == nil && $0.panel.contentView === $0.content
+        }
+        guard eligible.count == 1, let surface = eligible.first,
+              let original = surface.panel.onEvent else {
+            throw InputAcceptanceError(message: "Native input acceptance needs exactly one visible, settled owned panel.")
+        }
+        let bounds = surface.content.bounds
+        let y: CGFloat
+        switch region {
+        case "gestureStrip": y = bounds.maxY - min(bounds.height, surface.gestureStripHeight) / 2
+        case "body":
+            guard store.isExpanded, bounds.height > surface.gestureStripHeight + 4 else {
+                throw InputAcceptanceError(message: "The expanded body is unavailable.")
+            }
+            y = bounds.minY + (bounds.height - surface.gestureStripHeight) / 2
+        default: throw InputAcceptanceError(message: "Choose gestureStrip or body.")
+        }
+        let point = NSPoint(x: bounds.midX, y: y)
+        guard bounds.contains(point), surface.panel.windowNumber > 0,
+              let prototype = NSEvent.mouseEvent(with: .otherMouseDown, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: surface.panel.windowNumber,
+                context: nil, eventNumber: 1, clickCount: 1, pressure: 1),
+              let native = prototype.cgEvent else {
+            throw InputAcceptanceError(message: "AppKit could not construct the owned middle-button event.")
+        }
+        // The AppKit factory has no button-number parameter. Use its public
+        // Core Graphics bridge, then require the owned target and local point
+        // to survive the conversion before dispatching anything.
+        native.setIntegerValueField(.mouseEventButtonNumber, value: 2)
+        guard let event = NSEvent(cgEvent: native), event.type == .otherMouseDown,
+              event.buttonNumber == 2, event.windowNumber == surface.panel.windowNumber,
+              event.locationInWindow == point else {
+            throw InputAcceptanceError(message: "The native middle-button conversion did not preserve its owned target.")
+        }
+        let revision = lifecycleRevision
+        acceptingMiddleClick = true
+        var receipt: [String: Any]?
+        surface.panel.onEvent = { received in
+            let handled = original(received)
+            if received === event {
+                receipt = ["dispatch": "NSApplication.sendEvent", "handlerReceived": true,
+                           "buttonNumber": received.buttonNumber, "windowNumber": received.windowNumber,
+                           "targetWindowNumber": surface.panel.windowNumber,
+                           "pid": ProcessInfo.processInfo.processIdentifier, "region": region,
+                           "handled": handled]
+            }
+            return handled
+        }
+        defer {
+            acceptingMiddleClick = false
+            if started, lifecycleRevision == revision, surfaces.values.contains(where: { $0 === surface }) {
+                surface.panel.onEvent = original
+            }
+        }
+        NSApp.sendEvent(event)
+        guard let receipt else { throw InputAcceptanceError(message: "The owned native window did not receive the event.") }
+        return receipt
+    }
+
     private func apply(frame: NSRect, to surface: CovePanelSurface, animated: Bool, hideContent: Bool,
                        preferences: CovePreferences) {
         let duration = animated ? CoveMotion.duration(preferences: preferences, hud: !store.isExpanded && store.hud != nil, kind: store.hud?.kind) : 0
@@ -486,6 +561,15 @@ final class NotchPanelController: NSObject {
         let inGestureStrip = !store.isExpanded || event.locationInWindow.y >= surface.panel.frame.height - surface.gestureStripHeight
         guard inGestureStrip else { surface.scroll.reset(); return false }
         switch event.type {
+        case .otherMouseDown:
+            guard event.buttonNumber == 2, !surface.content.hosting.isHidden,
+                  surface.content.bounds.contains(event.locationInWindow) else { return false }
+            let targets = enabledTabs.filter { $0 == .media || $0 == .calendar }
+            guard !targets.isEmpty else { return false }
+            cancelHoverWork()
+            let next = targets.firstIndex(of: store.selectedTab).map { ($0 + 1) % targets.count } ?? 0
+            store.selectTab(targets[next], expand: true)
+            return true
         case .rightMouseDown:
             showContextMenu(event: event, view: surface.content)
             return true

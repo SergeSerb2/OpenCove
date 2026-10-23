@@ -53,7 +53,7 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         if let index = arguments.firstIndex(of: "--control-port") {
             let valueIndex = index + 1
             let port = arguments.indices.contains(valueIndex) ? UInt16(arguments[valueIndex]) ?? 0 : 0
-            control = DevelopmentServer(store: store, port: port, updater: updater)
+            control = DevelopmentServer(store: store, port: port, updater: updater, notch: notch)
             do { try control?.start() } catch {
                 control?.reportFailure(error)
             }
