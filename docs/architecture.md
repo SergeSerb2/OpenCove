@@ -4,6 +4,10 @@ OpenCove is an independent MIT application. SwiftUI views run in AppKit windows 
 
 ## State and service ownership
 
+Overlay timing uses the existing single cancellable dismissal task. Each category can inherit the default duration/appearance animation or override them. A zero category duration and `global` category speed select the defaults. A nonzero duration is 0.5–10 seconds; appearance choices are `smooth`, `fast`, and `instant`. The animation-speed multiplier and Reduce Motion still apply. Opening expanded controls and restoring the underlying activity use normal panel motion. Timing edits apply to the next presentation; repeated events replace the monotonic deadline. No countdown publication, polling schedule, helper, or per-frame task is added.
+
+Activities settings include a labelled overlay preview. The preview reads cached available system values, reports unavailable readings, and uses the same presentation path. It does not write hardware, request access, perform haptics, or post a system notification. Disabled categories and expanded controls reject preview. Development clients can call `hud.preview` with a known `kind`; unknown kinds return 400 and unavailable previews return 409. `hudRemaining` reads the current monotonic deadline on request. Neither category timing nor preview enables an integration.
+
 `CoveStore` is a main-actor `ObservableObject`. It owns preferences, selected tab, expanded state, HUD presentation, settings visibility, and the media, system, activity, weather, waveform, travel, notification-mirror, and hardware-key services. Views observe services directly as well as the store so service updates render without copying state into the store.
 
 Services expose value models and bounded lifecycle methods. They do not reference `CoveStore`. The store connects their HUD callbacks, calendar routing feed, privacy gates, and preference changes. `OpenCoveApp` owns app lifetime and connects the store to the normal and lock panel controllers.

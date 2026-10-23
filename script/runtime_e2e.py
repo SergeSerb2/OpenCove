@@ -1179,6 +1179,146 @@ print(String(data: try JSONSerialization.data(withJSONObject: counts), encoding:
             self.backup(damaged, "preferences.recovery.*.json", raw)
         self.record("indicators: dormant saved live choices, repeated saves/restart, legacy default and malformed opt-out recovery")
 
+    def hud_timing(self):
+        """Saved per-category timing through the real API and mounted panel."""
+        kinds = ("volume", "brightness", "battery", "bluetooth", "focus", "notification", "lock")
+        directory = self.directory("hud-timing", preferences={**SAFE, "enableBattery": False,
+            "enableBluetooth": False, "enableFocus": False, "enableNotifications": True,
+            "enableVolumeHUD": True, "hideWhenIdle": False, "hideInFullscreen": False,
+            "expandOnHover": False, "reduceMotion": False, "notchWidth": 200, "notchHeight": 32,
+            "hudDuration": 3, "hudSpeed": "smooth"})
+        frames = []
+        def sample(client, seconds):
+            end = time.monotonic() + seconds
+            while time.monotonic() < end:
+                s = client.request()
+                frames.append({"time": time.monotonic(), "hud": s["hud"]["kind"] if s["hud"] else None,
+                    "remaining": s["hudRemaining"], "panels": [r for r in s["nativeWindows"] if r["title"] == "OpenCove"]})
+                time.sleep(0.02)
+        with self.app(directory) as client:
+            initial = client.request()
+            require(all(initial["preferences"][k + "HUDDuration"] == 0 and
+                initial["preferences"][k + "HUDSpeed"] == "global" for k in kinds),
+                "Legacy preferences did not inherit default overlay timing.")
+            client.command("timer.start", seconds=30)
+            client.command("timer.pause")
+            client.command("selectTab", tab="files")
+            client.command("collapse")
+            before = client.request()
+            require(before["hud"] is None, "Unexpected real event prevents isolated overlay verification.")
+            client.command("hud.preview", kind="unknown", expected=400)
+            client.command("hud.preview", kind="battery", expected=409)
+            require(client.request()["preferences"]["enableBattery"] is False,
+                    "Preview enabled a disabled integration.")
+            client.command("expand")
+            client.command("hud.preview", kind="volume", expected=409)
+            client.command("collapse")
+            preview = client.command("hud.preview", kind="volume")
+            require(preview["hud"]["origin"] == "preview" and "preview" in preview["hud"]["title"]
+                and 2.5 < preview["hudRemaining"] <= 3,
+                "Labelled volume preview did not inherit the default duration.")
+            if preview["system"]["volumeAvailable"]:
+                require(preview["hud"].get("value") == preview["system"]["volume"],
+                        "Volume preview substituted a value for the cached actual reading.")
+            else:
+                require(preview["hud"].get("value") is None and "unavailable" in preview["hud"]["subtitle"],
+                        "Unavailable volume preview showed a made-up reading.")
+            client.command("preferences", values={"hudDuration": 0.5})
+            time.sleep(0.65)
+            require(client.request()["hud"] is not None, "Saving timing restarted the current captured deadline.")
+            client.command("preferences", values={"volumeHUDDuration": 1.5, "volumeHUDSpeed": "fast",
+                "notificationHUDDuration": 0.5, "notificationHUDSpeed": "instant"})
+            expected = client.request()["preferences"]
+            for invalid in ({"volumeHUDDuration": True}, {"volumeHUDDuration": -1},
+                            {"volumeHUDDuration": 0.2}, {"volumeHUDDuration": 11},
+                            {"notificationHUDSpeed": "slow"}, {"focusHUDSpeed": 1}):
+                client.command("preferences", values=invalid, expected=400)
+                require(client.request()["preferences"] == expected, "Rejected overlay timing changed preferences.")
+            client.command("hud.preview", kind="notification")
+            note = client.request()
+            require(note["hud"]["subtitle"] == "Preview only · no system notification"
+                and note["notifications"] == before["notifications"],
+                "Preview posted an activity instead of a labelled presentation.")
+            sample(client, 0.16)
+            write_private(directory / "notification-preview.png", client.request("/render?surface=live-notch"))
+            client.command("hud.preview", kind="volume")
+            sample(client, 0.55)
+            current = client.request()
+            require(current["hud"]["kind"] == "volume" and 0.6 < current["hudRemaining"] < 1.3,
+                    "An old notification deadline dismissed its replacement.")
+            renewed = client.command("hud.preview", kind="volume")
+            require(renewed["hudRemaining"] > current["hudRemaining"] + 0.25,
+                    "Repeated preview failed to restart the captured duration.")
+            time.sleep(1.1)
+            require(client.request()["hud"] is not None, "Old same-category deadline dismissed a repeated overlay.")
+            write_private(directory / "volume-preview.png", client.request("/render?surface=live-notch"))
+            finished = wait_for(client.request, lambda s: s["hud"] is None, "Overlay failed to retire.", 4)
+            require(finished["hudRemaining"] is None and finished["timer"] == before["timer"]
+                and finished["files"] == before["files"] and finished["tab"] == before["tab"],
+                "Temporary overlay changed the underlying paused timer, files or selection.")
+            time.sleep(0.3)
+            client.command("preferences", values={"reduceMotion": True})
+            client.command("hud.preview", kind="volume")
+            sample(client, 0.2)
+            write_private(directory / "reduced-preview.png", client.request("/render?surface=live-notch"))
+            write_private(directory / "settings.png", client.request("/render?surface=settings-activities"))
+            client.command("preferences", values={"enableVolumeHUD": False})
+            require(client.request()["hud"] is None, "Disabling an overlay retained its preview.")
+            client.command("hud.preview", kind="volume", expected=409)
+            client.command("timer.cancel")
+        with self.app(directory) as client:
+            p = client.request()["preferences"]
+            require(p["volumeHUDDuration"] == 1.5 and p["volumeHUDSpeed"] == "fast"
+                and p["notificationHUDDuration"] == 0.5 and p["notificationHUDSpeed"] == "instant"
+                and not p["enableVolumeHUD"] and not p["enablePrivateAPIs"],
+                "Overlay timing or independent consent changed across restart.")
+            client.command("preferences", values={"volumeHUDDuration": 0, "volumeHUDSpeed": "global"})
+        write_private(directory / "native-frames.json", json_bytes(frames))
+        self.record("overlay timing: legacy defaults, strict ranges, read-only previews, repeated/replaced deadlines, native captures and restart")
+        replacement = self.directory("hud-replacement", preferences={**SAFE, "enableNotifications": True,
+            "enableBattery": False, "enableBluetooth": False, "enableFocus": False,
+            "hideWhenIdle": False, "hideInFullscreen": False, "expandOnHover": False,
+            "reduceMotion": False, "notchWidth": 200, "notchHeight": 32, "animationSpeed": 0.25,
+            "volumeHUDDuration": 3, "volumeHUDSpeed": "smooth",
+            "notificationHUDDuration": 0.5, "notificationHUDSpeed": "instant"})
+        def panels(s):
+            return sorted([r for r in s["nativeWindows"] if r["title"] == "OpenCove"],
+                          key=lambda r: r["displayID"])
+        with self.app(replacement) as client:
+            time.sleep(0.3)
+            client.command("hud.preview", kind="notification")
+            time.sleep(0.1)
+            target = panels(client.request())
+            wait_for(client.request, lambda s: s["hud"] is None, "Calibration overlay did not retire.")
+            time.sleep(1)
+            client.command("hud.preview", kind="volume")
+            time.sleep(0.08)
+            during = client.request()
+            client.command("hud.preview", kind="notification")
+            time.sleep(0.05)
+            immediate = client.request()
+            require(len(panels(immediate)) == len(target) > 0 and all(
+                abs(a[key] - b[key]) <= 1 for a, b in zip(panels(immediate), target)
+                for key in ("width", "height", "x", "y")),
+                "An instant replacement retained the previous category's native frame animation.")
+            write_private(replacement / "native-frames.json", json_bytes({"target": target,
+                "during": panels(during), "replacement": panels(immediate)}))
+            write_private(replacement / "instant-replacement.png", client.request("/render?surface=live-notch"))
+        self.record("overlay replacement: instant category settles an interrupted smooth native transition",
+                    observedAnimation=not during["systemReduceMotion"])
+        raw = json_bytes({**SAFE, "volumeHUDDuration": "bad", "brightnessHUDSpeed": "bad",
+            "notificationHUDDuration": 20, "focusHUDDuration": True, "hudDuration": 4})
+        damaged = self.directory("hud-timing-recovery", raw=raw)
+        with self.app(damaged) as client:
+            p = client.request()["preferences"]
+            require(p["volumeHUDDuration"] == 0 and p["brightnessHUDSpeed"] == "global"
+                and p["notificationHUDDuration"] == 10 and p["focusHUDDuration"] == 0
+                and p["hudDuration"] == 4 and not p["enablePrivateAPIs"],
+                "Damaged per-category fields did not repair independently.")
+            client.command("preferences", values={"hudDuration": 3})
+            self.backup(damaged, "preferences.recovery.*.json", raw)
+        self.record("overlay recovery: exact private original backup and individual timing repair without consent")
+
     def timer_presentation(self):
         """Real deadline, native-layer progress and no hidden countdown publications."""
         directory = self.directory("timer-presentation", preferences={**SAFE, "enableBattery": False,
@@ -3305,7 +3445,7 @@ def main():
     parser.add_argument("--media-fixture", action="store_true", help="Explicitly play/control only our own temporary silent MediaPlayer fixture")
     parser.add_argument("--pathological-duration", action="store_true", help="With --media-fixture, render its extreme finite duration metadata")
     parser.add_argument("--weather-service", action="store_true", help="Contact real Open-Meteo for public Vancouver/Berlin and polar coordinates; no device location")
-    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "compact-motion", "media-refresh", "weather", "motion", "displays", "activities", "compact", "dismissal", "shape", "outline", "preferences", "timers", "timer-presentation", "timer-corruption", "calendar", "files"),
+    parser.add_argument("--only", choices=("storage", "indicators", "startup", "storage-alias", "media", "compact-motion", "media-refresh", "weather", "motion", "hud-timing", "displays", "activities", "compact", "dismissal", "shape", "outline", "preferences", "timers", "timer-presentation", "timer-corruption", "calendar", "files"),
                         help="Run one real flow group for targeted follow-up")
     args = parser.parse_args()
     if args.pathological_duration and not args.media_fixture:
@@ -3329,6 +3469,7 @@ def main():
                   ("timers", runtime.timers), ("timer-corruption", runtime.timer_corruption),
                   ("calendar", runtime.calendar), ("files", runtime.files)]
         if args.only != "storage":
+            groups.append(("hud-timing", runtime.hud_timing))
             groups.append(("timer-presentation", runtime.timer_presentation))
             groups.append(("motion", runtime.motion))
             groups.append(("displays", runtime.displays))

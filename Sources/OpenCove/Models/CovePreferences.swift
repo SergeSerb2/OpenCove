@@ -65,6 +65,13 @@ struct CovePreferences: Codable, Equatable {
         hoverDelay = bounded(hoverDelay, 0...2, defaults.hoverDelay)
         collapseDelay = bounded(collapseDelay, 0.1...5, defaults.collapseDelay)
         hudDuration = bounded(hudDuration, 0.5...10, defaults.hudDuration)
+        for kind in HUDKind.allCases {
+            let key = kind.durationKey
+            if self[keyPath: key] != 0 { self[keyPath: key] = bounded(self[keyPath: key], 0.5...10, 0) }
+            if !["global", "smooth", "fast", "instant"].contains(self[keyPath: kind.speedKey]) {
+                self[keyPath: kind.speedKey] = "global"
+            }
+        }
         animationSpeed = bounded(animationSpeed, 0.25...2, defaults.animationSpeed)
         pausedMediaDelay = bounded(pausedMediaDelay, 1...300, defaults.pausedMediaDelay)
         mediaPeekDuration = bounded(mediaPeekDuration, 1...10, defaults.mediaPeekDuration)
@@ -128,6 +135,32 @@ struct CovePreferences: Codable, Equatable {
     var launchAtLogin = false
     var completedOnboarding = false
     var hudDuration = 2.0
+    // Zero duration and "global" speed inherit the existing shared choices.
+    var volumeHUDDuration = 0.0
+    var brightnessHUDDuration = 0.0
+    var batteryHUDDuration = 0.0
+    var bluetoothHUDDuration = 0.0
+    var focusHUDDuration = 0.0
+    var notificationHUDDuration = 0.0
+    var lockHUDDuration = 0.0
+    var volumeHUDSpeed = "global"
+    var brightnessHUDSpeed = "global"
+    var batteryHUDSpeed = "global"
+    var bluetoothHUDSpeed = "global"
+    var focusHUDSpeed = "global"
+    var notificationHUDSpeed = "global"
+    var lockHUDSpeed = "global"
+
+    func duration(for kind: HUDKind) -> Double {
+        let value = self[keyPath: kind.durationKey]
+        return value == 0 ? hudDuration : value
+    }
+
+    func speed(for kind: HUDKind?) -> String {
+        guard let kind else { return hudSpeed }
+        let value = self[keyPath: kind.speedKey]
+        return value == "global" ? hudSpeed : value
+    }
     var accent = "mint"
 
     /// A saved waveform choice alone must not start system-audio capture.
@@ -160,7 +193,44 @@ enum CoveTab: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum HUDKind: String, Codable { case volume, brightness, battery, bluetooth, focus, notification, lock }
+enum HUDKind: String, Codable, CaseIterable, Identifiable {
+    case volume, brightness, battery, bluetooth, focus, notification, lock
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .volume: return "Volume"
+        case .brightness: return "Display brightness"
+        case .battery: return "Battery & charging"
+        case .bluetooth: return "Bluetooth & audio devices"
+        case .focus: return "Focus"
+        case .notification: return "Notifications"
+        case .lock: return "Session"
+        }
+    }
+    var durationKey: WritableKeyPath<CovePreferences, Double> {
+        switch self {
+        case .volume: return \.volumeHUDDuration
+        case .brightness: return \.brightnessHUDDuration
+        case .battery: return \.batteryHUDDuration
+        case .bluetooth: return \.bluetoothHUDDuration
+        case .focus: return \.focusHUDDuration
+        case .notification: return \.notificationHUDDuration
+        case .lock: return \.lockHUDDuration
+        }
+    }
+    var speedKey: WritableKeyPath<CovePreferences, String> {
+        switch self {
+        case .volume: return \.volumeHUDSpeed
+        case .brightness: return \.brightnessHUDSpeed
+        case .battery: return \.batteryHUDSpeed
+        case .bluetooth: return \.bluetoothHUDSpeed
+        case .focus: return \.focusHUDSpeed
+        case .notification: return \.notificationHUDSpeed
+        case .lock: return \.lockHUDSpeed
+        }
+    }
+}
 
 struct CoveHUD: Codable, Equatable {
     var kind: HUDKind

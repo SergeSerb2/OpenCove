@@ -26,7 +26,7 @@ final class NotchPanelController: NSObject {
         var preferences: CovePreferences
         var expanded: Bool
         var tab: CoveTab
-        var hud: Bool
+        var hud: HUDKind?
         var media: Bool
         var compactActivity: CoveCompactActivity
         var mediaPeek: Bool
@@ -36,7 +36,7 @@ final class NotchPanelController: NSObject {
     private var lastLayoutInputs: LayoutInputs?
     private var layoutInputs: LayoutInputs {
         LayoutInputs(preferences: store.preferences, expanded: store.isExpanded, tab: store.selectedTab,
-                     hud: store.hud != nil,
+                     hud: store.hud?.kind,
                      media: store.isCompactActivityVisible(.media),
                      compactActivity: store.compactActivity,
                      mediaPeek: store.showsMediaPeek,
@@ -322,7 +322,7 @@ final class NotchPanelController: NSObject {
 
     private func apply(frame: NSRect, to surface: CovePanelSurface, animated: Bool, hideContent: Bool,
                        preferences: CovePreferences) {
-        let duration = animated ? CoveMotion.duration(preferences: preferences, hud: store.hud != nil) : 0
+        let duration = animated ? CoveMotion.duration(preferences: preferences, hud: !store.isExpanded && store.hud != nil, kind: store.hud?.kind) : 0
         let wasAnimating = surface.frameAnimationInFlight
         // Reduce Motion can change without changing the destination. Settle the
         // running animator too; comparing target frames alone leaves it moving.

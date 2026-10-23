@@ -304,6 +304,11 @@ final class DevelopmentServer {
                 : store.restoreCompactActivity(target: target)
             guard submitted else { throw ControlError.rejected("This activity is no longer available for that action. Read fresh state.") }
         case "collapse": store.collapse()
+        case "hud.preview":
+            guard let name = values["kind"] as? String, let kind = HUDKind(rawValue: name) else {
+                throw ControlError.invalid("Choose a known overlay category.")
+            }
+            if let message = store.previewHUD(kind) { throw ControlError.rejected(message) }
         case "toggle": store.toggleExpanded()
         case "selectTab":
             guard let name = values["tab"] as? String, let tab = CoveTab(rawValue: name) else { throw ControlError.invalid("Unknown tab.") }
@@ -522,6 +527,7 @@ final class DevelopmentServer {
         result["compactRestoreActivity"] = store.compactRestoreActivity.map { $0.rawValue as Any } ?? NSNull()
         result["mediaPeekVisible"] = store.showsMediaPeek
         result["mediaPeekRemaining"] = store.mediaPeekRemaining.map { $0 as Any } ?? NSNull()
+        result["hudRemaining"] = store.hudRemaining.map { $0 as Any } ?? NSNull()
         result["playbackClock"] = ["receivedSamples": store.media.playback.receivedSamples,
                                    "changeNotifications": store.media.playback.changeNotifications]
         result["artworkAvailable"] = store.media.state.artworkData != nil
@@ -609,6 +615,9 @@ final class DevelopmentServer {
         case "settings-media":
             size = CGSize(width: 760, height: 550)
             content = AnyView(SettingsView(store: store, initialPage: .media))
+        case "settings-activities":
+            size = CGSize(width: 760, height: 900)
+            content = AnyView(SettingsView(store: store, initialPage: .activities))
         case "settings-weather":
             size = CGSize(width: 760, height: 550)
             content = AnyView(SettingsView(store: store, initialPage: .weather))
