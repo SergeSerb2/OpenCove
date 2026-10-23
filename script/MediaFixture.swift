@@ -16,7 +16,7 @@ enum MediaFixture {
             print("--artwork-style defaults to shared (the original cover on both tracks); alternate uses a second original cover on track 2; none omits artwork; missing-second omits artwork only on track 2; triple cycles three tracks with distinct original covers. State reports artworkStyle and artworkVariant (original|alternate|third|none).")
             print("--live-metadata advertises this local fixture's public live flag on its first item; it does not start a network stream. Zero metadata duration represents unavailable timing.")
             print("--explicit-metadata uses an opt-in native publisher for this fixture only: first item explicit, other items false. It never overrides another app or sends another player a command. Cannot combine with --live-metadata or --rate-controls.")
-            print("--native-artwork publishes this fixture's cached original PNGs through its own native publisher as well as MediaPlayer. Each PNG is at most 12 MiB; at most three are cached. This exercises actual OS delivery without injecting OpenCove state. Cannot combine with --live-metadata or --rate-controls.")
+            print("--native-artwork publishes this fixture's metadata and cached original PNGs through its own native publisher instead of the public metadata dictionary. Silent playback and remote commands stay real. Each PNG is at most 12 MiB; at most three are cached. This exercises actual OS delivery without injecting OpenCove state. Cannot combine with --live-metadata or --rate-controls.")
             print("--stdin-control reads only exact LF-terminated next or previous commands for this fixture. Reads are at most 256 bytes, raw buffering stays below 512 bytes, lines are at most 32 bytes, and at most 128 commands are handled. EOF, invalid input, or the limit retires the reader without ending playback. State reports the active reader as stdinControl and completed commands as handledInputCount; raw input is never stored in state. Without this flag, stdin is never read.")
             return
         }
@@ -338,7 +338,9 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         }
         if liveMetadata { metadata[MPNowPlayingInfoPropertyIsLiveStream] = isLive }
         if explicitMetadata { metadata[MPMediaItemPropertyIsExplicit] = track == 1 }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = metadata
+        // Use one metadata writer per mode. Competing public/native artwork
+        // publications can deliver different encodings out of order.
+        if !nativeArtwork { MPNowPlayingInfoCenter.default().nowPlayingInfo = metadata }
         MPNowPlayingInfoCenter.default().playbackState = player.isPlaying ? .playing : .paused
         var png: Data?
         if nativeArtwork, artworkVariant != "none" {
