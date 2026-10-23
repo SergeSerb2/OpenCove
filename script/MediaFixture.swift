@@ -11,11 +11,11 @@ enum MediaFixture {
     @MainActor static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
         if args == ["--help"] {
-            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration NONNEGATIVE_SECONDS] [--metadata-style normal|long|oversized|identical] [--artwork-style shared|alternate|none] [--rate-controls] [--live-metadata] [--explicit-metadata] [--stdin-control]")
-            print("Plays only its own two silent tracks for at most 90 seconds. No arguments and missing/unsafe state paths fail before playback. OPENCOVE_FIXTURE_STATE can supply --state.")
-            print("--artwork-style defaults to shared (the original cover on both tracks); alternate uses a second original cover on track 2; none omits artwork. State reports artworkStyle and artworkVariant (original|alternate|none).")
+            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration NONNEGATIVE_SECONDS] [--metadata-style normal|long|oversized|identical] [--artwork-style shared|alternate|none|missing-second|triple] [--rate-controls] [--live-metadata] [--explicit-metadata] [--stdin-control]")
+            print("Plays only its own two silent tracks (three with triple) for at most 90 seconds. No arguments and missing/unsafe state paths fail before playback. OPENCOVE_FIXTURE_STATE can supply --state.")
+            print("--artwork-style defaults to shared (the original cover on both tracks); alternate uses a second original cover on track 2; none omits artwork; missing-second omits artwork only on track 2; triple cycles three tracks with distinct original covers. State reports artworkStyle and artworkVariant (original|alternate|third|none).")
             print("--live-metadata advertises this local fixture's public live flag on its first item; it does not start a network stream. Zero metadata duration represents unavailable timing.")
-            print("--explicit-metadata uses an opt-in native publisher for this fixture only: first item explicit, second item false. It never overrides another app or sends another player a command. Cannot combine with --live-metadata or --rate-controls.")
+            print("--explicit-metadata uses an opt-in native publisher for this fixture only: first item explicit, other items false. It never overrides another app or sends another player a command. Cannot combine with --live-metadata or --rate-controls.")
             print("--stdin-control reads only exact LF-terminated next or previous commands for this fixture. Reads are at most 256 bytes, raw buffering stays below 512 bytes, lines are at most 32 bytes, and at most 128 commands are handled. EOF, invalid input, or the limit retires the reader without ending playback. State reports the active reader as stdinControl and completed commands as handledInputCount; raw input is never stored in state. Without this flag, stdin is never read.")
             return
         }
@@ -43,7 +43,7 @@ enum MediaFixture {
                 guard ["normal", "long", "oversized", "identical"].contains(args[index + 1]) else { fail() }
                 metadataStyle = args[index + 1]
             case "--artwork-style":
-                guard ["shared", "alternate", "none"].contains(args[index + 1]) else { fail() }
+                guard ["shared", "alternate", "none", "missing-second", "triple"].contains(args[index + 1]) else { fail() }
                 artworkStyle = args[index + 1]
             default: fail()
             }
@@ -175,6 +175,19 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         }
         return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }()
+    // Allocate this third original cover only when triple reaches track 3.
+    private lazy var thirdArtwork: MPMediaItemArtwork = {
+        let image = NSImage(size: NSSize(width: 2048, height: 2048), flipped: false) { bounds in
+            NSColor.systemGreen.setFill()
+            bounds.fill()
+            NSColor.black.setFill()
+            bounds.insetBy(dx: bounds.width / 8, dy: bounds.height / 8).fill()
+            NSColor.white.setFill()
+            bounds.insetBy(dx: bounds.width / 3, dy: bounds.height / 3).fill()
+            return true
+        }
+        return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+    }()
 
     init(statusURL: URL, metadataDuration: Double?, metadataStyle: String, artworkStyle: String, rateControls: Bool, liveMetadata: Bool, explicitMetadata: Bool, stdinControl: Bool) {
         self.statusURL = statusURL
@@ -190,7 +203,8 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
-            players = try [120, 125].map { try AVAudioPlayer(data: Self.silence(seconds: $0)) }
+            let durations: [UInt32] = artworkStyle == "triple" ? [120, 125, 130] : [120, 125]
+            players = try durations.map { try AVAudioPlayer(data: Self.silence(seconds: $0)) }
             for value in players { value.enableRate = rateControls }
             player = players[0]
             player.prepareToPlay()
@@ -199,8 +213,8 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
             register(commands.playCommand) { self.player.play() }
             register(commands.pauseCommand) { self.player.pause() }
             register(commands.togglePlayPauseCommand) { if self.player.isPlaying { self.player.pause() } else { self.player.play() } }
-            register(commands.nextTrackCommand) { self.changeTrack() }
-            register(commands.previousTrackCommand) { self.changeTrack() }
+            register(commands.nextTrackCommand) { self.changeTrack(.next) }
+            register(commands.previousTrackCommand) { self.changeTrack(.previous) }
             if rateControls {
                 let rate = commands.changePlaybackRateCommand
                 rate.supportedPlaybackRates = [0.75, 1, 1.25, 1.5, 2]
@@ -234,9 +248,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
                 FixtureStdinReader.start { [weak self] commands, retired in
                     guard let self, self.stdinControl else { return }
                     for command in commands {
-                        switch command {
-                        case .next, .previous: self.changeTrack()
-                        }
+                        self.changeTrack(command)
                         self.handledInputCount += 1
                         self.publish()
                     }
@@ -253,10 +265,13 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func changeTrack() {
+    private func changeTrack(_ command: FixtureInputCommand) {
         let playing = player.isPlaying
         player.stop()
-        track = track == 1 ? 2 : 1
+        switch command {
+        case .next: track = track == players.count ? 1 : track + 1
+        case .previous: track = track == 1 ? players.count : track - 1
+        }
         player = players[track - 1]
         player.currentTime = 0
         if rateControls { MPRemoteCommandCenter.shared().changePlaybackRateCommand.supportedPlaybackRates = track == 1 ? [0.75, 1, 1.25, 1.5, 2] : [1, 2] }
@@ -303,11 +318,14 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]
         let artworkVariant: String
-        if artworkStyle == "none" {
+        if artworkStyle == "none" || (artworkStyle == "missing-second" && track == 2) {
             artworkVariant = "none"
-        } else if artworkStyle == "alternate" && track == 2 {
+        } else if (artworkStyle == "alternate" || artworkStyle == "triple") && track == 2 {
             metadata[MPMediaItemPropertyArtwork] = alternateArtwork
             artworkVariant = "alternate"
+        } else if artworkStyle == "triple" && track == 3 {
+            metadata[MPMediaItemPropertyArtwork] = thirdArtwork
+            artworkVariant = "third"
         } else {
             metadata[MPMediaItemPropertyArtwork] = artwork
             artworkVariant = "original"
