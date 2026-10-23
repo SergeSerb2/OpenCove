@@ -160,11 +160,18 @@ struct CoveArtworkReader<Content: View>: View {
 }
 
 struct CoveArtwork: View {
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.isEnabled) private var isEnabled
     var thumbnail: CoveArtworkThumbnail?
     var size: Double
     var radius: Double = 12
     var sourceIdentifier: String?
-    @State private var retained: RetainedArtwork?
+    var reduceMotion = false
+    @State private var first: RetainedArtwork?
+    @State private var second: RetainedArtwork?
+    @State private var showsSecond = false
+    @State private var fadeRevision: UInt64 = 0
+    @State private var decodeGap: UUID?
 
     private struct RetainedArtwork {
         let source: String
@@ -180,18 +187,34 @@ struct CoveArtwork: View {
         Input(source: sourceIdentifier, image: thumbnail.map { ObjectIdentifier($0.image) })
     }
 
-    // Keep only the outgoing cover during a brief same-source decode gap.
+    private var current: RetainedArtwork? { showsSecond ? second : first }
+    private var immediate: Bool { reduceMotion || systemReduceMotion || !isEnabled }
+    private var hasRetainedSource: Bool {
+        guard let sourceIdentifier, !sourceIdentifier.isEmpty else { return false }
+        return current?.source == sourceIdentifier
+    }
+
+    // Keep only the latest ready cover during a brief same-source decode gap.
     // This never supplies cached bytes or tint as the current item's artwork.
     private var displayed: CoveArtworkThumbnail? {
-        thumbnail ?? (retained?.source == sourceIdentifier ? retained?.thumbnail : nil)
+        thumbnail ?? (hasRetainedSource ? current?.thumbnail : nil)
     }
 
     var body: some View {
         Group {
-            if let thumbnail = displayed {
-                Image(decorative: thumbnail.image, scale: 1)
-                    .resizable()
-                    .scaledToFill()
+            if !immediate && hasRetainedSource {
+                // Fixed slots retarget on A/B/A without accumulating removal
+                // transitions. An opaque lower slot prevents a dark midpoint.
+                ZStack {
+                    layer(first)
+                    layer(second)
+                        .opacity(showsSecond ? 1 : 0)
+                        // Section wrappers clear inherited data animations.
+                        .animation(CoveMotion.contentFadeAnimation(), value: showsSecond)
+                }
+                .transition(.identity)
+            } else if let thumbnail = displayed {
+                image(thumbnail).transition(.identity)
             } else {
                 RoundedRectangle(cornerRadius: radius)
                     .fill(LinearGradient(colors: [.white.opacity(0.12), .white.opacity(0.035)],
@@ -201,29 +224,86 @@ struct CoveArtwork: View {
                             .font(.system(size: size * 0.32, weight: .medium))
                             .foregroundStyle(.white.opacity(0.35))
                     }
+                    .transition(.identity)
             }
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        .task(id: input) {
-            guard !Task.isCancelled else { return }
-            guard let sourceIdentifier, !sourceIdentifier.isEmpty else {
-                retained = nil
-                return
+        .transaction {
+            if immediate || !hasRetainedSource {
+                $0.animation = nil
+                $0.disablesAnimations = true
             }
-            if let thumbnail {
-                retained = RetainedArtwork(source: sourceIdentifier, thumbnail: thumbnail)
-            } else if retained?.source == sourceIdentifier {
-                do { try await Task.sleep(for: .milliseconds(200)) }
-                catch { return }
-                guard !Task.isCancelled else { return }
-                retained = nil
-            } else {
-                retained = nil
-            }
+        }
+        .onAppear { updateArtwork() }
+        .onChange(of: input) { _, _ in updateArtwork() }
+        .onChange(of: immediate) { _, immediate in
+            if immediate { updateArtwork() }
+        }
+        .task(id: decodeGap) {
+            guard !Task.isCancelled, let gap = decodeGap else { return }
+            do { try await Task.sleep(for: .milliseconds(200)) }
+            catch { return }
+            guard !Task.isCancelled, decodeGap == gap else { return }
+            decodeGap = nil
+            settle(to: nil)
+        }
+        .onDisappear {
+            decodeGap = nil
+            settle(to: nil)
         }
         .overlay(RoundedRectangle(cornerRadius: radius).stroke(.white.opacity(0.08), lineWidth: 0.5))
         .accessibilityHidden(true)
+    }
+
+    private func image(_ thumbnail: CoveArtworkThumbnail) -> some View {
+        Image(decorative: thumbnail.image, scale: 1).resizable().scaledToFill()
+    }
+
+    @ViewBuilder private func layer(_ cover: RetainedArtwork?) -> some View {
+        // Remove old pixels from the tree before an input callback runs.
+        if let cover, cover.source == sourceIdentifier { image(cover.thumbnail) }
+        else { Color.clear }
+    }
+
+    private func settle(to cover: RetainedArtwork?) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            fadeRevision &+= 1
+            first = cover
+            second = nil
+            showsSecond = false
+        }
+    }
+
+    private func updateArtwork() {
+        guard let sourceIdentifier, !sourceIdentifier.isEmpty else {
+            decodeGap = nil
+            settle(to: nil)
+            return
+        }
+        guard let thumbnail else {
+            // Motion/section changes must not extend an existing decode hold.
+            if hasRetainedSource {
+                if decodeGap == nil { decodeGap = UUID() }
+            } else { decodeGap = nil }
+            settle(to: hasRetainedSource ? current : nil)
+            return
+        }
+        decodeGap = nil
+        let next = RetainedArtwork(source: sourceIdentifier, thumbnail: thumbnail)
+        guard hasRetainedSource, !immediate else { settle(to: next); return }
+        if let current, current.thumbnail.image === thumbnail.image { return }
+        fadeRevision &+= 1
+        let revision = fadeRevision
+        if showsSecond { first = next } else { second = next }
+        withAnimation(CoveMotion.contentFadeAnimation(), completionCriteria: .removed) {
+            showsSecond.toggle()
+        } completion: {
+            guard fadeRevision == revision else { return }
+            if showsSecond { first = nil } else { second = nil }
+        }
     }
 }
 
@@ -487,12 +567,12 @@ struct CoveMediaSurface: View {
         return HStack(alignment: .center, spacing: condensed ? 9 : 15) {
             if locked {
                 CoveArtwork(thumbnail: artwork, size: 54, radius: 12,
-                            sourceIdentifier: media.state.sourceBundleIdentifier)
+                            sourceIdentifier: media.state.sourceBundleIdentifier, reduceMotion: reduceMotion)
             } else {
                 Button(action: media.openPlayer) {
                     CoveArtwork(thumbnail: artwork, size: condensed ? 46 : 54,
                                 radius: condensed ? 9 : 12,
-                                sourceIdentifier: media.state.sourceBundleIdentifier)
+                                sourceIdentifier: media.state.sourceBundleIdentifier, reduceMotion: reduceMotion)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open media player")
