@@ -40,6 +40,8 @@ jobs:
           PY
           node --check "$RUNNER_TEMP/opencove-controls.js"
           python3 script/validate_release.py version
+          # Also checks the exact official Sparkle URL/checksum/license and
+          # dependency identity before SwiftPM is allowed to run below.
           python3 script/validate_release.py source
       - name: Exercise the real CLI empty case
         run: |

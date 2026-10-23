@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 import zipfile
 
 sys.dont_write_bytecode = True
@@ -20,15 +21,88 @@ import validate_release as check
 ROOT = check.ROOT
 
 
+def updater_configuration(variant, configuration, isolated=False):
+    check.require(not isolated or variant == "development", "--updater-test requires the development variant.")
+    if variant == "development" and not isolated:
+        # Ambient release configuration never enables a development updater.
+        return {"OpenCoveUpdaterMode": "disabled"}
+    check.require(isolated or configuration == "release", "Release updater bundles require --configuration release.")
+    feed = os.environ.get("OPENCOVE_UPDATE_FEED_URL")
+    check.require(feed, "Release updates need OPENCOVE_UPDATE_FEED_URL, a real HTTPS appcast URL. No feed has been published by this build script.")
+    key = os.environ.get("OPENCOVE_UPDATE_PUBLIC_ED_KEY")
+    check.update_feed(feed, isolated)
+    check.update_key(key)
+    info = {"OpenCoveUpdaterMode": "isolated-test" if isolated else "release", "SUFeedURL": feed,
+            "SUPublicEDKey": key, "SUVerifyUpdateBeforeExtraction": True}
+    if isolated:
+        info["SUDefaultsDomain"] = "org.opencove.OpenCove.updater-test." + uuid.uuid4().hex
+        info["NSAppTransportSecurity"] = {"NSAllowsLocalNetworking": True}
+    # Omit SUEnableAutomaticChecks/SUAutomaticallyUpdate. Sparkle owns consent.
+    return info
+
+
+def sparkle_sdk(scratch):
+    candidates = list((scratch / "artifacts").rglob("Sparkle.xcframework"))
+    check.require(len(candidates) == 1, "Expected exactly one checksum-verified Sparkle SDK in the isolated SwiftPM artifacts directory.")
+    xcframework = candidates[0]
+    check.require(check.digest((xcframework.parent / "LICENSE").read_bytes()) == check.SPARKLE["licenseSHA256"], "Downloaded Sparkle SDK license differs from the pinned release.")
+    return xcframework
+
+
+def embed_sparkle(scratch, staged, source):
+    xcframework = sparkle_sdk(scratch)
+    sdk_info = plistlib.loads((xcframework / "Info.plist").read_bytes())
+    libraries = [library for library in sdk_info["AvailableLibraries"] if library["SupportedPlatform"] == "macos" and
+                 not library.get("SupportedPlatformVariant")]
+    check.require(len(libraries) == 1, "Expected one macOS Sparkle framework slice.")
+    library = libraries[0]
+    check.require(library["LibraryPath"] == "Sparkle.framework" and
+                  re.fullmatch(r"[A-Za-z0-9_-]+", library["LibraryIdentifier"]), "Invalid Sparkle XCFramework layout.")
+    framework = staged / "Contents/Frameworks/Sparkle.framework"
+    framework.parent.mkdir(parents=True)
+    shutil.copytree(xcframework / library["LibraryIdentifier"] / library["LibraryPath"], framework, symlinks=True)
+    check.contained_bundle_links(staged)
+    license_data = (xcframework.parent / "LICENSE").read_bytes()
+    check.require(check.digest(license_data) == check.SPARKLE["licenseSHA256"], "Downloaded Sparkle SDK license differs from the pinned release.")
+    (staged / "Contents/Resources/Sparkle-LICENSE.txt").write_bytes(license_data)
+    (staged / "Contents/Resources/SPARKLE_DEPENDENCY.json").write_text(json.dumps(check.dependency(source), indent=2, sort_keys=True) + "\n")
+
+
+def sign_sparkle(staged, identity):
+    for code in check.framework_paths(staged / "Contents/Frameworks/Sparkle.framework"):
+        check.require(code.exists(), "Missing Sparkle code before signing: " + code.name)
+        command = ["codesign", "--force", "--sign", identity or "-", "--options", "runtime"]
+        if identity:
+            command += check.signing_keychain_arguments()
+        command += ["--timestamp"] if identity else ["--timestamp=none"]
+        if code.name == "Downloader.xpc":
+            command += ["--preserve-metadata=entitlements"]
+        check.run(command + [code], stdout=sys.stderr)
+
+
+def bundle_archive_entries(app, root):
+    check.contained_bundle_links(app)
+    entries = []
+    for path in app.rglob("*"):
+        if path.is_symlink():
+            entries.append((str(path.relative_to(root)), os.readlink(path).encode(), False, True))
+        elif path.is_file():
+            entries.append((str(path.relative_to(root)), path.read_bytes(), bool(path.stat().st_mode & 0o111), False))
+    return entries
+
+
 def signing_configuration(mode, notarize=False, profile=None):
     identity = os.environ.get("OPENCOVE_SIGN_IDENTITY", "")
     profile = profile or os.environ.get("OPENCOVE_NOTARY_PROFILE", "")
+    keychain = check.signing_keychain()
     if mode == "adhoc":
-        check.require(not identity and not profile and not notarize, "Ad-hoc mode rejects signing identities, notary profiles, and notarization. Select --signing developer-id explicitly.")
+        check.require(not identity and not profile and not notarize and keychain is None, "Ad-hoc mode rejects signing identities, keychains, notary profiles, and notarization. Select --signing developer-id explicitly.")
         return None, None
     check.require(re.fullmatch(r"Developer ID Application: [^\r\n]+ \([A-Z0-9]{10}\)", identity) is not None,
                   "Set OPENCOVE_SIGN_IDENTITY to the full Developer ID Application identity. Apple Development is not a distribution identity.")
-    identities = check.output(["security", "find-identity", "-v", "-p", "codesigning"])
+    # security uses a positional keychain operand (not --keychain). This restricts
+    # identity discovery without changing the user's global keychain search list.
+    identities = check.output(["security", "find-identity", "-v", "-p", "codesigning", *([keychain] if keychain else [])])
     check.require('"' + identity + '"' in identities, "The requested Developer ID Application identity and private key are not available.")
     check.require(not profile or notarize, "A notary profile requires --notarize; no implicit Apple upload is allowed.")
     check.require(not notarize or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", profile) is not None,
@@ -57,8 +131,9 @@ def destination(path, replace=False):
     return path
 
 
-def build(app, arch, configuration, variant, signing, replace=False, scratch=None, manifest=None, tools=None):
+def build(app, arch, configuration, variant, signing, replace=False, scratch=None, manifest=None, tools=None, updater_test=False):
     check.version()
+    updates = updater_configuration(variant, configuration, updater_test)
     check.require(arch in check.ARCHITECTURES, "Unsupported architecture.")
     check.require(signing != "developer-id" or (variant == "release" and configuration == "release"), "Developer ID mode requires an optimized release bundle.")
     identity, _ = signing_configuration(signing)
@@ -101,6 +176,13 @@ def build(app, arch, configuration, variant, signing, replace=False, scratch=Non
         else:
             check.run(["lipo", "-create", *binaries, "-output", executable])
         executable.chmod(0o755)
+        # SwiftPM can add an absolute artifact runpath. Ship a self-contained
+        # loader path, never a fallback to a build-machine SDK/cache directory.
+        load_commands = check.output(["otool", "-l", executable])
+        for runpath in set(re.findall(r"cmd LC_RPATH\n\s+cmdsize \d+\n\s+path (.*?) \(offset", load_commands)):
+            if runpath not in {"@executable_path/../Frameworks", "@loader_path", "/usr/lib/swift"}:
+                check.run(["install_name_tool", "-delete_rpath", runpath, executable], stdout=sys.stderr)
+        embed_sparkle(scratch / sorted(check.ARCHITECTURES[arch])[0], staged, source)
         for relative, name in [("LICENSE", "LICENSE"), ("script/OpenCoveMediaAdapter.swift", "OpenCoveMediaAdapter.swift"), ("script/OpenCoveMediaAdapter.js", "OpenCoveMediaAdapter.js")]:
             shutil.copyfile(source / relative, resources / name)
         check.run(["xcrun", "swift", source / "script/make_icon.swift", work / "OpenCove.iconset"], cwd=source, stdout=sys.stderr)
@@ -112,6 +194,8 @@ def build(app, arch, configuration, variant, signing, replace=False, scratch=Non
             "The bundled media adapters are independently authored MIT source.\n"
             "No Alcove implementation, assets, executable, or license service is included.\n"
             "Apple system frameworks are provided by macOS and are not redistributed.\n"
+            "Sparkle " + check.SPARKLE["version"] + " is the native updater; its MIT and third-party notices are in Sparkle-LICENSE.txt.\n"
+            "SPARKLE_DEPENDENCY.json records the pinned official SDK URL, checksum, and upstream revision.\n"
             "Optional weather data: Open-Meteo (https://open-meteo.com/), CC BY 4.0\n"
             "(https://creativecommons.org/licenses/by/4.0/); provider service terms also apply.\n"
             "SOURCE_MANIFEST.json records the source commit, dirty state, and file digests.\n"
@@ -134,9 +218,12 @@ def build(app, arch, configuration, variant, signing, replace=False, scratch=Non
             "NSScreenCaptureUsageDescription": "OpenCove can display live system audio levels. The stream measures audio in memory without recording, saving, or uploading screen images or audio.",
             "CFBundleURLTypes": [{"CFBundleURLName": "org.opencove", "CFBundleURLSchemes": ["opencove-dev" if variant == "development" else "opencove"]}],
         }
+        info.update(updates)
         (staged / "Contents/Info.plist").write_bytes(plistlib.dumps(info, sort_keys=True))
+        sign_sparkle(staged, identity)
         command = ["codesign", "--force", "--sign", identity or "-"]
         if identity:
+            command += check.signing_keychain_arguments()
             entitlements = work / "entitlements.plist"
             entitlements.write_bytes(plistlib.dumps({"com.apple.security.automation.apple-events": True}))
             command += ["--options", "runtime", "--timestamp", "--entitlements", entitlements]
@@ -165,16 +252,17 @@ def zip_files(destination_path, paths, epoch):
     # toolchain output mean signed binaries are not claimed byte-reproducible.
     timestamp = datetime.datetime.fromtimestamp(max(315532800, min(epoch, 4354819198)), datetime.timezone.utc)
     with zipfile.ZipFile(destination_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        for name, data, executable in sorted(paths):
+        for name, data, executable, symlink in sorted(paths):
             entry = zipfile.ZipInfo(name, timestamp.timetuple()[:6])
             entry.create_system = 3
-            entry.external_attr = (0o100755 if executable else 0o100644) << 16
+            entry.external_attr = (0o120777 if symlink else 0o100755 if executable else 0o100644) << 16
             entry.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(entry, data)
 
 
 def package(args):
     value = check.version()
+    updater_configuration("release", "release")
     check.require(not args.notarize or args.signing == "developer-id", "Notarization requires --signing developer-id.")
     identity, profile = signing_configuration(args.signing, args.notarize, args.notary_profile)
     check.require((ROOT / ".git").exists(), "Release packaging requires a clean Git checkout. An extracted source archive supports local builds only.")
@@ -206,11 +294,12 @@ def package(args):
             check.require(result.get("status") == "Accepted", "Apple did not accept the notarization submission. No release artifacts were retained.")
             check.run(["xcrun", "stapler", "staple", app])
             check.bundle(app, arch, "release", args.signing, notarized=True)
-        zip_files(artifacts / (base + ".zip"), [(str(p.relative_to(work)), p.read_bytes(), bool(p.stat().st_mode & 0o111))
-                  for p in app.rglob("*") if p.is_file()], epoch)
+        zip_files(artifacts / (base + ".zip"), bundle_archive_entries(app, work), epoch)
         source_archive(artifacts / (source_base + ".zip"), manifest, epoch)
         metadata = {"version": value, "architecture": arch, "signing": args.signing, "notarized": bool(args.notarize),
-                    "identity": identity, "source": manifest, "toolchain": tools}
+                    "identity": identity, "source": manifest, "toolchain": tools,
+                    "updater": {k: v for k, v in plistlib.loads((app / "Contents/Info.plist").read_bytes()).items()
+                                if k in {"OpenCoveUpdaterMode", "SUFeedURL", "SUPublicEDKey", "SUVerifyUpdateBeforeExtraction"}}}
         (artifacts / (base + "-release.json")).write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
         (artifacts / "SHA256SUMS").write_text("".join(check.digest(p.read_bytes()) + "  " + p.name + "\n" for p in sorted(artifacts.iterdir())))
         check.require(check.source_manifest() == manifest, "Checkout changed during packaging. Retry from a stable checkout.")
@@ -223,8 +312,8 @@ def source_archive(path, manifest, epoch):
     source_base = f"OpenCove-{check.label(check.version())}-source"
     check.require(path.name == source_base + ".zip" and not path.exists() and not path.is_symlink(), "Source ZIP needs its canonical filename and a fresh output path.")
     path.parent.mkdir(parents=True, exist_ok=True)
-    files = [(source_base + "/" + entry["path"], check.verified_source_bytes(ROOT, entry), entry["executable"]) for entry in manifest["files"]]
-    files.append((source_base + "/SOURCE_MANIFEST.json", (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode(), False))
+    files = [(source_base + "/" + entry["path"], check.verified_source_bytes(ROOT, entry), entry["executable"], False) for entry in manifest["files"]]
+    files.append((source_base + "/SOURCE_MANIFEST.json", (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode(), False, False))
     zip_files(path, files, epoch)
 
 
@@ -237,6 +326,7 @@ def main():
     app.add_argument("--output", type=Path, required=True)
     app.add_argument("--scratch-path", type=Path)
     app.add_argument("--replace", action="store_true")
+    app.add_argument("--updater-test", action="store_true", help="Development-only loopback feed and fresh Sparkle preferences domain; launch still needs --enable-isolated-updater and OPENCOVE_DATA_DIR")
     release = commands.add_parser("package", help="Package a clean committed source tree; never publishes")
     release.add_argument("--output-dir", type=Path)
     release.add_argument("--notarize", action="store_true", help="Explicitly upload the Developer ID app to Apple using a local keychain profile")
@@ -244,10 +334,17 @@ def main():
     source = commands.add_parser("source-archive", help="Export allowlisted source; --allow-dirty marks a local preview, not a release")
     source.add_argument("--output", type=Path, required=True)
     source.add_argument("--allow-dirty", action="store_true")
+    sdk = commands.add_parser("sparkle-tools", help="Print the existing pinned SDK's bin directory; never resolves, builds, or runs its tools")
+    sdk.add_argument("--scratch-path", type=Path, required=True, help="Architecture-specific scratch directory, e.g. /private/tmp/build/swift/arm64")
     for command in (app, release):
         command.add_argument("--arch", choices=check.ARCHITECTURES, default=platform.machine())
         command.add_argument("--signing", choices=["adhoc", "developer-id"], default="adhoc")
     args = parser.parse_args()
+    if args.command == "sparkle-tools":
+        directory = sparkle_sdk(args.scratch_path.expanduser().resolve()).parent / "bin"
+        check.require(all((directory / name).is_file() and os.access(directory / name, os.X_OK) for name in ("generate_appcast", "sign_update")), "Pinned Sparkle signing tools are missing or not executable.")
+        print(directory)
+        return
     if args.command == "source-archive":
         manifest = check.source_manifest(args.allow_dirty)
         epoch = int(check.output(["git", "-C", ROOT, "show", "-s", "--format=%ct", "HEAD"])) if (ROOT / ".git").exists() else 315532800
@@ -257,7 +354,7 @@ def main():
         return
     check.require(args.arch in check.ARCHITECTURES, "Choose --arch arm64, x86_64, or universal2.")
     if args.command == "build":
-        build(args.output, args.arch, args.configuration, args.variant, args.signing, args.replace, args.scratch_path)
+        build(args.output, args.arch, args.configuration, args.variant, args.signing, args.replace, args.scratch_path, updater_test=args.updater_test)
         print(args.output.absolute())
     else:
         package(args)

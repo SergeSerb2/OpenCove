@@ -27,6 +27,16 @@ OPENCOVE_ARCH=arm64 ./script/build_and_run.sh --build
 
 `OPENCOVE_ARCH` accepts only `arm64`, `x86_64`, or `universal2`. A universal build compiles each architecture separately and combines them with `lipo`. Runtime support for both architectures is a separate gate. Scratch paths default to a temporary directory, which is removed after the build. An explicitly chosen scratch path can retain compiler output for local reuse.
 
+The official Sparkle 2.10.0 binary SDK is pinned by URL and SHA-256 in
+`Package.swift`. SwiftPM downloads and verifies it during a build; there is no
+floating dependency or Git lockfile. The builder embeds and signs the framework
+and its helpers. Source ZIPs carry the same pin and dependency provenance.
+Development bundles keep the updater stopped and contain no feed or public key.
+`--release` now requires real `OPENCOVE_UPDATE_FEED_URL` and
+`OPENCOVE_UPDATE_PUBLIC_ED_KEY` values before building. See [updates](updates.md)
+for owned-domain hosting, native controls, retained CLI tools, and explicit
+isolated updater verification.
+
 The builder generates a fresh icon and bundle, copies the adapter source and MIT license, checks the signature and architecture, then replaces the destination. It never writes into an Applications folder. All versions come from `version.json`; malformed values stop before compilation.
 
 Each bundle build first copies only manifest-listed files into a fresh private source snapshot. It checks the actual copied bytes and executable modes, then runs SwiftPM and icon generation there. Alternate `Package@*.swift` manifests and symlinked source directories fail before compilation. Ignored evidence, `.swiftpm` settings, and old build output stay in the original folder and do not enter the snapshot. A source change during copying or building discards the build.

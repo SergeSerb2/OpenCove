@@ -8,6 +8,7 @@ import SwiftUI
 @MainActor
 final class DevelopmentServer {
     private let store: CoveStore
+    private weak var updater: CoveUpdater?
     private let port: UInt16
     private let token = UUID().uuidString + UUID().uuidString
     private var listener: NWListener?
@@ -40,8 +41,9 @@ final class DevelopmentServer {
 
     private let descriptorURL = CovePaths.dataDirectory.appendingPathComponent("control.json")
 
-    init(store: CoveStore, port: UInt16) {
+    init(store: CoveStore, port: UInt16, updater: CoveUpdater? = nil) {
         self.store = store
+        self.updater = updater
         self.port = port
         // Only explicitly enabled development controls observe this count.
         timerObservation = store.activities.$timer.dropFirst().sink { [weak self] _ in
@@ -331,6 +333,29 @@ final class DevelopmentServer {
             }
         }
         switch action {
+        case "updates.check":
+            guard let updater, updater.canCheckForUpdates else {
+                throw ControlError.rejected("The updater is unavailable or already checking. Read fresh state.")
+            }
+            updater.checkForUpdates()
+        case "updates.preferences":
+            guard let updater, updater.controller != nil else {
+                throw ControlError.rejected("The updater is off in this launch.")
+            }
+            guard let changes = values["values"] as? [String: Any], !changes.isEmpty,
+                  Set(changes.keys).isSubset(of: ["automaticChecks", "automaticDownloads"]) else {
+                throw ControlError.invalid("Use automaticChecks or automaticDownloads boolean values.")
+            }
+            for value in changes.values {
+                guard let value = value as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else {
+                    throw ControlError.invalid("Update preferences must be booleans.")
+                }
+            }
+            if changes["automaticDownloads"] as? Bool == true, !updater.allowsAutomaticUpdates {
+                throw ControlError.rejected("This update configuration does not support automatic installation.")
+            }
+            if let value = changes["automaticChecks"] as? Bool { updater.setAutomaticChecks(value) }
+            if let value = changes["automaticDownloads"] as? Bool { updater.setAutomaticDownloads(value) }
         case "expand": store.expand()
         case "compact.open": store.openCompactActivity()
         case "compact.dismiss", "compact.restore":
@@ -548,6 +573,13 @@ final class DevelopmentServer {
         }
         var result: [String: Any] = ["app": "OpenCove", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unbundled", "expanded": store.isExpanded, "tab": store.selectedTab.rawValue, "settingsVisible": store.settingsVisible, "dataDirectory": CovePaths.dataDirectory.path, "nativeWindows": windows]
         result["preferences"] = try encoded(store.preferences)
+        let sparkle = updater?.controller?.updater
+        result["updates"] = ["available": sparkle != nil,
+                             "canCheckForUpdates": sparkle?.canCheckForUpdates ?? false,
+                             "automaticChecks": sparkle?.automaticallyChecksForUpdates ?? false,
+                             "automaticDownloads": sparkle?.automaticallyDownloadsUpdates ?? false,
+                             "allowsAutomaticUpdates": sparkle?.allowsAutomaticUpdates ?? false,
+                             "status": updater?.status ?? "No updater is attached to these controls."]
         result["enabledTabs"] = store.enabledTabs.map(\.rawValue)
         result["visibleTab"] = store.visibleTab.map { $0.rawValue as Any } ?? NSNull()
         var media = store.media.state
@@ -682,6 +714,9 @@ final class DevelopmentServer {
         case "settings-activities":
             size = CGSize(width: 760, height: 900)
             content = AnyView(SettingsView(store: store, initialPage: .activities))
+        case "settings-updates":
+            size = CGSize(width: 760, height: 760)
+            content = AnyView(SettingsView(store: store, initialPage: .about, updater: updater))
         case "settings-weather":
             size = CGSize(width: 760, height: 550)
             content = AnyView(SettingsView(store: store, initialPage: .weather))

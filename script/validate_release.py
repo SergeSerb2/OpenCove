@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Validate OpenCove's public source, bundle, or local release artifacts. No launch."""
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY = "https://github.com/SergeSerb2/OpenCove"
@@ -23,10 +25,18 @@ SCRIPT_FILES = {"build_and_run.sh", "make_icon.swift", "OpenCoveMediaAdapter.swi
                 "package_release.py", "validate_release.py", "signing_info.swift", "control_e2e.py", "runtime_e2e.py"}
 DOC_FILES = {"building.md", "releasing.md", "privacy.md", "compatibility.md", "architecture.md",
              "calendar.md", "travel-alerts.md", "hardware-huds.md", "notification-mirroring.md",
-             "quality.md"}
+             "quality.md", "updates.md", "Sparkle-LICENSE.txt"}
 REQUIRED = ROOT_FILES | {"script/" + name for name in SCRIPT_FILES - {"control_e2e.py"}} | {
     "docs/" + name for name in ("building.md", "releasing.md", "privacy.md", "compatibility.md", "quality.md")
-} | {"assets/icon.svg", "Sources/OpenCove/App/OpenCoveApp.swift"}
+} | {"assets/icon.svg", "Sources/OpenCove/App/OpenCoveApp.swift", "docs/updates.md", "docs/Sparkle-LICENSE.txt"}
+SPARKLE = {
+    "identity": "sparkle", "version": "2.10.0",
+    "repository": "https://github.com/sparkle-project/Sparkle",
+    "revision": "eef1a539a373c1f1a320624b1130fc5de7b2e100",
+    "url": "https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-for-Swift-Package-Manager.zip",
+    "sha256": "17e28312b8e18ab7cdbbe09a6fb28cc55a5479ec6c371dbc07cdecd2a14fd959",
+    "licenseSHA256": "389a4e4e9a32f059775b13a06e25a591445ba229d2838d26dd3e7c0c45127cfe",
+}
 SECRET = re.compile(rb"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|github_pat_[A-Za-z0-9_]{30,}|gh[pousr]_[A-Za-z0-9]{30,}")
 USAGE_KEYS = {"NSAppleEventsUsageDescription", "NSCalendarsFullAccessUsageDescription",
               "NSLocationUsageDescription", "NSLocationWhenInUseUsageDescription",
@@ -49,6 +59,137 @@ def output(arguments):
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def signing_keychain():
+    value = os.environ.get("OPENCOVE_SIGN_KEYCHAIN")
+    if value is None:
+        return None
+    require(value and not any(c in value for c in "\r\n\0") and Path(value).is_absolute(),
+            "OPENCOVE_SIGN_KEYCHAIN must name an absolute existing owned keychain file.")
+    path = Path(value)
+    info = path.lstat()
+    require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid(),
+            "OPENCOVE_SIGN_KEYCHAIN must be an existing regular file owned by the current user, not a symlink.")
+    return path
+
+
+def signing_keychain_arguments():
+    keychain = signing_keychain()
+    return ["--keychain", keychain] if keychain else []
+
+
+def dependency(root=ROOT):
+    package = (root / "Package.swift").read_text()
+    require(re.search(r'\.binaryTarget\(\s*name: "Sparkle",\s*url: "' + re.escape(SPARKLE["url"]) +
+                      r'",\s*checksum: "' + SPARKLE["sha256"] + r'"\s*\)', package) is not None,
+            "Package.swift must use the pinned official Sparkle binary target and checksum.")
+    require(not (root / "Package.resolved").exists(), "This binary-only package has no Package.resolved. Review and record new dependencies before building.")
+    require(digest((root / "docs/Sparkle-LICENSE.txt").read_bytes()) == SPARKLE["licenseSHA256"], "Sparkle license differs from the pinned upstream release.")
+    return dict(SPARKLE)
+
+
+def update_feed(value, isolated=False):
+    require(isinstance(value, str) and not any(c.isspace() for c in value), "Update feed must be a URL without whitespace.")
+    url = urlsplit(value)
+    require(url.hostname and not url.username and not url.password and not url.query and not url.fragment and url.path.endswith(".xml"),
+            "Update feed needs a host and .xml path, with no credentials, query, or fragment.")
+    require(url.port is None or 0 < url.port < 65536, "Invalid update feed port.")
+    loopback = url.hostname.lower() in {"localhost", "127.0.0.1", "::1"}
+    if isolated:
+        require(loopback and url.scheme in {"http", "https"}, "Isolated updater verification requires a loopback HTTP(S) feed.")
+    else:
+        require(url.scheme == "https" and not loopback and "." in url.hostname and
+                not url.hostname.endswith((".example", ".invalid", ".test", ".localhost")) and
+                url.hostname not in {"example.com", "example.org", "example.net"}, "Release updates require a real public HTTPS appcast URL.")
+
+
+def update_key(value):
+    require(isinstance(value, str), "Supply the real Sparkle public Ed25519 key with OPENCOVE_UPDATE_PUBLIC_ED_KEY.")
+    try:
+        data = base64.b64decode(value, validate=True)
+    except ValueError:
+        raise ValueError("Sparkle public key must be canonical base64 for exactly 32 bytes.") from None
+    require(len(data) == 32 and any(data) and base64.b64encode(data).decode() == value,
+            "Sparkle public key must be canonical base64 for exactly 32 bytes; an all-zero key is invalid.")
+
+
+def update_info(info, variant):
+    mode = info.get("OpenCoveUpdaterMode")
+    if mode == "disabled":
+        require(variant == "development" and not any(k in info for k in ("SUFeedURL", "SUPublicEDKey", "SUDefaultsDomain")), "Disabled updater bundles must be development bundles without feed or trust keys.")
+        return
+    isolated = mode == "isolated-test"
+    require((isolated and variant == "development") or (mode == "release" and variant == "release"), "Updater mode does not match the bundle variant.")
+    require(isolated or info.get("OpenCoveBuildConfiguration") == "release", "Release updater requires an optimized build.")
+    update_feed(info.get("SUFeedURL"), isolated)
+    update_key(info.get("SUPublicEDKey"))
+    require(info.get("SUVerifyUpdateBeforeExtraction") is True, "Update archives must be verified before extraction.")
+    require("SUEnableAutomaticChecks" not in info and "SUAutomaticallyUpdate" not in info and "SUAllowsAutomaticUpdates" not in info,
+            "Keep Sparkle's consent and automatic download defaults; do not forge opt-in.")
+    if isolated:
+        require(re.fullmatch(r"org\.opencove\.OpenCove\.updater-test\.[0-9a-f]{32}", info.get("SUDefaultsDomain", "")) is not None,
+                "Isolated updater bundles need a fresh private Sparkle defaults domain.")
+    else:
+        require("SUDefaultsDomain" not in info and "NSAppTransportSecurity" not in info, "Release updates must use the normal defaults domain and default transport security.")
+
+
+def framework_paths(framework):
+    base = framework / "Versions/B"
+    return [base / "XPCServices/Installer.xpc", base / "XPCServices/Downloader.xpc",
+            base / "Autoupdate", base / "Updater.app", framework]
+
+
+def contained_bundle_links(app):
+    framework = app / "Contents/Frameworks/Sparkle.framework"
+    for path in app.rglob("*"):
+        if path.is_symlink():
+            require(path.is_relative_to(framework) and not os.path.isabs(os.readlink(path)) and
+                    path.resolve(strict=True).is_relative_to(framework.resolve()), "Unexpected or escaping bundle symlink.")
+        require(path.name not in {".DS_Store", ".local", ".git", "__pycache__"}, "Private/generated bundle content.")
+
+
+def linkage(binary):
+    libraries = []
+    # Universal output includes one heading per architecture. Only indented
+    # install names are dependencies, never the caller-controlled heading path.
+    for line in output(["otool", "-L", binary]).splitlines():
+        if not line.startswith("\t"):
+            continue
+        name = line.strip().split(" (", 1)[0]
+        require(name.startswith(("/System/Library/", "/usr/lib/", "@loader_path/", "@executable_path/")) or
+                name == "@rpath/Sparkle.framework/Versions/B/Sparkle" or
+                re.fullmatch(r"@rpath/libswift[A-Za-z0-9_]+\.dylib", name), "Unexpected non-system Mach-O dependency.")
+        libraries.append(name)
+    return libraries
+
+
+def sparkle_bundle(app, arch, source_root):
+    framework = app / "Contents/Frameworks/Sparkle.framework"
+    require(framework.is_dir() and not framework.is_symlink() and
+            {p.name for p in framework.parent.iterdir()} == {"Sparkle.framework"}, "Expected only the embedded Sparkle framework.")
+    info = plistlib.loads((framework / "Resources/Info.plist").read_bytes())
+    require(info.get("CFBundleShortVersionString") == SPARKLE["version"] and info.get("CFBundleIdentifier") == "org.sparkle-project.Sparkle", "Wrong Sparkle framework identity/version.")
+    resources = app / "Contents/Resources"
+    require((resources / "Sparkle-LICENSE.txt").read_bytes() == (source_root / "docs/Sparkle-LICENSE.txt").read_bytes(), "Missing Sparkle and embedded third-party licenses.")
+    require(json.loads((resources / "SPARKLE_DEPENDENCY.json").read_text()) == dependency(source_root), "Sparkle SDK provenance differs from the pinned dependency.")
+    for code in framework_paths(framework):
+        require(code.exists() and not code.is_symlink(), "Missing Sparkle nested code: " + code.name)
+        if code.suffix in {".app", ".xpc"}:
+            nested = plistlib.loads((code / "Contents/Info.plist").read_bytes())
+            binary = code / "Contents/MacOS" / nested["CFBundleExecutable"]
+        elif code.suffix == ".framework":
+            binary = code / "Versions/B/Sparkle"
+        else:
+            binary = code
+        require(binary.is_file() and os.access(binary, os.X_OK), "Sparkle executable is missing or lost permissions.")
+        require(ARCHITECTURES[arch] <= set(output(["lipo", "-archs", binary]).split()), "Sparkle helper is missing a requested architecture.")
+        linkage(binary)
+    binary = app / "Contents/MacOS/OpenCove"
+    require("@rpath/Sparkle.framework/Versions/B/Sparkle" in linkage(binary), "App does not link the real Sparkle framework.")
+    require("path @executable_path/../Frameworks (offset" in output(["otool", "-l", binary]), "App is missing its bundled-framework rpath.")
+    runpaths = re.findall(r"cmd LC_RPATH\n\s+cmdsize \d+\n\s+path (.*?) \(offset", output(["otool", "-l", binary]))
+    require(set(runpaths) <= {"@executable_path/../Frameworks", "@loader_path", "/usr/lib/swift"}, "App retains an external build-machine runpath.")
 
 
 def version(path=None):
@@ -137,6 +278,7 @@ def verified_source_bytes(root, entry):
 
 
 def source_manifest(allow_dirty=False):
+    sdk = dependency()
     actual = source_inventory()
     if not (ROOT / ".git").exists():
         # Source ZIPs deliberately omit Git. Trust only a complete manifest whose
@@ -145,6 +287,7 @@ def source_manifest(allow_dirty=False):
         entries = manifest["files"]
         require(manifest["repository"] == REPOSITORY and re.fullmatch(r"[0-9a-f]{40}", manifest["commit"]) is not None,
                 "Invalid exported source identity.")
+        require(manifest.get("dependencies") == [sdk], "Exported source does not record the pinned Sparkle dependency.")
         require(type(manifest["dirty"]) is bool and (allow_dirty or not manifest["dirty"]), "Exported source records uncommitted changes.")
         require(digest(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()) == manifest["treeSHA256"], "Exported source manifest digest mismatch.")
         names = [entry["path"] for entry in entries]
@@ -172,19 +315,20 @@ def source_manifest(allow_dirty=False):
         entries.append(entry)
     tree = digest(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode())
     return {"repository": REPOSITORY, "commit": output(["git", "-C", ROOT, "rev-parse", "HEAD"]),
-            "dirty": bool(status), "treeSHA256": tree, "files": entries}
+            "dirty": bool(status), "treeSHA256": tree, "files": entries, "dependencies": [sdk]}
 
 
 def bundle(app, arch, variant, signing, notarized=False, expected_version=None, source_root=None):
     source_root = source_root or ROOT
     require(arch in ARCHITECTURES, "Unsupported architecture.")
     require(signing in {"adhoc", "developer-id"}, "Unsupported signing mode.")
+    keychain = signing_keychain()
+    require(signing == "developer-id" or keychain is None, "Ad-hoc verification rejects an ambient OPENCOVE_SIGN_KEYCHAIN.")
     require(not notarized or signing == "developer-id", "Notarization requires Developer ID signing.")
     require(app.is_dir() and not app.is_symlink(), "App bundle is missing or is a symlink.")
-    for path in app.rglob("*"):
-        require(not path.is_symlink(), "Unexpected bundle symlink: " + str(path))
-        require(path.name not in {".DS_Store", ".local", ".git", "__pycache__"}, "Private/generated bundle content: " + str(path))
+    contained_bundle_links(app)
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+    update_info(info, variant)
     value = expected_version or version(source_root / "version.json")
     expected_id = "org.opencove.OpenCove" + (".dev" if variant == "development" else "")
     require(info.get("CFBundleIdentifier") == expected_id, "Unexpected bundle identifier.")
@@ -207,10 +351,14 @@ def bundle(app, arch, variant, signing, notarized=False, expected_version=None, 
     manifest = json.loads((resources / "SOURCE_MANIFEST.json").read_text())
     require(re.fullmatch(r"[0-9a-f]{40}", manifest["commit"]) is not None and re.fullmatch(r"[0-9a-f]{64}", manifest["treeSHA256"]) is not None, "Invalid source manifest identity.")
     require(info.get("OpenCoveSourceRevision") == manifest["commit"] and info.get("OpenCoveSourceTreeSHA256") == manifest["treeSHA256"], "Bundle source identities disagree.")
+    require(manifest.get("dependencies") == [dependency(source_root)], "Bundle source manifest is missing Sparkle's dependency identity.")
+    sparkle_bundle(app, arch, source_root)
     run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", app])
     # Human-readable codesign diagnostics contain caller-controlled paths. Only
     # Security framework values and an Apple certificate requirement are gates.
-    slices = json.loads(output(["xcrun", "swift", source_root / "script/signing_info.swift", app.resolve(),
+    # Always execute the validator's own helper. Artifact source ZIPs are data,
+    # never executable validation tools supplied by an archive being inspected.
+    slices = json.loads(output(["xcrun", "swift", ROOT / "script/signing_info.swift", app.resolve(),
                                 *sorted(ARCHITECTURES[arch])]))
     require(isinstance(slices, list) and len(slices) == len(ARCHITECTURES[arch]), "Missing structured signing information.")
     for item in slices:
@@ -226,27 +374,65 @@ def bundle(app, arch, variant, signing, notarized=False, expected_version=None, 
             require(item["automationEntitlementOnly"] is True, "Unexpected hardened runtime entitlements.")
     if signing == "developer-id":
         require(len({item["teamIdentifier"] for item in slices}) == 1, "Architecture signing teams differ.")
+    team = slices[0]["teamIdentifier"]
+    for code in framework_paths(app / "Contents/Frameworks/Sparkle.framework"):
+        nested = json.loads(output(["xcrun", "swift", ROOT / "script/signing_info.swift", code.resolve(),
+                                    *sorted(ARCHITECTURES[arch])]))
+        require(len(nested) == len(slices), "Missing nested signing information.")
+        for item in nested:
+            require(item["safeSparkleEntitlements"] is True, "Unexpected Sparkle helper entitlements.")
+            if signing == "developer-id":
+                require(item["developerIDApplication"] is True and item["teamIdentifier"] == team and
+                        item["runtime"] is True and isinstance(item["secureTimestamp"], str),
+                        "Sparkle nested code requires the same Developer ID team, hardened runtime, and timestamp.")
+            else:
+                require(item["adHoc"] is True and item["teamIdentifier"] is None, "Sparkle nested code must be signed ad-hoc for local bundles.")
     if notarized:
         run(["xcrun", "stapler", "validate", app])
         run(["spctl", "--assess", "--type", "execute", "--verbose=2", app])
     return info
 
 
-def extract_clean(archive, destination):
+def extract_clean(archive, destination, bundle_links=False):
     with zipfile.ZipFile(archive) as zipped:
         names = set()
         for item in zipped.infolist():
             path = PurePosixPath(item.filename)
+            require(str(path) + ("/" if item.is_dir() else "") == item.filename and
+                    not any(c in item.filename for c in "\r\n\0"), "Noncanonical ZIP path.")
             require(item.filename not in names, "Duplicate ZIP entry.")
             names.add(item.filename)
             require(not path.is_absolute() and ".." not in path.parts and "\\" not in item.filename, "Unsafe ZIP path.")
-            require(not stat.S_ISLNK(item.external_attr >> 16), "ZIP symlinks are not supported.")
+            mode = item.external_attr >> 16
+            require(stat.S_IFMT(mode) in {0, stat.S_IFREG, stat.S_IFDIR, stat.S_IFLNK}, "Unsupported ZIP entry type.")
+            if stat.S_ISLNK(mode):
+                require(bundle_links and path.is_relative_to(PurePosixPath("OpenCove.app/Contents/Frameworks/Sparkle.framework")) and item.file_size < 4096,
+                        "ZIP links are allowed only inside the bundled Sparkle framework.")
             require(item.file_size <= 512 * 1024 * 1024, "Oversized ZIP entry.")
         require(sum(i.file_size for i in zipped.infolist()) <= 1024 * 1024 * 1024, "Oversized ZIP contents.")
-        zipped.extractall(destination)
+        # Extract regular data first and links last. Refuse entries below links,
+        # absolute targets, and targets escaping the embedded framework.
+        links = {i.filename for i in zipped.infolist() if stat.S_ISLNK(i.external_attr >> 16)}
+        require(not any(str(p) in links for name in names for p in PurePosixPath(name).parents), "ZIP entry traverses a symlink.")
+        destination.mkdir(parents=True, exist_ok=True)
         for item in zipped.infolist():
-            if not item.is_dir():
-                (destination / item.filename).chmod(0o755 if item.external_attr >> 16 & 0o111 else 0o644)
+            path = destination / item.filename
+            if item.is_dir():
+                path.mkdir(parents=True, exist_ok=True)
+            elif item.filename not in links:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(zipped.read(item))
+                path.chmod(0o755 if item.external_attr >> 16 & 0o111 else 0o644)
+        framework = destination / "OpenCove.app/Contents/Frameworks/Sparkle.framework"
+        for name in sorted(links):
+            path = destination / name
+            target = zipped.read(name).decode("utf-8")
+            require(target and not os.path.isabs(target) and "\\" not in target and "\0" not in target and
+                    (path.parent / target).resolve().is_relative_to(framework.resolve()), "Unsafe ZIP symlink target.")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.symlink_to(target)
+        if bundle_links:
+            contained_bundle_links(destination / "OpenCove.app")
 
 
 def artifacts(directory):
@@ -271,14 +457,17 @@ def artifacts(directory):
         require(digest((directory / match[2]).read_bytes()) == match[1], "Artifact checksum mismatch.")
     with tempfile.TemporaryDirectory(prefix="opencove-artifact-check-") as temporary:
         scratch = Path(temporary)
-        extract_clean(directory / (base + ".zip"), scratch / "binary")
+        extract_clean(directory / (base + ".zip"), scratch / "binary", bundle_links=True)
         require({p.name for p in (scratch / "binary").iterdir()} == {"OpenCove.app"}, "Unexpected app ZIP contents.")
         app = scratch / "binary/OpenCove.app"
-        bundle(app, arch, "release", signing, metadata["notarized"], metadata["version"])
         extract_clean(directory / (source_base + ".zip"), scratch / "source")
         source = scratch / "source" / source_base
         require({p.name for p in (scratch / "source").iterdir()} == {source_base}, "Unexpected source ZIP root.")
         manifest = json.loads((source / "SOURCE_MANIFEST.json").read_text())
+        require(manifest.get("dependencies") == [dependency(source)], "Source ZIP dependency identity is missing or stale.")
+        info = bundle(app, arch, "release", signing, metadata["notarized"], metadata["version"], source_root=source)
+        require(metadata.get("updater") == {k: v for k, v in info.items() if k in {
+            "OpenCoveUpdaterMode", "SUFeedURL", "SUPublicEDKey", "SUVerifyUpdateBeforeExtraction"}}, "Release metadata and bundle updater policy differ.")
         require(manifest == json.loads((app / "Contents/Resources/SOURCE_MANIFEST.json").read_text()) == metadata["source"], "App/source/release manifests differ.")
         entries = manifest["files"]
         require(not manifest["dirty"] and manifest["repository"] == REPOSITORY, "Source archive is not a clean OpenCove snapshot.")

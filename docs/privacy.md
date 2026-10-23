@@ -1,6 +1,6 @@
 # Privacy, permissions, and network use
 
-OpenCove runs as a native app on your Mac. It has no app-operated account, analytics service, crash upload, update checker, or remote control backend. It is not sandboxed. OS and third-party services have their own policies. Private integrations are enabled by default and can be turned off in Settings; optional protected features still need the relevant permission or explicit feature choice.
+OpenCove runs as a native app on your Mac. It has no app-operated account, analytics service, crash upload, or remote control backend. Configured release builds use Sparkle for updates, as described below. It is not sandboxed. OS and third-party services have their own policies. Private integrations are enabled by default and can be turned off in Settings; optional protected features still need the relevant permission or explicit feature choice.
 
 ## Permissions
 
@@ -36,7 +36,8 @@ Disable the related feature and remove its saved origin/location in Settings whe
 - **Travel:** After travel opt-in and origin selection, MapKit sends the necessary event destination query and origin region to Apple Maps. Directions use origin/destination coordinates and the event's arrival time. The app does not send the event title, notes, body, or meeting URL as a place query. Requests can recur when an eligible route becomes stale. This is not an offline feature.
 - **Artwork:** With the Spotify Automation fallback, artwork URLs on Spotify's `scdn.co` image CDN can be downloaded over HTTPS. The CDN sees the image request and normal connection metadata. Other metadata/artwork can come from the local media system or the chosen app.
 - **Links and sharing:** Opening a meeting, media, calendar, Maps, or weather link hands it to its registered app or browser. File sharing uses the selected macOS share service. Those apps/services can contact their own servers.
-- **Development and distribution:** SwiftPM has no third-party package to download. Git clone and CI use GitHub. Normal local packaging does not upload. Only an explicit `--notarize` command submits a signed app to Apple's notary service with the maintainer's keychain profile.
+- **Updates:** Configured releases contact the HTTPS appcast host when you choose Check for Updates or permit automatic checks. Downloads contact the archive host named in the feed. The intended host is the Cloudflare-backed `opencove.sergeserbinenko.com`, pending deployment confirmation. Those hosts see the requested feed/archive, normal connection metadata including IP address, and Sparkle's app/version request information. OpenCove leaves Sparkle system profiling off. Automatic downloads start off and can be enabled in Settings or Sparkle's consent UI. Sparkle stores its preferences and last-check state in macOS user defaults and can cache downloaded updates under macOS cache policy. Ordinary development and control launches do not start the updater; explicit isolated verification uses a loopback feed and separate updater preferences. See [updates](updates.md).
+- **Development and distribution:** SwiftPM downloads the official Sparkle binary SDK from GitHub and verifies the pinned SHA-256. Git clone and CI also use GitHub. Normal local packaging does not upload. Only an explicit `--notarize` command submits a signed app to Apple's notary service with the maintainer's keychain profile.
 
 ## Local control interfaces
 

@@ -48,6 +48,15 @@ do {
         let exactEntitlement = entitlements.count == 1 && automation.map {
             CFGetTypeID($0) == CFBooleanGetTypeID() && $0.boolValue
         } == true
+        // The only upstream helper that can need entitlements is Downloader.
+        // Never accept debugging or disabled library-validation entitlements.
+        let downloaderKeys: Set<String> = ["com.apple.security.app-sandbox", "com.apple.security.network.client"]
+        let safeSparkleEntitlements = entitlements.isEmpty ||
+            (url.lastPathComponent == "Downloader.xpc" && Set(entitlements.keys).isSubset(of: downloaderKeys) &&
+             entitlements.values.allSatisfy { value in
+                 guard let boolean = value as? NSNumber else { return false }
+                 return CFGetTypeID(boolean) == CFBooleanGetTypeID() && boolean.boolValue
+             })
         let timestamp = (info[kSecCodeInfoTimestamp as String] as? Date).map { ISO8601DateFormatter().string(from: $0) }
         slices.append([
             "architecture": architecture,
@@ -57,6 +66,7 @@ do {
             "teamIdentifier": team as Any? ?? NSNull(),
             "secureTimestamp": timestamp as Any? ?? NSNull(),
             "automationEntitlementOnly": exactEntitlement,
+            "safeSparkleEntitlements": safeSparkleEntitlements,
         ])
     }
     let data = try JSONSerialization.data(withJSONObject: slices, options: [.sortedKeys])
