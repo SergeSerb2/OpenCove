@@ -11,11 +11,12 @@ enum MediaFixture {
     @MainActor static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
         if args == ["--help"] {
-            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration NONNEGATIVE_SECONDS] [--metadata-style normal|long|oversized|identical] [--artwork-style shared|alternate|none|missing-second|triple] [--rate-controls] [--live-metadata] [--explicit-metadata] [--stdin-control]")
+            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration NONNEGATIVE_SECONDS] [--metadata-style normal|long|oversized|identical] [--artwork-style shared|alternate|none|missing-second|triple] [--rate-controls] [--live-metadata] [--explicit-metadata] [--native-artwork] [--stdin-control]")
             print("Plays only its own two silent tracks (three with triple) for at most 90 seconds. No arguments and missing/unsafe state paths fail before playback. OPENCOVE_FIXTURE_STATE can supply --state.")
             print("--artwork-style defaults to shared (the original cover on both tracks); alternate uses a second original cover on track 2; none omits artwork; missing-second omits artwork only on track 2; triple cycles three tracks with distinct original covers. State reports artworkStyle and artworkVariant (original|alternate|third|none).")
             print("--live-metadata advertises this local fixture's public live flag on its first item; it does not start a network stream. Zero metadata duration represents unavailable timing.")
             print("--explicit-metadata uses an opt-in native publisher for this fixture only: first item explicit, other items false. It never overrides another app or sends another player a command. Cannot combine with --live-metadata or --rate-controls.")
+            print("--native-artwork publishes this fixture's metadata and cached original PNGs through its own native publisher instead of the public metadata dictionary. Silent playback and remote commands stay real. Each PNG is at most 12 MiB; at most three are cached. This exercises actual OS delivery without injecting OpenCove state. Cannot combine with --live-metadata or --rate-controls.")
             print("--stdin-control reads only exact LF-terminated next or previous commands for this fixture. Reads are at most 256 bytes, raw buffering stays below 512 bytes, lines are at most 32 bytes, and at most 128 commands are handled. EOF, invalid input, or the limit retires the reader without ending playback. State reports the active reader as stdinControl and completed commands as handledInputCount; raw input is never stored in state. Without this flag, stdin is never read.")
             return
         }
@@ -26,12 +27,14 @@ enum MediaFixture {
         var rateControls = false
         var liveMetadata = false
         var explicitMetadata = false
+        var nativeArtwork = false
         var stdinControl = false
         var index = 0
         while index < args.count {
             if args[index] == "--rate-controls" { rateControls = true; index += 1; continue }
             if args[index] == "--live-metadata" { liveMetadata = true; index += 1; continue }
             if args[index] == "--explicit-metadata" { explicitMetadata = true; index += 1; continue }
+            if args[index] == "--native-artwork" { nativeArtwork = true; index += 1; continue }
             if args[index] == "--stdin-control" { stdinControl = true; index += 1; continue }
             guard index + 1 < args.count else { fail() }
             switch args[index] {
@@ -49,8 +52,8 @@ enum MediaFixture {
             }
             index += 2
         }
-        guard !(explicitMetadata && (liveMetadata || rateControls)) else { fail() }
-        guard !explicitMetadata || FixtureExplicitPublisher.isAvailable else { fail() }
+        guard !((explicitMetadata || nativeArtwork) && (liveMetadata || rateControls)) else { fail() }
+        guard !(explicitMetadata || nativeArtwork) || FixtureNativePublisher.isAvailable else { fail() }
         guard let state, state.hasPrefix("/"), !state.contains("\0") else { fail() }
         let url = URL(fileURLWithPath: state)
         var info = stat()
@@ -59,7 +62,7 @@ enum MediaFixture {
               lstat(url.path, &info) != 0, errno == ENOENT else { fail() }
         umask(0o077)
         let app = NSApplication.shared
-        let delegate = FixtureDelegate(statusURL: url, metadataDuration: duration, metadataStyle: metadataStyle, artworkStyle: artworkStyle, rateControls: rateControls, liveMetadata: liveMetadata, explicitMetadata: explicitMetadata, stdinControl: stdinControl)
+        let delegate = FixtureDelegate(statusURL: url, metadataDuration: duration, metadataStyle: metadataStyle, artworkStyle: artworkStyle, rateControls: rateControls, liveMetadata: liveMetadata, explicitMetadata: explicitMetadata, nativeArtwork: nativeArtwork, stdinControl: stdinControl)
         app.delegate = delegate
         app.setActivationPolicy(.prohibited)
         app.run()
@@ -144,6 +147,8 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
     private let rateControls: Bool
     private let liveMetadata: Bool
     private let explicitMetadata: Bool
+    private let nativeArtwork: Bool
+    private var nativeArtworkCache: [String: Data] = [:]
     private var stdinControl: Bool
     private var handledInputCount = 0
     private var players: [AVAudioPlayer] = []
@@ -189,7 +194,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }()
 
-    init(statusURL: URL, metadataDuration: Double?, metadataStyle: String, artworkStyle: String, rateControls: Bool, liveMetadata: Bool, explicitMetadata: Bool, stdinControl: Bool) {
+    init(statusURL: URL, metadataDuration: Double?, metadataStyle: String, artworkStyle: String, rateControls: Bool, liveMetadata: Bool, explicitMetadata: Bool, nativeArtwork: Bool, stdinControl: Bool) {
         self.statusURL = statusURL
         self.metadataDuration = metadataDuration
         self.metadataStyle = metadataStyle
@@ -197,6 +202,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         self.rateControls = rateControls
         self.liveMetadata = liveMetadata
         self.explicitMetadata = explicitMetadata
+        self.nativeArtwork = nativeArtwork
         self.stdinControl = stdinControl
         super.init()
     }
@@ -332,15 +338,40 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         }
         if liveMetadata { metadata[MPNowPlayingInfoPropertyIsLiveStream] = isLive }
         if explicitMetadata { metadata[MPMediaItemPropertyIsExplicit] = track == 1 }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = metadata
+        // Use one metadata writer per mode. Competing public/native artwork
+        // publications can deliver different encodings out of order.
+        if !nativeArtwork { MPNowPlayingInfoCenter.default().nowPlayingInfo = metadata }
         MPNowPlayingInfoCenter.default().playbackState = player.isPlaying ? .playing : .paused
-        if explicitMetadata {
-            FixtureExplicitPublisher.publish(title: title, artist: artist, duration: publishedDuration,
+        var png: Data?
+        if nativeArtwork, artworkVariant != "none" {
+            if let cached = nativeArtworkCache[artworkVariant] {
+                png = cached
+            } else {
+                guard nativeArtworkCache.count < 3,
+                      let cover = metadata[MPMediaItemPropertyArtwork] as? MPMediaItemArtwork,
+                      let image = cover.image(at: NSSize(width: 2048, height: 2048)),
+                      let tiff = image.tiffRepresentation,
+                      let bitmap = NSBitmapImageRep(data: tiff),
+                      let encoded = bitmap.representation(using: .png, properties: [:]),
+                      !encoded.isEmpty, encoded.count <= 12 * 1024 * 1024 else {
+                    fputs("Media fixture could not encode bounded native artwork.\n", stderr)
+                    NSApp.terminate(nil)
+                    return
+                }
+                nativeArtworkCache[artworkVariant] = encoded
+                png = encoded
+            }
+        }
+        if explicitMetadata || nativeArtwork {
+            FixtureNativePublisher.publish(title: title, artist: artist, duration: publishedDuration,
                 elapsed: player.currentTime, rate: player.isPlaying ? Double(player.rate) : 0,
-                track: track)
+                track: track, explicit: explicitMetadata ? track == 1 : nil,
+                artwork: png, artworkVariant: nativeArtwork && png != nil ? artworkVariant : nil)
         }
         let state: [String: Any] = ["track": track, "playing": player.isPlaying, "elapsed": player.currentTime, "duration": player.duration, "rate": player.rate, "pid": ProcessInfo.processInfo.processIdentifier, "publishedDuration": publishedDuration, "liveMetadata": isLive, "publishedExplicit": explicitMetadata ? (track == 1) as Any : NSNull(), "artworkStyle": artworkStyle, "artworkVariant": artworkVariant, "stdinControl": stdinControl, "handledInputCount": handledInputCount]
-        if let data = try? JSONSerialization.data(withJSONObject: state) { try? data.write(to: statusURL, options: .atomic) }
+        var reported = state
+        reported["nativeArtwork"] = nativeArtwork
+        if let data = try? JSONSerialization.data(withJSONObject: reported) { try? data.write(to: statusURL, options: .atomic) }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -367,18 +398,20 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
 
 /// Real own-process metadata publishing, not an injected reader response. The
 /// public MP metadata key is not forwarded on some macOS versions. Only the
-/// explicit opt-in uses this path; ordinary fixture/publication stays unchanged.
+/// explicit-metadata and native-artwork opt-ins use this path; ordinary
+/// fixture/publication stays unchanged.
 /// C ABI reference (WebKit):
 /// https://chromium.googlesource.com/external/github.com/WebKit/webkit/+/79061826083bb948cd1e42522f7218c225bcdaba%5E%21/
 @MainActor
-private enum FixtureExplicitPublisher {
+private enum FixtureNativePublisher {
     private typealias Publish = @convention(c) (CFDictionary) -> Void
     private static let framework = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_LAZY)
     private static let publishInfo: Publish? = framework.flatMap { handle in
         dlsym(handle, "MRMediaRemoteSetNowPlayingInfo").map { unsafeBitCast($0, to: Publish.self) }
     }
     private static let fields = ["Title", "Artist", "Album", "Duration", "ElapsedTime", "PlaybackRate",
-                                 "Timestamp", "UniqueIdentifier", "ContentItemIdentifier", "IsExplicitTrack"]
+                                 "Timestamp", "UniqueIdentifier", "ContentItemIdentifier", "IsExplicitTrack",
+                                 "ArtworkData", "ArtworkIdentifier", "ArtworkMIMEType"]
     private static let keys: [String: String] = Dictionary(uniqueKeysWithValues: fields.map { suffix in
         let name = "kMRMediaRemoteNowPlayingInfo" + suffix
         let value = framework.flatMap { dlsym($0, name) }?.assumingMemoryBound(to: NSString?.self).pointee
@@ -386,12 +419,18 @@ private enum FixtureExplicitPublisher {
     })
     static var isAvailable: Bool { publishInfo != nil }
 
-    static func publish(title: String, artist: String, duration: Double, elapsed: Double, rate: Double, track: Int) {
+    static func publish(title: String, artist: String, duration: Double, elapsed: Double, rate: Double, track: Int,
+                        explicit: Bool?, artwork: Data?, artworkVariant: String?) {
         guard let publishInfo else { return }
-        let values: [String: Any] = ["Title": title, "Artist": artist, "Album": "End-to-end fixture",
+        var values: [String: Any] = ["Title": title, "Artist": artist, "Album": "End-to-end fixture",
             "Duration": duration, "ElapsedTime": elapsed, "PlaybackRate": rate, "Timestamp": Date(),
-            "UniqueIdentifier": UInt64(track), "ContentItemIdentifier": "org.opencove.MediaFixture.track.\(track)",
-            "IsExplicitTrack": track == 1]
+            "UniqueIdentifier": UInt64(track), "ContentItemIdentifier": "org.opencove.MediaFixture.track.\(track)"]
+        if let explicit { values["IsExplicitTrack"] = explicit }
+        if let artwork, let artworkVariant {
+            values["ArtworkData"] = artwork
+            values["ArtworkIdentifier"] = "org.opencove.MediaFixture.cover." + artworkVariant
+            values["ArtworkMIMEType"] = "image/png"
+        }
         let own = Dictionary(uniqueKeysWithValues: values.map { (keys[$0.key] ?? "kMRMediaRemoteNowPlayingInfo" + $0.key, $0.value) })
         // The native API publishes only this process's own metadata. No parent
         // application override, global source selection or remote command.
