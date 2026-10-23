@@ -302,8 +302,10 @@ final class DevelopmentServer {
         }
         // This reports observations, including real read errors and empty output
         // lists. It does not infer acceptance from an HTTP 200 or cached state.
-        return ["commandStatus": "observed", "audioRefreshAcceptance": try encoded(evidence),
-                "system": try encoded(store.system.state)]
+        var result = try snapshot()
+        result["commandStatus"] = "observed"
+        result["audioRefreshAcceptance"] = try encoded(evidence)
+        return result
     }
 
     private func dispatch(_ action: String, _ values: [String: Any]) throws {
