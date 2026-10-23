@@ -17,6 +17,20 @@ This builds without launching or replacing a shared app. `--allow-dirty` records
 
 ## Exercise the real interface
 
+Expanded layout accepts `automatic`, `media`, `calendar` and `duo`. For Automatic,
+first verify fresh defaults, persistence, explicit-layout preservation, no
+activities, media-only playback/pause, disabled features and all-disabled state.
+The `expandedDuo` decision and mounted native height must agree. These negative
+and empty paths do not prove simultaneous Calendar/media behavior.
+
+Positive Automatic Duo acceptance needs real authorized EventKit activity and
+the owned silent media fixture. Require the exact owned calendar/event and media
+source identities before checking playing → paused → playing, activity removal,
+source disablement, content transitions and mounted split geometry. Never inject
+an event snapshot into the view or controller. Calendar creation, event changes,
+permission changes and access to existing event data need their own explicit
+authorization; the default verification does none of them.
+
 The opt-in development server also accepts one app-local middle-button event:
 
 ```sh
