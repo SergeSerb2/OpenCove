@@ -1,0 +1,22 @@
+{
+  "name": "opencove-updates",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-19",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "opencove.sergeserbinenko.com",
+      "custom_domain": true
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "RELEASES",
+      "bucket_name": "opencove-releases"
+    }
+  ],
+  "observability": {
+    "enabled": false
+  }
+}
