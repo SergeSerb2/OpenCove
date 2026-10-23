@@ -2724,11 +2724,14 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 "enablePrivateAPIs": True, "hideWhenIdle": False, "expandOnHover": False,
                 "hideInFullscreen": False, "reduceMotion": True})
             with self.app(directory) as client:
-                def owned_live():
+                def live_state():
                     require(child.poll() is None, "Own live fixture stopped; no command sent.")
                     own = json.loads(fixture_state.read_bytes())
                     require(own["pid"] == child.pid, "Own live fixture PID changed.")
-                    state = client.request()
+                    return client.request()
+
+                def owned_live():
+                    state = live_state()
                     require(state["media"].get("sourceBundleIdentifier") == FIXTURE_ID,
                             "Live app source changed; no command sent.")
                     return state
@@ -2752,7 +2755,8 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 client.command("media.next")
                 wait_for(lambda: json.loads(fixture_state.read_bytes()), lambda s: s["track"] == 2,
                          "Own live-metadata fixture did not advance.")
-                normal = wait_for(owned_live, lambda s: s["media"].get("isLive") is False and
+                normal = wait_for(live_state, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("isLive") is False and
                     s["media"]["duration"] > 0 and s["media"]["title"] == "OpenCove verification 2",
                     "Live status or duration did not follow the actual next item.")
                 require(normal["media"]["supportsSeek"], "A real timed seekable item did not restore seek support.")
@@ -2767,7 +2771,8 @@ print(String(data: try JSONSerialization.data(withJSONObject: result), encoding:
                 require(read_adapter("--read")[1].get("bundleID") == FIXTURE_ID,
                         "Native timed source changed; no previous command sent.")
                 client.command("media.previous")
-                returned = wait_for(owned_live, lambda s: s["media"].get("isLive") is True and
+                returned = wait_for(live_state, lambda s: s["media"].get("sourceBundleIdentifier") == FIXTURE_ID
+                    and s["media"].get("isLive") is True and
                     s["media"]["duration"] == 0 and s["media"]["title"] == "OpenCove verification 1",
                     "Returning to the live item did not restore live/unavailable-timing state.")
                 require(not returned["media"]["supportsSeek"], "Returning live item retained timed seek support.")
