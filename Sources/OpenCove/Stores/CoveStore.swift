@@ -66,6 +66,16 @@ final class CoveStore: ObservableObject {
         return enabled.contains(defaultTab) ? defaultTab : enabled.first
     }
 
+    /// Share this decision with both SwiftUI content and native window sizing.
+    /// Explicit layouts remain stable. Automatic Duo uses existing activity
+    /// publications; it never starts a reader or requests calendar permission.
+    var showsExpandedDuo: Bool {
+        guard visibleTab == .media, preferences.enableMedia, preferences.enableCalendar else { return false }
+        if preferences.expandedLayout == "duo" { return true }
+        return preferences.expandedLayout == "automatic" && !system.state.isLocked
+            && media.state.available && media.state.isPlaying && activities.hasVisibleCalendarActivity
+    }
+
     private static let compactPriority: [CoveCompactActivity] = [.media, .timer, .calendar]
 
     private func compactActivityAvailable(_ activity: CoveCompactActivity) -> Bool {

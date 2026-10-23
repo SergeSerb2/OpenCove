@@ -602,6 +602,7 @@ final class DevelopmentServer {
                              "status": updater?.status ?? "No updater is attached to these controls."]
         result["enabledTabs"] = store.enabledTabs.map(\.rawValue)
         result["visibleTab"] = store.visibleTab.map { $0.rawValue as Any } ?? NSNull()
+        result["expandedDuo"] = store.showsExpandedDuo
         var media = store.media.state
         media.elapsed = store.media.playback.elapsed
         media.artworkData = nil

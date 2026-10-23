@@ -149,10 +149,12 @@ struct SettingsView: View {
                 }
                 CoveSettingsNote("Prefer this activity while it is available. Otherwise use automatic switching: media, timer, then calendar. Temporary alerts still appear. Opening the compact panel shows its activity.")
                 Picker("Expanded layout", selection: preference(\.expandedLayout)) {
+                    Text("Automatic").tag("automatic")
                     Text("Now Playing").tag("media")
                     Text("Calendar").tag("calendar")
                     Text("Media & Calendar").tag("duo")
                 }
+                CoveSettingsNote("Automatic pairs playing media with a current or starting-soon calendar activity. Otherwise it shows Now Playing. Explicit layouts stay selected until you choose another section.")
                 Toggle("Expand on hover", isOn: preference(\.expandOnHover))
                 CovePreferenceSlider(
                     title: "Hover delay", value: preference(\.hoverDelay),

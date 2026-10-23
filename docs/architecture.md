@@ -21,7 +21,22 @@ Services expose value models and bounded lifecycle methods. They do not referenc
 
 `savePreferences()` applies effective runtime choices before persistence. A save failure remains visible through `lastError`; privacy opt-outs still apply for that session. A failed save preserves the prior onboarding completion marker even when a login-item failure is followed by a successful JSON write. `completeOnboarding()` uses this same save path. Damaged preferences require a private recovery copy before replacement.
 
-The store owns section selection. It applies the configured expanded-layout default at initialization, when that setting changes, and when opening the idle compact clock without a HUD. Calendar maps to Calendar; Media and Duo map to Media. Unrelated saves and view mounting preserve manual choices. Disabling the selected section chooses an enabled default, then the first enabled section; all-disabled state has no visible section. Native menus, file-open routing and authenticated commands use one selection operation. A disabled `selectTab` request returns HTTP 409 before changing selection or expansion. The control state separates the remembered `tab` from the actual nullable `visibleTab` and lists `enabledTabs`. Rendering a native preview has no section-selection side effect. This policy adds no timer or observer.
+The store owns section selection. It applies the configured expanded-layout default at initialization, when that setting changes, and when opening the idle compact clock without a HUD. Calendar maps to Calendar; Automatic, Media and Duo map to Media. Unrelated saves and view mounting preserve manual choices. Disabling the selected section chooses an enabled default, then the first enabled section; all-disabled state has no visible section. Native menus, file-open routing and authenticated commands use one selection operation. A disabled `selectTab` request returns HTTP 409 before changing selection or expansion. The control state separates the remembered `tab` from the actual nullable `visibleTab` and lists `enabledTabs`. Rendering a native preview has no section-selection side effect. This policy adds no timer or observer.
+
+New settings use the Automatic expanded layout. While Media is selected, playing
+media and a visible current/starting-soon calendar activity enable Duo. The
+calendar must remain enabled, valid, authorized and unredacted. A locked session
+cannot activate Automatic Duo. Pausing media or losing the calendar activity
+returns to the single Media surface. Explicit Media, Calendar and Duo choices
+remain available and are preserved from existing settings.
+
+`CoveStore.showsExpandedDuo` supplies one decision to the SwiftUI section and
+native desired size. The native layout-input comparison includes that decision,
+so playing/paused changes can update geometry even when compact visibility stays
+the same. This consumes existing service publications and phase boundaries;
+it adds no timer, reader, permission request or recurring model publication.
+The opt-in control snapshot reports `expandedDuo` on request. It reports the
+policy decision, not proof that a populated split view was rendered.
 
 ## Native surfaces
 

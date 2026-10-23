@@ -78,7 +78,7 @@ struct CovePreferences: Codable, Equatable {
         if !selectedDisplayUUID.isEmpty, UUID(uuidString: selectedDisplayUUID) == nil { selectedDisplayUUID = "" }
         if CoveWeatherStyle(rawValue: weatherStyle) == nil { weatherStyle = defaults.weatherStyle }
         if !["automatic", "media", "calendar", "timer"].contains(compactActivity) { compactActivity = defaults.compactActivity }
-        if !["media", "calendar", "duo"].contains(expandedLayout) { expandedLayout = defaults.expandedLayout }
+        if !["automatic", "media", "calendar", "duo"].contains(expandedLayout) { expandedLayout = defaults.expandedLayout }
         if !["glass", "clear", "frosted"].contains(nowPlayingStyle) { nowPlayingStyle = defaults.nowPlayingStyle }
         if !["smooth", "fast", "instant"].contains(hudSpeed) { hudSpeed = defaults.hudSpeed }
         if !["system", "music", "spotify"].contains(preferredMusicApp) { preferredMusicApp = defaults.preferredMusicApp }
@@ -122,7 +122,7 @@ struct CovePreferences: Codable, Equatable {
     var enablePrivateAPIs = true
     var replaceSystemHUDs = false
     var allowAppleScript = false
-    var expandedLayout = "media"
+    var expandedLayout = "automatic"
     var compactActivity = "automatic"
     var nowPlayingStyle = "glass"
     var hudSpeed = "smooth"
