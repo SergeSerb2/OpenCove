@@ -58,6 +58,20 @@ struct CoveTimerState: Codable, Equatable {
     // A distinct identifier prevents a late notification request from reviving a cancelled timer.
     var notificationIdentifier: String? = nil
 
+    /// The deadline stays authoritative while running. Reading it does not
+    /// publish a new service state or require a mounted countdown view.
+    func remaining(at date: Date) -> Double {
+        let value = running ? endsAt?.timeIntervalSince(date) ?? remaining : remaining
+        guard value.isFinite, duration.isFinite else { return 0 }
+        return min(max(0, duration), max(0, value))
+    }
+
+    func snapshot(at date: Date = Date()) -> Self {
+        var value = self
+        value.remaining = remaining(at: date)
+        return value
+    }
+
     private enum CodingKeys: String, CodingKey {
         case running, remaining, duration, endsAt, notificationIdentifier
     }

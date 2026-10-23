@@ -916,6 +916,8 @@ struct CoveTrayFileRow: View {
 @MainActor
 struct CoveTimerSurface: View {
     @ObservedObject var activities: ActivityController
+    var color: Color = .accentColor
+    var reduceMotion = false
     private let presets: [Double] = [60, 300, 900, 1500]
 
     var body: some View {
@@ -923,10 +925,8 @@ struct CoveTimerSurface: View {
             HStack(spacing: 23) {
                 ZStack {
                     Circle().stroke(.white.opacity(0.08), lineWidth: 5)
-                    Circle()
-                        .trim(from: 0, to: CoveNotchStyle.fraction(activities.timer.remaining / max(1, activities.timer.duration)))
-                        .stroke(.tint, style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
+                    CoveTimerRing(timer: activities.timer, clockRevision: activities.timerClockRevision,
+                                  reduceMotion: reduceMotion, color: color)
                     Image(systemName: activities.timer.running ? "timer" : "pause.fill")
                         .font(.system(size: 28, weight: .light))
                         .foregroundStyle(.tint)
@@ -936,11 +936,10 @@ struct CoveTimerSurface: View {
                 VStack(alignment: .leading, spacing: 9) {
                     Text(activities.timer.running ? "Time remaining" : "Timer paused")
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(CoveNotchStyle.secondary)
-                    Text(CoveNotchStyle.duration(activities.timer.remaining))
+                    CoveTimerText(timer: activities.timer)
                         .font(.system(size: 36, weight: .light, design: .rounded))
                         .monospacedDigit()
                         .contentTransition(.numericText(countsDown: true))
-                        .accessibilityLabel("\(CoveNotchStyle.duration(activities.timer.remaining)) remaining")
                     HStack(spacing: 8) {
                         Button(activities.timer.running ? "Pause" : "Resume",
                                systemImage: activities.timer.running ? "pause.fill" : "play.fill") {

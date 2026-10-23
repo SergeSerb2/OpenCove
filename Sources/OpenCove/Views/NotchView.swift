@@ -332,7 +332,7 @@ struct NotchView: View {
                     store.isCompactActivityVisible(.calendar) {
                     VStack(alignment: .trailing, spacing: 1) {
                         if store.isCompactActivityVisible(.timer) {
-                            Label(CoveNotchStyle.duration(activities.timer.remaining), systemImage: "timer")
+                            Label { CoveTimerText(timer: activities.timer) } icon: { Image(systemName: "timer") }
                         }
                         if store.isCompactActivityVisible(.calendar), let activity = activities.eventActivity {
                             Label((activity.phase == .startingSoon ? "in " : "") + CoveNotchStyle.duration(Double(activity.remainingSeconds)),
@@ -352,7 +352,7 @@ struct NotchView: View {
                     .foregroundStyle(CoveNotchStyle.accent(store.preferences.accent))
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Color.clear.frame(width: compactGap)
-                Text(CoveNotchStyle.duration(activities.timer.remaining))
+                CoveTimerText(timer: activities.timer)
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -457,7 +457,8 @@ struct NotchView: View {
                 case .files:
                     CoveFileSurface(activities: activities)
                 case .timer:
-                    CoveTimerSurface(activities: activities)
+                    CoveTimerSurface(activities: activities, color: CoveNotchStyle.accent(store.preferences.accent),
+                                     reduceMotion: systemReduceMotion || store.preferences.reduceMotion)
                 case nil:
                     CoveEmptySurface(symbol: "sparkle", title: "Your quiet space",
                                      message: "Choose what appears here in Settings.",
@@ -502,29 +503,39 @@ struct NotchView: View {
         .animation(motion, value: visibleTab)
     }
 
-    private var compactAccessibilityLabel: String {
+    private var timerAccessibilityText: Text {
+        let timer = activities.timer
+        if timer.running, let deadline = timer.endsAt {
+            return Text(timerInterval: min(Date(), deadline)...deadline, countsDown: true,
+                        showsHours: timer.duration >= 3600)
+        }
+        return Text(CoveNotchStyle.duration(timer.remaining))
+    }
+
+    private var compactAccessibilityLabel: Text {
         if let hud = store.hud {
-            return [hud.title, hud.subtitle].filter { !$0.isEmpty }.joined(separator: ", ")
+            return Text([hud.title, hud.subtitle].filter { !$0.isEmpty }.joined(separator: ", "))
         }
         if store.showsMediaPeek {
-            return "New playing item, \(media.state.title), \(media.state.artist)"
+            return Text("New playing item, \(media.state.title), \(media.state.artist)")
         }
         if store.compactActivity == .media {
-            var label = "\(media.state.isPlaying ? "Playing" : "Paused"), \(media.state.title), \(media.state.artist)"
-            if store.isCompactActivityVisible(.timer) {
-                label += ", timer \(CoveNotchStyle.duration(activities.timer.remaining)) remaining"
-            }
+            let label = "\(media.state.isPlaying ? "Playing" : "Paused"), \(media.state.title), \(media.state.artist)"
+            var calendar = ""
             if store.isCompactActivityVisible(.calendar), let activity = activities.eventActivity {
-                label += ", \(activity.event.title), \(activity.phase == .current ? "ends" : "starts") in \(CoveNotchStyle.duration(Double(activity.remainingSeconds)))"
+                calendar = ", \(activity.event.title), \(activity.phase == .current ? "ends" : "starts") in \(CoveNotchStyle.duration(Double(activity.remainingSeconds)))"
             }
-            return label
+            if store.isCompactActivityVisible(.timer) {
+                return Text("\(label), timer \(timerAccessibilityText) remaining\(calendar)")
+            }
+            return Text(label + calendar)
         }
         if store.compactActivity == .timer {
-            return "Timer, \(CoveNotchStyle.duration(activities.timer.remaining)) remaining"
+            return Text("Timer, \(timerAccessibilityText) remaining")
         }
         if store.compactActivity == .calendar, let activity = activities.eventActivity {
-            return "\(activity.event.title), \(activity.phase == .current ? "ends" : "starts") in \(CoveNotchStyle.duration(Double(activity.remainingSeconds)))"
+            return Text("\(activity.event.title), \(activity.phase == .current ? "ends" : "starts") in \(CoveNotchStyle.duration(Double(activity.remainingSeconds)))")
         }
-        return "OpenCove, \(Date.now.formatted(date: .abbreviated, time: .shortened))"
+        return Text("OpenCove, \(Date.now.formatted(date: .abbreviated, time: .shortened))")
     }
 }

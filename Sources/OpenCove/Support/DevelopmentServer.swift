@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import CoreFoundation
 import Network
 import SwiftUI
@@ -15,6 +16,8 @@ final class DevelopmentServer {
     private static let bodyLimit = 65_536
     private var connections: [ObjectIdentifier: Client] = [:]
     private var rendererBusy = false
+    private var timerPublications: UInt64 = 0
+    private var timerObservation: AnyCancellable?
     private let startedAt = ISO8601DateFormatter().string(from: Date())
     private let bundlePath = Bundle.main.bundleURL.standardizedFileURL.resolvingSymlinksInPath().path
     private let sourceTree = Bundle.main.object(forInfoDictionaryKey: "OpenCoveSourceTreeSHA256") as? String ?? ""
@@ -37,7 +40,14 @@ final class DevelopmentServer {
 
     private let descriptorURL = CovePaths.dataDirectory.appendingPathComponent("control.json")
 
-    init(store: CoveStore, port: UInt16) { self.store = store; self.port = port }
+    init(store: CoveStore, port: UInt16) {
+        self.store = store
+        self.port = port
+        // Only explicitly enabled development controls observe this count.
+        timerObservation = store.activities.$timer.dropFirst().sink { [weak self] _ in
+            self?.timerPublications &+= 1
+        }
+    }
 
     func start() throws {
         guard listener == nil else { throw ControlError.invalid("Controls are already running.") }
@@ -522,13 +532,17 @@ final class DevelopmentServer {
         result["playbackIndicatorMotion"] = NSApp.windows.filter(\.isVisible).flatMap { window in
             window.contentView.map { CovePlaybackIndicatorView.motionSnapshots(in: $0) } ?? []
         }
+        result["timerClock"] = ["publications": timerPublications]
+        result["timerProgressMotion"] = NSApp.windows.filter(\.isVisible).flatMap { window in
+            window.contentView.map { CoveTimerProgressView.motionSnapshots(in: $0) } ?? []
+        }
         result["system"] = try encoded(store.system.state)
         result["events"] = try encoded(store.activities.events)
         result["calendarAuthorization"] = store.activities.calendarAuthorization
         result["selectedCalendarDate"] = ISO8601DateFormatter().string(from: store.activities.selectedCalendarDate)
         result["calendarActivity"] = store.activities.eventActivity.map { ["title": $0.event.title, "remainingSeconds": $0.remainingSeconds] }
         result["files"] = try encoded(store.activities.files.map { file in var file = file; file.bookmarkData = nil; return file })
-        result["timer"] = try encoded(store.activities.timer)
+        result["timer"] = try encoded(store.activities.timer.snapshot())
         result["notifications"] = try encoded(store.activities.notifications)
         result["weather"] = try encoded(store.weather.state)
         result["weatherPresentation"] = try encoded(WeatherWidgetData(state: store.weather.state,
@@ -643,7 +657,9 @@ final class DevelopmentServer {
         bitmap.size = view.bounds.size
         bitmap.bitmapData?.initialize(repeating: 0, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
-            view.cacheDisplay(in: view.bounds, to: bitmap)
+            CoveTimerProgressView.withCurrentPresentation(in: view) {
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+            }
         }
         guard let png = bitmap.representation(using: .png, properties: [:]) else { throw ControlError.failed("Native rendering failed.") }
         return png
