@@ -620,6 +620,7 @@ final class DevelopmentServer {
         result["hudRemaining"] = store.hudRemaining.map { $0 as Any } ?? NSNull()
         result["playbackClock"] = ["receivedSamples": store.media.playback.receivedSamples,
                                    "changeNotifications": store.media.playback.changeNotifications]
+        result["mediaDelivery"] = ["adapterSampleAgeSeconds": store.media.adapterSampleAgeSeconds.map { $0 as Any } ?? NSNull()]
         result["artworkAvailable"] = store.media.state.artworkData != nil
         result["systemReduceMotion"] = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         result["mediaTextMotion"] = NSApp.windows.filter(\.isVisible).flatMap { window in

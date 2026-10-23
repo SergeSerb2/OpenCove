@@ -54,6 +54,11 @@ final class MediaController: ObservableObject {
     private var adapterItemID: String?
     private var remoteItemID: String?
     private var adapterReceivedAt = 0.0
+    /// Existing delivery timing, read only by explicitly enabled controls.
+    var adapterSampleAgeSeconds: Double? {
+        guard running, backend == .adapter, adapterSnapshot != nil else { return nil }
+        return max(0, ProcessInfo.processInfo.systemUptime - adapterReceivedAt)
+    }
     private var localReaderEmpty = false
     private var localRetryAt = 0.0
     private var running = false
