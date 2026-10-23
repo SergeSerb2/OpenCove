@@ -735,7 +735,7 @@ struct CoveMediaSurface: View {
             }
             .font(.system(size: 9, weight: .medium, design: .rounded))
             .monospacedDigit()
-            .foregroundStyle(CoveNotchStyle.tertiary)
+            .foregroundStyle(CoveNotchStyle.secondary)
         }
     }
 
