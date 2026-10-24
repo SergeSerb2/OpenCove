@@ -479,7 +479,8 @@ struct NotchView: View {
         if store.hidesCompactWhenIdle && mode == compactMode {
             Color.clear
         } else if case .hud(let kind) = mode, let hud = store.hud, hud.kind == kind {
-            CoveCompactHUD(hud: hud, accent: CoveNotchStyle.accent(store.preferences.accent), centerGap: compactGap)
+            CoveCompactHUD(hud: hud, accent: CoveNotchStyle.accent(store.preferences.accent), centerGap: compactGap,
+                           showLabels: store.preferences.showHUDLabels, showPercentage: store.preferences.showHUDPercentage)
                 .padding(.horizontal, 18)
         } else if mode == .peek && store.preferences.enableMedia && media.state.available {
             mediaPeek(artwork: artwork)

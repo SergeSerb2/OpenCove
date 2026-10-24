@@ -341,6 +341,10 @@ struct SettingsView: View {
                 Toggle("Battery & charging", isOn: preference(\.enableBattery))
                 Toggle("Bluetooth & audio devices", isOn: preference(\.enableBluetooth))
                 Toggle("Focus status", isOn: preference(\.enableFocus))
+                Toggle("Show overlay labels", isOn: preference(\.showHUDLabels))
+                    .help("Show titles and subtitles on compact overlays.")
+                Toggle("Show overlay percentage", isOn: preference(\.showHUDPercentage))
+                    .help("Show a percentage when a compact overlay has a numeric reading.")
                 CovePreferenceSlider(
                     title: "Default overlay duration", value: preference(\.hudDuration),
                     range: 0.5...10, step: 0.5, format: "%.1f s"

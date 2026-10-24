@@ -126,6 +126,8 @@ struct CovePreferences: Codable, Equatable {
     var compactActivity = "automatic"
     var nowPlayingStyle = "glass"
     var hudSpeed = "smooth"
+    var showHUDLabels = true
+    var showHUDPercentage = true
     var showPlaybackIndicator = true
     var showLiveWaveform = false
     var musicColorAccent = true
