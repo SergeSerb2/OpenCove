@@ -76,6 +76,99 @@ This change has source checks only. The existing recorded visibility-option acce
 
 Keep these gates pending until their evidence exists. They do not establish HDR, exact reference-product styling, external-display support, physical key handling or runtime cost.
 
+## BetterDisplay reported brightness feedback
+
+Activities → System overlays offers **Show BetterDisplay brightness feedback**.
+The local `enableBetterDisplayFeedback` Boolean defaults to `false` and stays
+outside `CoveSyncedSettings`. Only this disclosed native Settings control can
+grant consent. Generic preference edits, imports, resets and cloud settings
+cannot add it. The existing central store transaction saves a new grant before
+starting reception. A failed save discards the grant. Opt-out stops reception
+and clears its cache/HUD before a fallible save; an error explains if an older
+saved choice may return after restart. Disabling the brightness category also
+revokes this consent. Missing or malformed Boolean fields repair to `false`;
+a repaired preferences document cannot activate this reader. Widget consent
+keeps its separate dedicated action and existing revocation rules.
+
+This receiver uses only public Foundation `DistributedNotificationCenter`.
+It observes `pro.betterdisplay.BetterDisplay.osd` once and the current
+`.launched` / `.terminated` lifecycle names. It never posts a notification,
+sends a request, launches or discovers an installed app, invokes a vendor CLI,
+opens a URL, uses HTTP, queries hardware, requests access or edits vendor
+settings. BetterDisplay must already run with **Dispatch OSD notifications**
+enabled in its Integration settings. Dispatch does not suppress BetterDisplay's
+own overlays; the user must choose the vendor's presentation to avoid duplicates.
+
+Only one explicitly selected external logical display is eligible. The store
+uses the existing public display-selection snapshot, with no new display read.
+It requires `mode == "selected"`, no fallback, one selected positive current ID,
+one matching non-built-in selectable entry, and a valid UUID unique across the
+available entries. The UUID must match the current preference and the current
+ID must be unique. All, Main, Built-in, ambiguous, unmatched and stale selections
+are unavailable. Each changed snapshot or invalidation retires the registration
+and cache generation. A screen/session transition requires another snapshot
+from the existing layout lifecycle, even when the numeric ID stays the same.
+
+Notification data is untrusted and unauthenticated. JSON must be in the object
+string and fit a fixed **16,384 UTF-8 byte** limit before decoding. The receiver
+requires a positive `UInt32` display ID matching that selected presentation
+display and the exact `controlTarget` string `hardwareBrightness`. It requires
+numeric finite `value` and `maxValue`, with `0 <= value <= maxValue` and
+`maxValue > 0`, before calculating `value / maxValue`. Booleans, strings and
+null cannot stand in for required numbers. Missing, malformed, locked and
+unsupported reports are ignored. No invalid value is clamped into validity.
+External text, symbols, commands, paths, fade and sizing hints are not retained,
+displayed, logged or acted on. Fixed OpenCove labels, sun symbol, layout and
+existing category timing apply.
+
+`BetterDisplayFeedback` has a separate provider, origin, UUID/current-ID/
+generation identity, fraction and monotonic receipt time. There is one in-memory
+cache entry. The **5-second receipt TTL** is local OpenCove policy, checked lazily
+without timers or polling. It is not physical freshness: notifications can be
+delayed or dropped and carry no source timestamp. `displayID` identifies where
+to present feedback, not an attested physical adjustment target. A local
+generation rejects callbacks from retired registrations; it cannot date a
+vendor message delivered later to a new registration.
+
+Feedback uses the brightness category and active/unlocked, awake session policy.
+The receiver pauses when overlay labels are hidden so the source stays visible.
+Expansion clears an external HUD and prevents external presentation while the
+panel is expanded. Opt-out, category disable, selection/display/session changes,
+sleep, shutdown and stop clear the cache and external HUD. Orderly vendor
+termination retires OSD reception until a launch notification in that enabled
+session. Launch also clears old data. Silent termination cannot be detected;
+receipt expiry limits later preview eligibility without claiming provider liveness.
+These events never produce haptics or alter native brightness availability,
+writability, key ownership, `SystemController` or `HardwareKeyController`.
+
+**Preview BetterDisplay feedback** explicitly chooses this provider and reads
+only an eligible cached report. It never starts the receiver or refreshes any
+source. Missing/expired data produces a source-labelled unavailable preview
+without a percentage. Ineligible display/session/consent choices reject preview
+with a reason. The ordinary **Preview overlay** action retains its native source;
+a vendor report never replaces a good native reading. Neither path proves a
+physical reading, DDC units, nits, a completed change or writable control.
+
+The source contract comes from the vendor's [third-party integration guide](https://betterdisplay.pro/guide/integration/third-party-apps/)
+and [current CLI reference](https://betterdisplay.pro/guide/integration/cli-reference/),
+captured in the 24 October 2026 research. That reference identifies **5.2.0
+Pre-Release Build 53990**, imported 21 October 2026. It does not certify stable
+5.1.1 or older v4 behavior. Apple's [Foundation documentation](https://developer.apple.com/documentation/foundation/distributednotificationcenter)
+describes untrusted data, unbounded latency and possible loss.
+
+### BetterDisplay acceptance — UNVERIFIED
+
+This slice has Swift parse, diff and source checks only. No build, app/helper/
+vendor launch, native input, tests, mocks, synthetic notifications, hardware or
+permission action ran. The parent must separately verify persistence and real
+save failure through native Settings, missing/expired cache, genuine compatible
+vendor events, identity/reconnect/ID-reuse and session invalidation, late callbacks,
+and unchanged native control/haptic behavior when authorized. A real positive
+case requires already-running, user-configured BetterDisplay events; no fabricated
+event substitutes. Installed-vendor positive acceptance and hardware proof remain
+**UNVERIFIED**. External DDC control remains absent. **Strict media C-PID FAILED**
+and **M1/cloud DEFERRED** remain unchanged.
+
 ## Validation boundary
 
 Build the real app with the checked-in [bundle workflow](building.md). The [integration workflow](quality.md) checks the real control API without enabling hardware interception by default. Preference-off and denied-access cases do not prove an active tap. Do not enable an authorized tap, generate key events, or drive desktop input for automated verification. Actual stock-HUD suppression and held-key behavior require an explicitly authorized manual session; compilation and permission preflight alone do not prove them.

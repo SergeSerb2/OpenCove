@@ -8,7 +8,9 @@ import ServiceManagement
 final class CoveStore: ObservableObject {
     @Published private(set) var preferences: CovePreferences
     @Published private(set) var selectedTab: CoveTab = .media
-    @Published var isExpanded = false
+    @Published var isExpanded = false {
+        didSet { if isExpanded { clearBetterDisplayHUD() } }
+    }
     @Published private(set) var compactMediaVisible = false
     @Published private(set) var mediaPeekVisible = false
     @Published var hud: CoveHUD?
@@ -44,6 +46,12 @@ final class CoveStore: ObservableObject {
     let travel = TravelController()
     let notificationMirror = NotificationMirror()
     let settingsSync = CoveSettingsSyncController()
+    private let betterDisplayFeedback = BetterDisplayFeedbackController()
+    private var betterDisplaySnapshotCurrent = false
+    private var betterDisplaySystemAwake = true
+    private var betterDisplayScreensAwake = true
+    private var betterDisplayShuttingDown = false
+    private var persistedBetterDisplayFeedback = false
     lazy var hardwareKeys = HardwareKeyController(system: system)
     var onOpenSettings: (() -> Void)?
     var onPreferencesChange: (() -> Void)?
@@ -218,6 +226,8 @@ final class CoveStore: ObservableObject {
 
     func updateDisplaySelection(_ value: CoveDisplaySelection) {
         if displaySelection != value { displaySelection = value }
+        betterDisplaySnapshotCurrent = true
+        reconcileBetterDisplayFeedback()
     }
     @discardableResult func chooseDisplay(_ choice: String) -> Result<Void, CoveDisplayError> {
         var value = preferences
@@ -400,6 +410,7 @@ final class CoveStore: ObservableObject {
         preferences = loaded
         appliedPreferences = loaded
         persistedLockWidgets = loaded.independentLockWidgets
+        persistedBetterDisplayFeedback = loaded.enableBetterDisplayFeedback
         lastError = loadError
         needsPreferencesBackup = needsBackup
         settingsSync.currentPreferences = { [weak self] in self?.preferences }
@@ -418,6 +429,18 @@ final class CoveStore: ObservableObject {
                 self.observeMediaPeek(observed)
             }.store(in: &subscriptions)
         system.onHUD = { [weak self] in self?.showHUD($0) }
+        betterDisplayFeedback.canReceive = { [weak self] in self?.mayReceiveBetterDisplayFeedback ?? false }
+        betterDisplayFeedback.onInvalidation = { [weak self] in
+            self?.clearBetterDisplayHUD()
+            self?.objectWillChange.send()
+        }
+        betterDisplayFeedback.onFeedback = { [weak self] report in
+            guard let self else { return }
+            self.objectWillChange.send()
+            self.showHUD(CoveHUD(kind: .brightness, title: "BetterDisplay brightness",
+                                 subtitle: "Reported feedback · not physical readback", symbol: "sun.max.fill",
+                                 value: report.fraction, origin: BetterDisplayFeedback.origin))
+        }
         activities.onHUD = { [weak self] value in
             guard let self, value.origin != "calendar" || self.preferences.enableCalendar else { return }
             self.showHUD(value)
@@ -447,31 +470,62 @@ final class CoveStore: ObservableObject {
         notificationMirror.onCollectionStopped = { [weak self] in self?.clearMirroredContent() }
         system.onLockChange = { [weak self] locked in
             guard let self else { return }
+            self.invalidateBetterDisplaySnapshot()
             if locked { self.collapse() }
             self.refreshSessionActivity()
             self.reconcileReaders()
             self.resetMediaPeek()
             self.reconcileCalendarPrivacy()
             self.reconcileMirroring()
+            self.reconcileBetterDisplayFeedback()
             self.objectWillChange.send()
             self.onPreferencesChange?()
         }
         let workspace = NSWorkspace.shared.notificationCenter
         workspace.publisher(for: NSWorkspace.sessionDidResignActiveNotification).sink { [weak self] _ in
             self?.sessionActive = false
+            self?.invalidateBetterDisplaySnapshot()
             self?.reconcileReaders()
             self?.collapse()
             self?.resetMediaPeek()
             self?.reconcileCalendarPrivacy()
             self?.reconcileMirroring()
+            self?.reconcileBetterDisplayFeedback()
         }.store(in: &subscriptions)
         workspace.publisher(for: NSWorkspace.sessionDidBecomeActiveNotification).sink { [weak self] _ in
+            self?.invalidateBetterDisplaySnapshot()
             self?.refreshSessionActivity()
             self?.reconcileReaders()
             self?.resetMediaPeek()
             self?.system.refresh()
             self?.reconcileCalendarPrivacy()
             self?.reconcileMirroring()
+            self?.reconcileBetterDisplayFeedback()
+        }.store(in: &subscriptions)
+        // Reuse lifecycle notifications and the panel's existing display
+        // snapshot. No display getter, running-app discovery or new polling.
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
+            workspace.publisher(for: name).sink { [weak self] _ in
+                guard let self else { return }
+                if name == NSWorkspace.willSleepNotification { self.betterDisplaySystemAwake = false }
+                else { self.betterDisplayScreensAwake = false }
+                self.invalidateBetterDisplaySnapshot()
+            }.store(in: &subscriptions)
+        }
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
+            workspace.publisher(for: name).sink { [weak self] _ in
+                guard let self else { return }
+                if name == NSWorkspace.didWakeNotification { self.betterDisplaySystemAwake = true }
+                else { self.betterDisplayScreensAwake = true }
+                self.invalidateBetterDisplaySnapshot()
+            }.store(in: &subscriptions)
+        }
+        workspace.publisher(for: NSWorkspace.willPowerOffNotification).sink { [weak self] _ in
+            self?.betterDisplayShuttingDown = true
+            self?.invalidateBetterDisplaySnapshot()
+        }.store(in: &subscriptions)
+        NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification).sink { [weak self] _ in
+            self?.invalidateBetterDisplaySnapshot()
         }.store(in: &subscriptions)
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification).sink { [weak self] _ in
             self?.reconcileLoginItem()
@@ -484,6 +538,7 @@ final class CoveStore: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
+        betterDisplayShuttingDown = false
         resetMediaPeek()
         refreshSessionActivity()
         reconcileReaders()
@@ -496,6 +551,7 @@ final class CoveStore: ObservableObject {
         hardwareKeys.brightnessEnabled = preferences.enableBrightnessHUD
         hardwareKeys.start(enabled: preferences.replaceSystemHUDs && preferences.enablePrivateAPIs)
         reconcileMirroring()
+        reconcileBetterDisplayFeedback()
         appliedPreferences = preferences
         reconcileCompactMedia()
         settingsSync.startIfEnabled(preferences)
@@ -503,6 +559,7 @@ final class CoveStore: ObservableObject {
 
     func stop() {
         started = false
+        invalidateBetterDisplaySnapshot()
         settingsSync.stop()
         resetCompactDismissals()
         dismissMediaPeek()
@@ -631,6 +688,53 @@ final class CoveStore: ObservableObject {
         clearMirroredContent()
     }
 
+    private var mayReceiveBetterDisplayFeedback: Bool {
+        started && sessionActive && !system.state.isLocked && !betterDisplayShuttingDown
+            && betterDisplaySystemAwake && betterDisplayScreensAwake && betterDisplaySnapshotCurrent
+            && preferences.enableBetterDisplayFeedback && preferences.enableBrightnessHUD && preferences.showHUDLabels
+            && !preferences.showOnAllDisplays && !preferences.selectedDisplayUUID.isEmpty
+            && UUID(uuidString: preferences.selectedDisplayUUID) == UUID(uuidString: displaySelection.requestedUUID)
+    }
+
+    private func reconcileBetterDisplayFeedback() {
+        betterDisplayFeedback.configure(selection: betterDisplaySnapshotCurrent ? displaySelection : nil,
+                                        enabled: mayReceiveBetterDisplayFeedback)
+    }
+
+    private func invalidateBetterDisplaySnapshot() {
+        betterDisplaySnapshotCurrent = false
+        betterDisplayFeedback.stop()
+        clearBetterDisplayHUD()
+    }
+
+    private func clearBetterDisplayHUD() {
+        guard let hud, Self.isBetterDisplayHUD(hud) else { return }
+        hudDismiss?.cancel()
+        hudDeadline = nil
+        self.hud = nil
+    }
+
+    private static func isBetterDisplayHUD(_ hud: CoveHUD) -> Bool {
+        hud.origin == BetterDisplayFeedback.origin || hud.origin == BetterDisplayFeedback.previewOrigin
+    }
+
+    var betterDisplayFeedbackStatus: String {
+        guard preferences.enableBetterDisplayFeedback else { return "BetterDisplay feedback is off on this Mac." }
+        guard preferences.enableBrightnessHUD else { return "Enable the display brightness overlay separately." }
+        guard preferences.showHUDLabels else { return "Paused: enable overlay labels to show the BetterDisplay source." }
+        guard started, sessionActive, !system.state.isLocked, !betterDisplayShuttingDown,
+              betterDisplaySystemAwake, betterDisplayScreensAwake else { return "BetterDisplay feedback is paused in this session." }
+        guard betterDisplaySnapshotCurrent, mayReceiveBetterDisplayFeedback,
+              BetterDisplayFeedback.Display.selected(in: displaySelection) != nil else {
+            return "Select one unique external display in General. All, Main, Built-in and fallback selections are unavailable."
+        }
+        if betterDisplayFeedback.awaitingProviderLaunch { return "BetterDisplay reported termination. Waiting for a launch notification." }
+        if betterDisplayFeedback.eligibleReport() != nil {
+            return "Cached BetterDisplay feedback; preview rechecks the 5-second receipt limit. Physical brightness is unverified."
+        }
+        return "No eligible BetterDisplay feedback. The provider may be absent, dispatch may be off, or the report may have expired."
+    }
+
     private func clearMirroredContent() {
         activities.notifications.removeAll { $0.source == "System" }
         if hud?.origin == "systemMirror" { hudDismiss?.cancel(); hud = nil }
@@ -705,7 +809,9 @@ final class CoveStore: ObservableObject {
         hud = value
         let deadline = mediaIdleClock.now.advanced(by: .seconds(preferences.duration(for: value.kind)))
         hudDeadline = deadline
-        if value.origin != "preview", preferences.enableHaptics { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default) }
+        if value.origin != "preview", !Self.isBetterDisplayHUD(value), preferences.enableHaptics {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+        }
         hudDismiss = Task { [weak self] in
             do { try await ContinuousClock().sleep(until: deadline) }
             catch { return }
@@ -752,7 +858,28 @@ final class CoveStore: ObservableObject {
         return nil
     }
 
+    /// Explicit provider choice. This does not configure/start the receiver or
+    /// refresh any state. Missing/expired reports remain a labelled nil value.
+    func previewBetterDisplayFeedback() -> String? {
+        guard started, sessionActive, !system.state.isLocked else { return "Overlays are unavailable in this session." }
+        guard !isExpanded else { return "Collapse the panel before previewing an overlay." }
+        var value = CoveHUD(kind: .brightness, title: "BetterDisplay preview",
+                            subtitle: "Preview · reported feedback unavailable", symbol: "sun.max.fill",
+                            origin: BetterDisplayFeedback.previewOrigin)
+        guard isHUDEnabled(value) else { return betterDisplayFeedbackStatus }
+        if let report = betterDisplayFeedback.eligibleReport() {
+            value.value = report.fraction
+            value.subtitle = "Preview · last BetterDisplay feedback · not physical readback"
+        }
+        showHUD(value)
+        return nil
+    }
+
     private func isHUDEnabled(_ value: CoveHUD) -> Bool {
+        if Self.isBetterDisplayHUD(value) {
+            guard value.kind == .brightness, mayReceiveBetterDisplayFeedback, !isExpanded,
+                  BetterDisplayFeedback.Display.selected(in: displaySelection) != nil else { return false }
+        }
         if value.origin == "calendar" && !preferences.enableCalendar { return false }
         switch value.kind {
         case .volume: return preferences.enableVolumeHUD
@@ -775,7 +902,8 @@ final class CoveStore: ObservableObject {
     }
 
     /// All ordinary UI, API, remote overlay, reset, and display edits enter here.
-    /// Only setIndependentLockWidget can add a selection, after a successful save.
+    /// Only the dedicated native consent actions can add reader grants, after
+    /// a successful save. Generic preferences cannot enable these integrations.
     @discardableResult func updatePreferences(_ edit: (inout CovePreferences) -> Void) -> Bool {
         var candidate = preferences
         edit(&candidate)
@@ -802,12 +930,30 @@ final class CoveStore: ObservableObject {
         return commitPreferences(candidate, granting: widget)
     }
 
+    /// Bound only to the disclosed native BetterDisplay control. This action
+    /// grants no widget, private integration, hardware-key or vendor permission.
+    @discardableResult func setBetterDisplayFeedback(enabled: Bool) -> Bool {
+        if !enabled { return updatePreferences { $0.enableBetterDisplayFeedback = false } }
+        guard preferences.enableBrightnessHUD else {
+            lastError = "Enable the display brightness overlay separately before choosing BetterDisplay feedback."
+            return false
+        }
+        guard !preferences.enableBetterDisplayFeedback else { return true }
+        var candidate = preferences
+        candidate.enableBetterDisplayFeedback = true
+        return commitPreferences(candidate, grantingBetterDisplayFeedback: true)
+    }
+
     /// Revocations win over additions before publication or service changes.
     /// There is no pending grant: an unsuccessful addition is discarded here.
-    private func sanitizedPreferences(_ requested: CovePreferences, granting: CoveLockWidget?) -> CovePreferences {
+    private func sanitizedPreferences(_ requested: CovePreferences, granting: CoveLockWidget?,
+                                      grantingBetterDisplayFeedback: Bool) -> CovePreferences {
         let previous = preferences
         var candidate = requested
         candidate.normalize()
+        if !candidate.enableBrightnessHUD || (!previous.enableBetterDisplayFeedback && !grantingBetterDisplayFeedback) {
+            candidate.enableBetterDisplayFeedback = false
+        }
         let clearAll = candidate.lockWidgetsFollowActivities != previous.lockWidgetsFollowActivities
             || !candidate.showOnLockScreen || !candidate.enablePrivateAPIs
             || (previous.showLockScreenPrivateContent && !candidate.showLockScreenPrivateContent)
@@ -824,7 +970,13 @@ final class CoveStore: ObservableObject {
     private func applyEffectivePreferences(_ candidate: CovePreferences) {
         guard candidate != preferences || candidate != appliedPreferences else { return }
         let previous = appliedPreferences
+        if candidate.selectedDisplayUUID != previous.selectedDisplayUUID
+            || candidate.showOnAllDisplays != previous.showOnAllDisplays
+            || candidate.preferBuiltInDisplay != previous.preferBuiltInDisplay {
+            invalidateBetterDisplaySnapshot()
+        }
         if preferences != candidate { preferences = candidate }
+        reconcileBetterDisplayFeedback()
         if !preferences.syncSettingsWithiCloud { settingsSync.stop() }
         if started {
             refreshSessionActivity()
@@ -839,6 +991,7 @@ final class CoveStore: ObservableObject {
             hardwareKeys.brightnessEnabled = preferences.enableBrightnessHUD
             hardwareKeys.start(enabled: preferences.replaceSystemHUDs && preferences.enablePrivateAPIs)
             reconcileMirroring()
+            reconcileBetterDisplayFeedback()
             if let hud, !isHUDEnabled(hud) { hudDismiss?.cancel(); self.hud = nil }
         }
         appliedPreferences = preferences
@@ -862,12 +1015,15 @@ final class CoveStore: ObservableObject {
         onPreferencesChange?()
     }
 
-    @discardableResult private func commitPreferences(_ requested: CovePreferences, granting: CoveLockWidget? = nil) -> Bool {
+    @discardableResult private func commitPreferences(_ requested: CovePreferences, granting: CoveLockWidget? = nil,
+                                                     grantingBetterDisplayFeedback: Bool = false) -> Bool {
         let previous = preferences
-        var candidate = sanitizedPreferences(requested, granting: granting)
+        var candidate = sanitizedPreferences(requested, granting: granting, grantingBetterDisplayFeedback: grantingBetterDisplayFeedback)
         let hasNewGrant = granting.map { candidate[keyPath: $0.selectionKey] && !previous[keyPath: $0.selectionKey] } ?? false
+        let hasNewBetterDisplayGrant = candidate.enableBetterDisplayFeedback && !previous.enableBetterDisplayFeedback
         var effective = candidate
         if hasNewGrant, let granting { effective[keyPath: granting.selectionKey] = false }
+        if hasNewBetterDisplayGrant { effective.enableBetterDisplayFeedback = false }
         lastError = nil
         // Reductions reach controllers synchronously, before any fallible save.
         applyEffectivePreferences(effective)
@@ -896,6 +1052,7 @@ final class CoveStore: ObservableObject {
         if !success {
             candidate.completedOnboarding = previous.completedOnboarding
             if hasNewGrant, let granting { candidate[keyPath: granting.selectionKey] = false }
+            if hasNewBetterDisplayGrant { candidate.enableBetterDisplayFeedback = false }
         }
         var preferencesPersisted = false
         do {
@@ -908,6 +1065,7 @@ final class CoveStore: ObservableObject {
             try JSONEncoder().encode(candidate).write(to: CovePaths.dataDirectory.appendingPathComponent("preferences.json"), options: .atomic)
             preferencesPersisted = true
             persistedLockWidgets = candidate.independentLockWidgets
+            persistedBetterDisplayFeedback = candidate.enableBetterDisplayFeedback
         } catch {
             success = false
             lastError = [lastError, "Settings apply for this session, but could not be saved: \(error.localizedDescription)"].compactMap { $0 }.joined(separator: " ")
@@ -918,10 +1076,17 @@ final class CoveStore: ObservableObject {
                 candidate[keyPath: granting.selectionKey] = false
                 lastError = [lastError, "The widget was not enabled because its consent could not be saved. Enable it again after saving succeeds."].compactMap { $0 }.joined(separator: " ")
             }
+            if hasNewBetterDisplayGrant {
+                candidate.enableBetterDisplayFeedback = false
+                lastError = [lastError, "BetterDisplay feedback was not enabled because its consent could not be saved. Enable it again after saving succeeds."].compactMap { $0 }.joined(separator: " ")
+            }
         }
         applyEffectivePreferences(candidate)
         if !preferencesPersisted, !persistedLockWidgets.isSubset(of: preferences.independentLockWidgets) {
             lastError = [lastError, "The revoked widgets are off for this session. Their previous saved choices could not be updated and may return after restart."].compactMap { $0 }.joined(separator: " ")
+        }
+        if !preferencesPersisted, persistedBetterDisplayFeedback, !preferences.enableBetterDisplayFeedback {
+            lastError = [lastError, "BetterDisplay feedback is off for this session. Its previous saved choice could not be updated and may return after restart."].compactMap { $0 }.joined(separator: " ")
         }
         if started { settingsSync.preferencesDidSave(preferences, persisted: preferencesPersisted) }
         return success
