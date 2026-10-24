@@ -504,7 +504,9 @@ Record the exact source-tree hash, bundle path/variant, architecture, version/bu
 Native offscreen output needs visual inspection for wrapping, clipping, errors, empty states, and accessibility labels. The cache uses AppKit’s compatible bitmap format and waits for native containers to mount. Some system glass/vibrancy content, especially lock-widget text, can be absent from an unordered window capture. A PNG pass checks encoding and process survival; it does not prove every native element is visible. It does not establish menu actions, window resizing, VoiceOver, display geometry, Spaces, sleep/wake, or secure lock-screen visibility and credential clearance.
 
 `opencovectl render --surface settings-calendar` captures the same native Activities
-form at a fixed 760×1600 size. `settings-general` uses the same bounded size for
+form at a fixed 760×2400 size. Earlier 760×1600 captures remain evidence only for
+their visible content; they do not show controls below their lower edge.
+`settings-general` retains its 760×1600 size for
 the native General form, including its lower interaction controls. These expose
 controls below the ordinary previews. They create no separate settings component,
 change no preference, and send no desktop input. The larger captures do not
