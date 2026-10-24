@@ -2,6 +2,55 @@
 
 Verify through the real built app, authenticated HTTP API, checked-in CLI, and native offscreen renderer. The project does not use unit tests, isolated-function checks, or mocked services for this workflow. Run from the repository root with the toolchain in [building](building.md).
 
+## Optional Bluetooth onboarding
+
+Retained declaration `1.2.3 features[3]`, “Added Bluetooth step to onboarding”
+(audit O02), maps to the explicit Bluetooth page between Permissions and Ready.
+It participates in the actual onboarding enum, title, step count and Back/Continue
+navigation. The page observes the existing `store.system`, shows its published
+Bluetooth authorization, capability message and errors, and explains why the
+request button is disabled or busy.
+
+Only **Allow Bluetooth Access** calls the existing `requestBluetoothAccess()`.
+The action requires `enableBluetooth`; the control also stays disabled while a
+request is in flight, as in Settings. The controller retains its running,
+reader-enabled, in-flight and bundle usage-description guards. Entry, Back,
+Continue, skipping and completion add no Bluetooth request, refresh, scan or
+reader start. They do not change `enableBluetooth`, other feature defaults,
+private-integration choices or independent widget consent. The existing Ready
+controls and `completeOnboarding()` save result still govern completion and
+dismissal; a failed save keeps setup open with the store error visible.
+
+This page is not a first-read opt-in. `enableBluetooth` defaults to true, and an
+independent Bluetooth lock-screen widget can keep reader demand active while
+the activity is off. A disabled request button describes the activity guard,
+not proof that every Bluetooth reader is stopped. An existing OS grant can
+already permit reads. Completion neither grants access nor changes that policy.
+
+Parent-owned real acceptance remains required:
+
+1. In an owned packaged app with protected readers and all independent grants
+   already off, open the existing Review Setup flow. Inspect the optional page,
+   actual status, disabled request and explanation. Use Back and Continue without
+   making a request or enabling an activity/widget. Confirm four-step progress
+   and retained Ready controls. Normal-window scrolling, keyboard and accessibility
+   reachability require authorized native evidence.
+2. Complete through the real UI, reopen setup and restart through the supported
+   workflow. Confirm saved completion and unchanged activity, private-integration
+   and independent-widget choices. Do not infer a permission grant from a saved
+   completion marker or an API response.
+3. Exercise a real save failure in the owned app data path. Setup must remain open,
+   the error must be visible, and the saved completion marker must not advance.
+   Reopening/restarting must reflect the actual saved state. Do not mock the store
+   or inject device data.
+4. The affirmative OS request, denial, device data and late callbacks stay
+   **UNVERIFIED**. No grant or independent widget enablement is needed for the
+   no-grant path. Keep each positive gate separate.
+
+This slice has source parsing and diff/call-site review only. Build, runtime,
+native input and real persistence acceptance remain **UNVERIFIED** and owned by
+the parent. **C-PID remains FAILED. M1 remains USER-DEFERRED.**
+
 ## Mission Control presentation
 
 The local `hideInMissionControl` choice defaults to false. Ordinary notch panels use AppKit's [`stationary`](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/stationary) behavior when off and [`transient`](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/transient) when on. AppKit documents that transient windows hide in Mission Control. The choice updates existing panels and applies to newly created panels. Other panel behaviors and the lock-screen controller stay unchanged. It adds no Mission Control observer, polling, permission, private API or cloud setting.

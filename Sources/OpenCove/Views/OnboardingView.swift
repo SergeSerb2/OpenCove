@@ -8,6 +8,7 @@ struct OnboardingView: View {
     @ObservedObject var store: CoveStore
     @ObservedObject private var activities: ActivityController
     @ObservedObject private var notificationMirror: NotificationMirror
+    @ObservedObject private var system: SystemController
     @StateObject private var permissions = CovePermissionAccess()
     @Environment(\.dismiss) private var dismiss
     @State private var step: CoveOnboardingStep = .welcome
@@ -16,6 +17,7 @@ struct OnboardingView: View {
         self.store = store
         self.activities = store.activities
         self.notificationMirror = store.notificationMirror
+        self.system = store.system
     }
 
     var body: some View {
@@ -69,6 +71,7 @@ struct OnboardingView: View {
                     switch step {
                     case .welcome: welcomeContent
                     case .permissions: permissionContent
+                    case .bluetooth: bluetoothContent
                     case .ready: readyContent
                     }
                 }
@@ -84,7 +87,7 @@ struct OnboardingView: View {
                         .keyboardShortcut(.leftArrow, modifiers: .command)
                 }
                 Spacer()
-                if step == .permissions {
+                if step == .permissions || step == .bluetooth {
                     Text("All access is optional.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -190,6 +193,34 @@ struct OnboardingView: View {
         }
     }
 
+    private var bluetoothContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            CovePermissionRow(
+                title: "Bluetooth", symbol: "headphones",
+                detail: "Read supported connected-device status and accessory battery levels.",
+                status: system.state.bluetoothAuthorization
+            ) {
+                Button("Allow Bluetooth Access") {
+                    guard store.preferences.enableBluetooth else { return }
+                    system.requestBluetoothAccess()
+                }
+                .disabled(!store.preferences.enableBluetooth || system.isRequestingBluetoothAccess)
+            }
+            if !store.preferences.enableBluetooth {
+                CoveSettingsNote("The Bluetooth & audio devices activity is off. Enable it in Settings > Activities before requesting access.", symbol: "info.circle")
+            } else if system.isRequestingBluetoothAccess {
+                CoveSettingsNote("A Bluetooth access request is in progress. You can continue without waiting.", symbol: "info.circle")
+            }
+            if let message = system.state.capabilityMessages["bluetooth"] {
+                CoveSettingsNote(message)
+            }
+            if let error = system.lastError {
+                CoveSettingsError(error)
+            }
+            CoveSettingsNote("Continue to skip this request. You can review access later in Settings. If access is already allowed, Bluetooth activities or independent lock-screen widgets may already read device status.", symbol: "hand.raised")
+        }
+    }
+
     private var readyContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             Toggle("Show media controls", isOn: preference(\.enableMedia))
@@ -233,12 +264,13 @@ struct OnboardingView: View {
 }
 
 private enum CoveOnboardingStep: Int, CaseIterable {
-    case welcome, permissions, ready
+    case welcome, permissions, bluetooth, ready
 
     var symbol: String {
         switch self {
         case .welcome: return "rectangle.topthird.inset.filled"
         case .permissions: return "hand.raised"
+        case .bluetooth: return "headphones"
         case .ready: return "checkmark.circle"
         }
     }
@@ -247,6 +279,7 @@ private enum CoveOnboardingStep: Int, CaseIterable {
         switch self {
         case .welcome: return "A little space. A useful place."
         case .permissions: return "Choose what to share."
+        case .bluetooth: return "Bluetooth is optional."
         case .ready: return "Make yourself at home."
         }
     }
@@ -255,6 +288,7 @@ private enum CoveOnboardingStep: Int, CaseIterable {
         switch self {
         case .welcome: return "OpenCove brings playback, system status, and small tasks to the top of your display."
         case .permissions: return "Grant access for the features you want. Your Mac remains in control."
+        case .bluetooth: return "Review Bluetooth access, or continue without requesting it."
         case .ready: return "Choose a few defaults, then open the panel to get started."
         }
     }
