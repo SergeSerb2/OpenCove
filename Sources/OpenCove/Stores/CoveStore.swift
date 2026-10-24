@@ -6,7 +6,7 @@ import ServiceManagement
 
 @MainActor
 final class CoveStore: ObservableObject {
-    @Published var preferences: CovePreferences
+    @Published private(set) var preferences: CovePreferences
     @Published private(set) var selectedTab: CoveTab = .media
     @Published var isExpanded = false
     @Published private(set) var compactMediaVisible = false
@@ -243,12 +243,70 @@ final class CoveStore: ObservableObject {
             value.showOnAllDisplays = false
             value.selectedDisplayUUID = uuid
         }
-        preferences = value
-        return savePreferences() ? .success(()) : .failure(.saveFailed(lastError ?? "Display settings could not be saved."))
+        return commitPreferences(value) ? .success(()) : .failure(.saveFailed(lastError ?? "Display settings could not be saved."))
     }
     private var hudDismiss: Task<Void, Never>?
     private var hudDeadline: ContinuousClock.Instant?
     private var appliedPreferences: CovePreferences
+    private(set) var persistedLockWidgets: Set<CoveLockWidget> = []
+    private var activeReaderPolicy: ReaderPolicy?
+
+    private struct ReaderPolicy: Equatable {
+        var media: Bool
+        var calendar: Bool
+        var weather: Bool
+        var bluetooth: Bool
+        var focus: Bool
+        var privateAPIs: Bool
+        var appleScript: Bool
+
+        init(_ preferences: CovePreferences, activeSession: Bool) {
+            func extra(_ widget: CoveLockWidget) -> Bool {
+                activeSession && preferences.permitsExtraLockWidgetReader(widget)
+            }
+            media = preferences.enableMedia || extra(.media)
+            calendar = preferences.enableCalendar || extra(.calendar)
+            weather = preferences.enableWeather || extra(.weather)
+            bluetooth = preferences.enableBluetooth || extra(.bluetooth)
+            focus = preferences.enableFocus || extra(.focus)
+            privateAPIs = preferences.enablePrivateAPIs
+            // An independent media reader cannot start Automation fallback.
+            appleScript = preferences.enableMedia && preferences.allowAppleScript
+        }
+    }
+
+    func requestsExtraLockWidgetReader(_ widget: CoveLockWidget) -> Bool {
+        started && sessionActive && preferences.permitsExtraLockWidgetReader(widget)
+    }
+
+    private func reconcileReaders() {
+        guard started else { return }
+        let next = ReaderPolicy(preferences, activeSession: sessionActive)
+        let previous = activeReaderPolicy
+        activeReaderPolicy = next
+        let restartMedia = previous == nil || previous?.media != next.media
+            || previous?.privateAPIs != next.privateAPIs || previous?.appleScript != next.appleScript
+        if restartMedia { media.stop() }
+        // Establish the selected source before any startup metadata request.
+        media.preferredSource = preferences.preferredMusicApp
+        if restartMedia && next.media {
+            media.start(privateAPIs: next.privateAPIs, appleScript: next.appleScript)
+        }
+        activities.preferredCalendarApp = preferences.preferredCalendarApp
+        activities.setCalendarConfiguration(enabled: preferences.enableCalendar, readerEnabled: next.calendar,
+                                            showDeclinedEvents: preferences.showDeclinedCalendarEvents,
+                                            excludeSubscribedCalendars: preferences.excludeSubscribedCalendars)
+        if previous == nil || previous?.weather != next.weather {
+            if next.weather { weather.start() } else { weather.stop() }
+        }
+        // A system baseline can synchronously report a lock/session change.
+        // Apply other readers first so a reentrant reconciliation can revoke
+        // their demand without an outer call subsequently starting them again.
+        if previous == nil || previous?.privateAPIs != next.privateAPIs
+            || previous?.bluetooth != next.bluetooth || previous?.focus != next.focus {
+            system.start(privateAPIs: next.privateAPIs, enableBluetooth: next.bluetooth, enableFocus: next.focus)
+        }
+    }
     private var subscriptions = Set<AnyCancellable>()
     private var started = false
     private var sessionActive = false
@@ -341,13 +399,13 @@ final class CoveStore: ObservableObject {
         }
         preferences = loaded
         appliedPreferences = loaded
+        persistedLockWidgets = loaded.independentLockWidgets
         lastError = loadError
         needsPreferencesBackup = needsBackup
         settingsSync.currentPreferences = { [weak self] in self?.preferences }
         settingsSync.applySettings = { [weak self] settings in
             guard let self else { return false }
-            settings.apply(to: &self.preferences)
-            return self.savePreferences()
+            return self.updatePreferences { settings.apply(to: &$0) }
         }
         reconcileActivitySelection(resetToDefault: true)
         media.onHUD = { [weak self] in self?.showHUD($0) }
@@ -391,6 +449,7 @@ final class CoveStore: ObservableObject {
             guard let self else { return }
             if locked { self.collapse() }
             self.refreshSessionActivity()
+            self.reconcileReaders()
             self.resetMediaPeek()
             self.reconcileCalendarPrivacy()
             self.reconcileMirroring()
@@ -400,6 +459,7 @@ final class CoveStore: ObservableObject {
         let workspace = NSWorkspace.shared.notificationCenter
         workspace.publisher(for: NSWorkspace.sessionDidResignActiveNotification).sink { [weak self] _ in
             self?.sessionActive = false
+            self?.reconcileReaders()
             self?.collapse()
             self?.resetMediaPeek()
             self?.reconcileCalendarPrivacy()
@@ -407,6 +467,7 @@ final class CoveStore: ObservableObject {
         }.store(in: &subscriptions)
         workspace.publisher(for: NSWorkspace.sessionDidBecomeActiveNotification).sink { [weak self] _ in
             self?.refreshSessionActivity()
+            self?.reconcileReaders()
             self?.resetMediaPeek()
             self?.system.refresh()
             self?.reconcileCalendarPrivacy()
@@ -425,19 +486,11 @@ final class CoveStore: ObservableObject {
         started = true
         resetMediaPeek()
         refreshSessionActivity()
-        media.preferredSource = preferences.preferredMusicApp
-        activities.preferredCalendarApp = preferences.preferredCalendarApp
-        activities.setCalendarConfiguration(enabled: preferences.enableCalendar,
-                                            showDeclinedEvents: preferences.showDeclinedCalendarEvents,
-                                            excludeSubscribedCalendars: preferences.excludeSubscribedCalendars)
-        if preferences.enableMedia { media.start(privateAPIs: preferences.enablePrivateAPIs, appleScript: preferences.allowAppleScript) }
-        system.start(privateAPIs: preferences.enablePrivateAPIs,
-                     enableBluetooth: preferences.enableBluetooth, enableFocus: preferences.enableFocus)
+        reconcileReaders()
         reconcileCalendarPrivacy()
         activities.start()
         if preferences.enableCalendar { travel.start() }
         travel.updateEvents(preferences.enableCalendar ? activities.routingEvents : [])
-        if preferences.enableWeather { weather.start() }
         waveform.setEnabled(preferences.usesLiveWaveform)
         hardwareKeys.volumeEnabled = preferences.enableVolumeHUD
         hardwareKeys.brightnessEnabled = preferences.enableBrightnessHUD
@@ -459,6 +512,7 @@ final class CoveStore: ObservableObject {
         mediaPausedAt = nil
         setCompactMediaVisible(false)
         hudDismiss?.cancel()
+        activeReaderPolicy = nil
         media.stop(); system.stop(); activities.stop(); weather.stop()
         waveform.setEnabled(false); travel.stop(); hardwareKeys.stop()
         reconcileMirroring()
@@ -717,39 +771,67 @@ final class CoveStore: ObservableObject {
     }
 
     @discardableResult func completeOnboarding() -> Bool {
-        preferences.completedOnboarding = true
-        return savePreferences()
+        updatePreferences { $0.completedOnboarding = true }
     }
 
-    /// Runtime opt-outs take effect even if persistence fails. Only the setup
-    /// completion marker remains at its prior value when any save step fails.
-    @discardableResult func savePreferences() -> Bool {
-        preferences.normalize()
-        // Opt-out is immediate even if the local file cannot be saved.
-        if !preferences.syncSettingsWithiCloud { settingsSync.stop() }
+    /// All ordinary UI, API, remote overlay, reset, and display edits enter here.
+    /// Only setIndependentLockWidget can add a selection, after a successful save.
+    @discardableResult func updatePreferences(_ edit: (inout CovePreferences) -> Void) -> Bool {
+        var candidate = preferences
+        edit(&candidate)
+        return commitPreferences(candidate)
+    }
+
+    @discardableResult func applyPreferences(_ candidate: CovePreferences) -> Bool {
+        commitPreferences(candidate)
+    }
+
+    @discardableResult func savePreferences() -> Bool { commitPreferences(preferences) }
+
+    /// Called only by the disclosed, affirmative native widget control. The mode
+    /// and both prerequisites must already be on; this action never enables them.
+    @discardableResult func setIndependentLockWidget(_ widget: CoveLockWidget, enabled: Bool) -> Bool {
+        if !enabled { return updatePreferences { $0[keyPath: widget.selectionKey] = false } }
+        guard !preferences.lockWidgetsFollowActivities, preferences.showOnLockScreen, preferences.enablePrivateAPIs else {
+            lastError = "Choose independent widgets and enable lock-screen widgets and private integrations separately first."
+            return false
+        }
+        guard !preferences[keyPath: widget.selectionKey] else { return true }
+        var candidate = preferences
+        candidate[keyPath: widget.selectionKey] = true
+        return commitPreferences(candidate, granting: widget)
+    }
+
+    /// Revocations win over additions before publication or service changes.
+    /// There is no pending grant: an unsuccessful addition is discarded here.
+    private func sanitizedPreferences(_ requested: CovePreferences, granting: CoveLockWidget?) -> CovePreferences {
+        let previous = preferences
+        var candidate = requested
+        candidate.normalize()
+        let clearAll = candidate.lockWidgetsFollowActivities != previous.lockWidgetsFollowActivities
+            || !candidate.showOnLockScreen || !candidate.enablePrivateAPIs
+            || (previous.showLockScreenPrivateContent && !candidate.showLockScreenPrivateContent)
+        for widget in CoveLockWidget.allCases {
+            let activityRevoked = previous[keyPath: widget.activityKey] && !candidate[keyPath: widget.activityKey]
+            let unauthorizedAddition = !previous[keyPath: widget.selectionKey] && granting != widget
+            if clearAll || activityRevoked || unauthorizedAddition { candidate[keyPath: widget.selectionKey] = false }
+        }
+        return candidate
+    }
+
+    /// Publish only sanitized, effective choices. Ordinary preferences still
+    /// apply for this session if saving fails. Extra reader grants use save-first.
+    private func applyEffectivePreferences(_ candidate: CovePreferences) {
+        guard candidate != preferences || candidate != appliedPreferences else { return }
         let previous = appliedPreferences
-        lastError = nil
+        if preferences != candidate { preferences = candidate }
+        if !preferences.syncSettingsWithiCloud { settingsSync.stop() }
         if started {
-            if preferences.enablePrivateAPIs != previous.enablePrivateAPIs
-                || preferences.enableBluetooth != previous.enableBluetooth
-                || preferences.enableFocus != previous.enableFocus {
-                system.start(privateAPIs: preferences.enablePrivateAPIs,
-                             enableBluetooth: preferences.enableBluetooth, enableFocus: preferences.enableFocus)
-            }
-            if preferences.enablePrivateAPIs != previous.enablePrivateAPIs || preferences.allowAppleScript != previous.allowAppleScript || preferences.enableMedia != previous.enableMedia {
-                media.stop()
-                if preferences.enableMedia { media.start(privateAPIs: preferences.enablePrivateAPIs, appleScript: preferences.allowAppleScript) }
-            }
-            media.preferredSource = preferences.preferredMusicApp
-            activities.preferredCalendarApp = preferences.preferredCalendarApp
-            activities.setCalendarConfiguration(enabled: preferences.enableCalendar,
-                                                showDeclinedEvents: preferences.showDeclinedCalendarEvents,
-                                                excludeSubscribedCalendars: preferences.excludeSubscribedCalendars)
             refreshSessionActivity()
+            reconcileReaders()
             reconcileCalendarPrivacy()
             if preferences.enableCalendar { travel.start(); travel.updateEvents(activities.routingEvents) }
             else { travel.stop(); travel.updateEvents([]) }
-            if preferences.enableWeather { weather.start() } else { weather.stop() }
             if preferences.usesLiveWaveform != previous.usesLiveWaveform {
                 waveform.setEnabled(preferences.usesLiveWaveform)
             }
@@ -778,6 +860,17 @@ final class CoveStore: ObservableObject {
             resetMediaPeek()
         } else if !mayPresentMediaPeek { dismissMediaPeek() }
         onPreferencesChange?()
+    }
+
+    @discardableResult private func commitPreferences(_ requested: CovePreferences, granting: CoveLockWidget? = nil) -> Bool {
+        let previous = preferences
+        var candidate = sanitizedPreferences(requested, granting: granting)
+        let hasNewGrant = granting.map { candidate[keyPath: $0.selectionKey] && !previous[keyPath: $0.selectionKey] } ?? false
+        var effective = candidate
+        if hasNewGrant, let granting { effective[keyPath: granting.selectionKey] = false }
+        lastError = nil
+        // Reductions reach controllers synchronously, before any fallible save.
+        applyEffectivePreferences(effective)
         var success = true
         do {
             if CovePaths.isDevelopment {
@@ -797,10 +890,13 @@ final class CoveStore: ObservableObject {
             lastError = "Launch at login could not be changed: \(error.localizedDescription)"
             reconcileLoginItem()
         }
-        // Login registration can fail while JSON persistence still succeeds.
-        // Never persist a completed setup after that overall failure; keep all
-        // other effective choices, including privacy opt-outs, in the snapshot.
-        if !success { preferences.completedOnboarding = previous.completedOnboarding }
+        candidate.launchAtLogin = preferences.launchAtLogin
+        // Registration failure can coexist with a successful JSON write. Strip
+        // prospective consent before that write, not after it.
+        if !success {
+            candidate.completedOnboarding = previous.completedOnboarding
+            if hasNewGrant, let granting { candidate[keyPath: granting.selectionKey] = false }
+        }
         var preferencesPersisted = false
         do {
             if needsPreferencesBackup {
@@ -809,14 +905,24 @@ final class CoveStore: ObservableObject {
                     lastError = [lastError, notice].compactMap { $0 }.joined(separator: " ")
                 }
             }
-            try JSONEncoder().encode(preferences).write(to: CovePaths.dataDirectory.appendingPathComponent("preferences.json"), options: .atomic)
+            try JSONEncoder().encode(candidate).write(to: CovePaths.dataDirectory.appendingPathComponent("preferences.json"), options: .atomic)
             preferencesPersisted = true
+            persistedLockWidgets = candidate.independentLockWidgets
         } catch {
             success = false
-            preferences.completedOnboarding = previous.completedOnboarding
-            lastError = "Settings apply for this session, but could not be saved: \(error.localizedDescription)"
+            lastError = [lastError, "Settings apply for this session, but could not be saved: \(error.localizedDescription)"].compactMap { $0 }.joined(separator: " ")
         }
-        appliedPreferences.completedOnboarding = preferences.completedOnboarding
+        if !success {
+            candidate.completedOnboarding = previous.completedOnboarding
+            if hasNewGrant, let granting {
+                candidate[keyPath: granting.selectionKey] = false
+                lastError = [lastError, "The widget was not enabled because its consent could not be saved. Enable it again after saving succeeds."].compactMap { $0 }.joined(separator: " ")
+            }
+        }
+        applyEffectivePreferences(candidate)
+        if !preferencesPersisted, !persistedLockWidgets.isSubset(of: preferences.independentLockWidgets) {
+            lastError = [lastError, "The revoked widgets are off for this session. Their previous saved choices could not be updated and may return after restart."].compactMap { $0 }.joined(separator: " ")
+        }
         if started { settingsSync.preferencesDidSave(preferences, persisted: preferencesPersisted) }
         return success
     }
@@ -834,8 +940,8 @@ final class CoveStore: ObservableObject {
 
     @discardableResult func resetPreferences() -> Bool {
         let onboarded = preferences.completedOnboarding
-        preferences = CovePreferences()
-        preferences.completedOnboarding = onboarded
-        return savePreferences()
+        var candidate = CovePreferences()
+        candidate.completedOnboarding = onboarded
+        return commitPreferences(candidate)
     }
 }

@@ -110,8 +110,7 @@ final class LockScreenController {
         guard started, sessionActive, currentSessionIsActive(), !screensAsleep,
               preferences.enablePrivateAPIs, preferences.showOnLockScreen,
               state.lockStateKnown, state.isLocked,
-              preferences.enableMedia || preferences.enableCalendar || preferences.enableWeather
-                || preferences.enableBattery || preferences.enableFocus || preferences.enableBluetooth else {
+              CoveLockWidget.allCases.contains(where: preferences.showsLockWidget) else {
             removePanels()
             return
         }

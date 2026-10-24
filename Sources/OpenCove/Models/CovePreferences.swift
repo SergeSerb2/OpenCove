@@ -34,12 +34,33 @@ struct CovePreferences: Codable, Equatable {
             if valid { defaults[key] = value }
             else { repairs.append(key) }
         }
+        // A missing mode follows activities. Partial/orphan consent fields can
+        // never infer a grant. Keep an explicit independent mode when repairing.
+        let widgetFields = ["lockWidgetsFollowActivities"] + CoveLockWidget.allCases.map(\.preferenceName)
+        if widgetFields.contains(where: { saved[$0] != nil }) {
+            let complete = widgetFields.allSatisfy { key in
+                (saved[key] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } ?? false
+            }
+            if !complete {
+                // The strict Boolean pass above already fails a malformed mode
+                // to false; a missing mode retains its documented true default.
+                for widget in CoveLockWidget.allCases { defaults[widget.preferenceName] = false }
+                repairs += widgetFields
+            }
+        }
         var result = try JSONDecoder().decode(Self.self, from: JSONSerialization.data(withJSONObject: defaults))
         result.normalize()
         if let normalized = try JSONSerialization.jsonObject(with: JSONEncoder().encode(result)) as? [String: Any] {
             repairs += defaults.keys.filter { key in
                 guard let before = defaults[key] as? NSObject, let after = normalized[key] as? NSObject else { return false }
                 return !before.isEqual(after)
+            }
+        }
+        // Recovered documents cannot activate extra readers from surviving grants.
+        if !repairs.isEmpty {
+            for widget in CoveLockWidget.allCases where result[keyPath: widget.selectionKey] {
+                result[keyPath: widget.selectionKey] = false
+                repairs.append(widget.preferenceName)
             }
         }
         return (result, Array(Set(repairs)).sorted())
@@ -56,6 +77,9 @@ struct CovePreferences: Codable, Equatable {
 
     mutating func normalize() {
         let defaults = Self()
+        if lockWidgetsFollowActivities || !showOnLockScreen || !enablePrivateAPIs {
+            clearIndependentLockWidgets()
+        }
         func bounded(_ value: Double, _ range: ClosedRange<Double>, _ fallback: Double) -> Double {
             value.isFinite ? min(range.upperBound, max(range.lowerBound, value)) : fallback
         }
@@ -93,6 +117,15 @@ struct CovePreferences: Codable, Equatable {
     var useAccentOutline = false
     var showOnLockScreen = false
     var showLockScreenPrivateContent = false
+    // Device-local selections are the consent. Never copy activity choices here
+    // or include these fields in CoveSyncedSettings.
+    var lockWidgetsFollowActivities = true
+    var lockWidgetMedia = false
+    var lockWidgetCalendar = false
+    var lockWidgetWeather = false
+    var lockWidgetBattery = false
+    var lockWidgetFocus = false
+    var lockWidgetBluetooth = false
     var hideWhenIdle = true
     var expandOnHover = true
     // Per-device gesture choices. Deliberately outside CoveSyncedSettings.
@@ -179,6 +212,22 @@ struct CovePreferences: Codable, Equatable {
     }
     var accent = "mint"
 
+    mutating func clearIndependentLockWidgets() {
+        for widget in CoveLockWidget.allCases { self[keyPath: widget.selectionKey] = false }
+    }
+
+    var independentLockWidgets: Set<CoveLockWidget> {
+        Set(CoveLockWidget.allCases.filter { self[keyPath: $0.selectionKey] })
+    }
+
+    func permitsExtraLockWidgetReader(_ widget: CoveLockWidget) -> Bool {
+        !lockWidgetsFollowActivities && showOnLockScreen && enablePrivateAPIs && self[keyPath: widget.selectionKey]
+    }
+
+    func showsLockWidget(_ widget: CoveLockWidget) -> Bool {
+        lockWidgetsFollowActivities ? self[keyPath: widget.activityKey] : permitsExtraLockWidgetReader(widget)
+    }
+
     /// A saved waveform choice alone must not start system-audio capture.
     var usesLiveWaveform: Bool { enableMedia && showPlaybackIndicator && showLiveWaveform }
 }
@@ -256,4 +305,51 @@ struct CoveHUD: Codable, Equatable {
     var value: Double? = nil
     var createdAt = Date()
     var origin = "app"
+}
+
+/// The six existing lock-screen categories. Each independent choice grants only
+/// its existing reader, with the existing source and OS authorization gates.
+enum CoveLockWidget: String, CaseIterable, Identifiable, Hashable {
+    case media, calendar, weather, battery, focus, bluetooth
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .media: return "Now Playing"
+        case .calendar: return "Calendar"
+        case .weather: return "Weather"
+        case .battery: return "Battery"
+        case .focus: return "Focus"
+        case .bluetooth: return "Connectivity"
+        }
+    }
+    var preferenceName: String { "lockWidget" + rawValue.prefix(1).uppercased() + String(rawValue.dropFirst()) }
+    var selectionKey: WritableKeyPath<CovePreferences, Bool> {
+        switch self {
+        case .media: return \.lockWidgetMedia
+        case .calendar: return \.lockWidgetCalendar
+        case .weather: return \.lockWidgetWeather
+        case .battery: return \.lockWidgetBattery
+        case .focus: return \.lockWidgetFocus
+        case .bluetooth: return \.lockWidgetBluetooth
+        }
+    }
+    var activityKey: WritableKeyPath<CovePreferences, Bool> {
+        switch self {
+        case .media: return \.enableMedia
+        case .calendar: return \.enableCalendar
+        case .weather: return \.enableWeather
+        case .battery: return \.enableBattery
+        case .focus: return \.enableFocus
+        case .bluetooth: return \.enableBluetooth
+        }
+    }
+    var disclosure: String {
+        switch self {
+        case .media: return "Read the selected player's existing Now Playing metadata and artwork, including while unlocked. With its activity off, this does not use AppleScript fallback or capture live audio."
+        case .calendar: return "Read the existing seven-day upcoming-event feed and selected month's 42-day grid from included calendars, including while unlocked. Locked event details need a separate choice."
+        case .weather: return "Refresh weather for your saved location, including while unlocked. This does not choose a location or request access."
+        case .battery: return "Show battery status from existing public system monitoring. This choice does not stop that shared monitor."
+        case .focus, .bluetooth: return "Use the existing status reader, including while unlocked. Existing macOS access still applies; this choice does not request access."
+        }
+    }
 }

@@ -221,8 +221,7 @@ struct OnboardingView: View {
         Binding(
             get: { store.preferences[keyPath: keyPath] },
             set: { value in
-                store.preferences[keyPath: keyPath] = value
-                store.savePreferences()
+                store.updatePreferences { $0[keyPath: keyPath] = value }
             }
         )
     }
