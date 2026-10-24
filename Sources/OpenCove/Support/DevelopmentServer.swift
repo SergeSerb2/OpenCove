@@ -363,6 +363,13 @@ final class DevelopmentServer {
                 throw ControlError.failed("The system write failed: \(message) It may have partially applied; read state before retrying.")
             }
         }
+        // Widget consent does not grant the disabled activity's control surface.
+        if action.hasPrefix("media."), !store.preferences.enableMedia {
+            throw ControlError.rejected("Media activity is disabled. Independent widget consent does not enable media API commands.")
+        }
+        if action.hasPrefix("calendar."), !store.preferences.enableCalendar {
+            throw ControlError.rejected("Calendar activity is disabled. Independent widget consent does not enable Calendar API commands.")
+        }
         switch action {
         case "settings.sync.check":
             try settingsSyncAction(store.settingsSync.canCheck) { store.settingsSync.checkForChanges() }
@@ -431,9 +438,23 @@ final class DevelopmentServer {
             let candidate = try JSONDecoder().decode(CovePreferences.self, from: JSONSerialization.data(withJSONObject: object))
             var normalized = candidate
             normalized.normalize()
-            guard candidate == normalized else { throw ControlError.invalid("A preference is outside its supported range or choices.") }
-            store.preferences = candidate
-            guard store.savePreferences() else { throw ControlError.failed(store.lastError ?? "Settings could not be saved.") }
+            var rangeChecked = candidate
+            for widget in CoveLockWidget.allCases {
+                // Normalization may revoke consent when a prerequisite is off.
+                // Range validation must not reject that ordinary opt-out.
+                rangeChecked[keyPath: widget.selectionKey] = normalized[keyPath: widget.selectionKey]
+            }
+            guard rangeChecked == normalized else { throw ControlError.invalid("A preference is outside its supported range or choices.") }
+            for widget in CoveLockWidget.allCases {
+                if changes[widget.preferenceName] as? Bool == true,
+                   store.preferences[keyPath: widget.activityKey], !candidate[keyPath: widget.activityKey] {
+                    throw ControlError.invalid("Disable the activity first, then enable its widget in a separate native Settings action.")
+                }
+                guard !candidate[keyPath: widget.selectionKey] || store.preferences[keyPath: widget.selectionKey] else {
+                    throw ControlError.invalid("Independent widget reading can be enabled only by its separate native Settings control. A batch cannot disable an activity and grant its widget.")
+                }
+            }
+            guard store.applyPreferences(candidate) else { throw ControlError.failed(store.lastError ?? "Settings could not be saved.") }
         case "display.select":
             guard let choice = values["choice"] as? String, choice.utf8.count <= 64 else {
                 throw ControlError.invalid("Provide a display choice.")
@@ -453,8 +474,7 @@ final class DevelopmentServer {
         case "preferences.reset":
             guard store.resetPreferences() else { throw ControlError.failed(store.lastError ?? "Settings could not be saved.") }
         case "onboarding.complete":
-            store.preferences.completedOnboarding = true
-            guard store.savePreferences() else { throw ControlError.failed(store.lastError ?? "Setup could not be saved.") }
+            guard store.completeOnboarding() else { throw ControlError.failed(store.lastError ?? "Setup could not be saved.") }
         case "settings": store.openSettings()
         case "media.refresh": store.media.refreshFromUser()
         case "media.playPause":
@@ -641,6 +661,13 @@ final class DevelopmentServer {
         result["preferences"] = try encoded(store.preferences)
         result["mediaSourceAppHiding"] = notch?.hidesForActiveMediaSource ?? false
         result["settingsSync"] = settingsSyncSnapshot()
+        result["lockWidgets"] = [
+            "followsActivities": store.preferences.lockWidgetsFollowActivities,
+            "selected": store.preferences.independentLockWidgets.map(\.rawValue).sorted(),
+            "lastSavedSelections": store.persistedLockWidgets.map(\.rawValue).sorted(),
+            "extraReaderRequested": CoveLockWidget.allCases.filter { store.requestsExtraLockWidgetReader($0) }.map(\.rawValue),
+            "grantSurface": "native Settings only"
+        ] as [String: Any]
         let sparkle = updater?.controller?.updater
         result["updates"] = ["available": sparkle != nil,
                              "canCheckForUpdates": sparkle?.canCheckForUpdates ?? false,
@@ -651,8 +678,9 @@ final class DevelopmentServer {
         result["enabledTabs"] = store.enabledTabs.map(\.rawValue)
         result["visibleTab"] = store.visibleTab.map { $0.rawValue as Any } ?? NSNull()
         result["expandedDuo"] = store.showsExpandedDuo
-        var media = store.media.state
-        media.elapsed = store.media.playback.elapsed
+        let preferences = store.preferences
+        var media = preferences.enableMedia ? store.media.state : MediaState()
+        if preferences.enableMedia { media.elapsed = store.media.playback.elapsed }
         media.artworkData = nil
         result["media"] = try encoded(media)
         result["compactMediaVisible"] = store.compactMediaVisible
@@ -669,7 +697,7 @@ final class DevelopmentServer {
         result["playbackClock"] = ["receivedSamples": store.media.playback.receivedSamples,
                                    "changeNotifications": store.media.playback.changeNotifications]
         result["mediaDelivery"] = ["adapterSampleAgeSeconds": store.media.adapterSampleAgeSeconds.map { $0 as Any } ?? NSNull()]
-        result["artworkAvailable"] = store.media.state.artworkData != nil
+        result["artworkAvailable"] = preferences.enableMedia && store.media.state.artworkData != nil
         result["systemReduceMotion"] = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         result["mediaTextMotion"] = NSApp.windows.filter(\.isVisible).flatMap { window in
             window.contentView.map { CoveScrollingMediaTextView.motionSnapshots(in: $0) } ?? []
@@ -684,16 +712,32 @@ final class DevelopmentServer {
         result["timerProgressMotion"] = NSApp.windows.filter(\.isVisible).flatMap { window in
             window.contentView.map { CoveTimerProgressView.motionSnapshots(in: $0) } ?? []
         }
-        result["system"] = try encoded(store.system.state)
-        result["events"] = try encoded(store.activities.events)
-        result["calendarAuthorization"] = store.activities.calendarAuthorization
+        var system = store.system.state
+        if !preferences.enableFocus {
+            system.focusAvailable = false
+            system.focusEnabled = false
+            system.focusAuthorization = "disabled"
+            system.capabilityMessages["focus"] = "Focus activity is disabled."
+        }
+        if !preferences.enableBluetooth {
+            system.bluetoothAvailable = false
+            system.bluetoothDevices = []
+            system.accessoryBatteries = []
+            system.bluetoothAuthorization = "disabled"
+            system.capabilityMessages["bluetooth"] = "Connectivity activity is disabled."
+            system.capabilityMessages["accessoryBattery"] = "Connectivity activity is disabled."
+        }
+        result["system"] = try encoded(system)
+        result["events"] = try encoded(preferences.enableCalendar ? store.activities.events : [])
+        result["calendarAuthorization"] = preferences.enableCalendar ? store.activities.calendarAuthorization : "Disabled"
         result["selectedCalendarDate"] = ISO8601DateFormatter().string(from: store.activities.selectedCalendarDate)
-        result["calendarActivity"] = store.activities.eventActivity.map { ["title": $0.event.title, "remainingSeconds": $0.remainingSeconds] }
+        result["calendarActivity"] = (preferences.enableCalendar ? store.activities.eventActivity : nil).map { ["title": $0.event.title, "remainingSeconds": $0.remainingSeconds] }
         result["files"] = try encoded(store.activities.files.map { file in var file = file; file.bookmarkData = nil; return file })
         result["timer"] = try encoded(store.activities.timer.snapshot())
         result["notifications"] = try encoded(store.activities.notifications)
-        result["weather"] = try encoded(store.weather.state)
-        result["weatherPresentation"] = try encoded(WeatherWidgetData(state: store.weather.state,
+        let weather = preferences.enableWeather ? store.weather.state : WeatherState()
+        result["weather"] = try encoded(weather)
+        result["weatherPresentation"] = try encoded(WeatherWidgetData(state: weather,
             style: CoveWeatherStyle(rawValue: store.preferences.weatherStyle) ?? .conditions, at: Date()))
         result["weatherStatus"] = ["hasLocation": store.weather.hasLocation,
                                     "loading": store.weather.isLoading,
@@ -719,7 +763,14 @@ final class DevelopmentServer {
         result["displaySelection"] = try encoded(store.displaySelection)
         if let hud = store.hud { result["hud"] = try encoded(hud) }
         else { result["hud"] = NSNull() }
-        result["errors"] = [store.lastError, store.media.lastError, store.system.lastError, store.activities.lastError, store.weather.lastError].compactMap { $0 }
+        result["errors"] = [store.lastError, preferences.enableMedia ? store.media.lastError : nil,
+                            store.system.lastError, store.activities.lastError,
+                            preferences.enableWeather ? store.weather.lastError : nil].compactMap { $0 }
+        if !preferences.enableMedia {
+            result["mediaTextMotion"] = [Any]()
+            result["playbackIndicatorMotion"] = [Any]()
+            result["artworkTransitionMotion"] = [Any]()
+        }
         result["notices"] = [store.activities.lastNotice].compactMap { $0 }
         return result
     }
@@ -728,6 +779,14 @@ final class DevelopmentServer {
         guard !rendererBusy else { throw ControlError.rejected("A native capture is already in progress. Retry after it finishes.") }
         rendererBusy = true
         defer { rendererBusy = false }
+        if surface == "weather", !store.preferences.enableWeather {
+            throw ControlError.rejected("Weather activity is disabled. Widget-only weather is not exposed by development captures.")
+        }
+        if surface == "lock", CoveLockWidget.allCases.contains(where: {
+            store.preferences.permitsExtraLockWidgetReader($0) && !store.preferences[keyPath: $0.activityKey]
+        }) {
+            throw ControlError.rejected("Widget-only content is not exposed by development captures. Use the native lock widgets.")
+        }
         if surface == "live-notch-compositor" {
             // The explicit authenticated surface captures only the mounted app
             // panel. Selection does not retain its NSWindow across an await.

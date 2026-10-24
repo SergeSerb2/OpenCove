@@ -145,11 +145,111 @@ Optional paused-media hiding affects compact presentation only. The store observ
 
 `LockScreenController` owns the optional lock widgets. Their presentation requires explicit opt-in, private integrations, a known locked state, an active console session, and awake displays. These are ordinary app panels; macOS owns authentication and the system clock. Secure-screen visibility and credential clearance need manual verification on each supported OS. Lock weather attribution uses readable literal URLs rather than external-app actions.
 
+### Independent lock-screen widgets: local consent
+
+The retained reference declares “Fixed widgets to work properly even if activity is disabled”
+(1.3.6, fixes[8]). This source implements a separate local widget policy. It does
+not establish reference visual parity or secure-screen acceptance.
+
+`lockWidgetsFollowActivities` defaults to true, including when the mode is missing
+from a saved document. Follow mode uses the six existing activity choices.
+Independent mode uses explicit `lockWidgetMedia`, `lockWidgetCalendar`,
+`lockWidgetWeather`, `lockWidgetBattery`, `lockWidgetFocus`, and
+`lockWidgetBluetooth` selections. All six default to false. A mode change clears
+all independent selections; it never copies activity choices. The fields stay
+outside `CoveSyncedSettings` and apply only to this Mac.
+
+**Collection is not lock-only.** An explicit local widget choice permits the
+selected existing reader while the app is started and its console session is
+active, including unlocked periods. The widget master and private integrations
+must already be on. The native control discloses this scope before an affirmative
+choice; it never enables a prerequisite, selects a weather location, requests OS
+access, or grants locked event details. Missing or denied access stays unavailable.
+The existing source choices, Calendar exclusions/declined/subscribed filters,
+weather location consent, cancellation and authorization gates remain in force.
+Battery uses the existing public base monitor; turning its widget off does not
+stop that shared monitor.
+
+`CoveStore` owns the single preference transaction. Preferences are read-only to
+other types. Native settings, onboarding, display selection, generic API patches,
+reset, and remote style overlays enter store methods. Ordinary settings retain
+their existing session-on-save-failure behavior. Independent additions use only
+`setIndependentLockWidget`, called by the disclosed native control. The store
+keeps a prospective addition out of published/effective state until the complete
+local save succeeds. Login-item failure strips the prospective addition before
+any JSON write, even though other settings can still be saved. Backup, encoding,
+or write failure discards the addition. No draft, pending grant, retry closure or
+unrelated later save can activate that failed addition in the current session.
+Validated saved selections can be restored on a later launch.
+
+A mode change, widget master off, private integrations off, or a true-to-false
+locked-event-details choice clears all independent selections. Each activity's
+true-to-false transition clears its matching selection. A separate later native
+affirmative choice can enable the widget while that activity remains off. The
+API rejects additions and explicit disable-activity-plus-enable-widget batches
+with HTTP 400 before applying them. Other valid patches can revoke selections.
+Re-enabling a prerequisite cannot restore a selection. Reset keeps the existing
+ordinary defaults and grants no independent widgets. A partial, non-Boolean or
+orphan widget consent record clears the independent selections; missing mode
+keeps Follow, a valid explicit independent mode stays independent, and malformed
+mode fails to independent with no selections. Any repaired preference document
+also clears surviving independent grants. Recovery keeps the existing actual
+error and exact original-file backup path before a later save.
+
+Revocations publish and stop no-longer-needed extra readers synchronously before
+fallible persistence. Existing generations/cancellation reject stale results;
+a synchronous OS query already in progress need not be physically interruptible.
+**If revocation cannot be saved, the previous saved choices may return after
+restart.** The actual save error and this warning stay visible in Settings.
+This deliberate limit matches existing preferences. There is no restart
+interlock, crash-proof revocation guarantee, or new confirmation flow. An
+unrelated successful save can persist the effective revocations; an unrelated
+failed save cannot re-grant them in the current session.
+
+Reader demand is the old activity demand OR the eligible independent selection.
+Session resignation removes extra demand, and session return can restore a valid
+saved/effective selection. Calendar receives reader demand and activity intent
+in one configuration call before work is queued. Widget-only Calendar reads its
+existing seven-day feed and selected month's 42-day grid. It does not create an
+event activity, alerts, alert receipts, travel routes, Duo demand, activity ticks,
+permission requests, or disabled-activity date/open/join actions. Widget-only
+media uses the existing selected native reader/adapter without AppleScript
+Automation fallback and never enables live waveform capture. Waveform demand
+continues to require the Media activity, playback indicator, and live choice.
+Activity HUDs keep their old activity gates.
+
+Presentation remains separate from reading. The lock controller retains started,
+active-console, fresh-session-check, awake-display, private-integration, master,
+known-lock and locked-state guards. It selects content with the effective widget
+policy and removes panels through the existing guard path. These are app-observed
+guards, not atomic physical-lock guarantees. Locked media restrictions, Calendar
+redaction, hidden weather location name, and literal attribution URLs remain.
+
+The control API reports selections, last validated/saved selections and extra
+reader requests as policy status, without widget-only content. Disabled Media
+and Calendar activities reject their API commands with HTTP 409. State masks
+widget-only Media, Calendar, weather, Focus and Bluetooth content and artwork
+availability. Development captures of widget-only lock content and disabled
+weather content are rejected. No widget-grant API or capture preset is added.
+The native permission buttons still require the matching activity; extra reader
+demand alone cannot enable them.
+
+Source parsing and diff review are the only validation for this implementation.
+Compilation and all real-interface checks remain parent-owned and pending:
+legacy and independent selection, each revocation path, conflicting batches,
+backup/write/login-item failures, unrelated local/remote saves, restart after a
+failed revocation (where old choices may return), denied permissions, Calendar
+consumer isolation, waveform isolation, session/lock/display removal, native
+Settings layout/accessibility, and secure-screen visibility/credential clearance.
+Strict owned-media C-PID remains **FAILED**, with no injected substitute.
+M1 identity and two-Mac iCloud delivery remain **USER-DEFERRED**.
+
+
 ## Service boundaries
 
 - `MediaController`: real media metadata, command capabilities, transport, artwork, optional Apple Events fallback, and the isolated system MediaRemote adapter. Unsupported actions stay unavailable.
 - `SystemController`: CoreAudio outputs, supported volume/mute, battery, Bluetooth, Focus, optional private brightness, and conservative session/lock knowledge.
-  The store passes the effective Bluetooth and Focus feature flags before the first system read and on runtime preference changes, including when private integrations do not change or saving preferences fails. Each disabled reader skips authorization queries, device/registry enumeration, Focus status reads, and its observer/poll work. Opt-out removes Bluetooth subscriptions and retained devices/battery reports, clears Focus knowledge, and retires pending reader callbacks with separate revisions. Queued Bluetooth events check that revision and the feature flag before accessing a device. Disabled authorization text describes the app setting, not an OS permission result. Explicit permission buttons require the matching feature to be enabled; a late permission completion cannot restart an opted-out reader. CoreAudio route data and the audio, battery, brightness, lock, and workspace paths keep their existing behavior.
+  The store passes the effective Bluetooth and Focus reader demand (activity OR eligible independent widget) before the first system read and on runtime preference/session changes, including when private integrations do not change or saving preferences fails. Each reader with no demand skips authorization queries, device/registry enumeration, Focus status reads, and its observer/poll work. With no remaining demand, opt-out removes Bluetooth subscriptions and retained devices/battery reports, clears Focus knowledge, and retires pending reader callbacks with separate revisions. Queued Bluetooth events check that revision and the feature flag before accessing a device. Disabled authorization text describes the app setting, not an OS permission result. Explicit permission buttons require the matching feature to be enabled; a late permission completion cannot restart an opted-out reader. CoreAudio route data and the audio, battery, brightness, lock, and workspace paths keep their existing behavior.
   The output picker's appearance refresh reads audio only. It still enumerates current outputs and reads the real route, UID, levels and capabilities. Explicit route/volume/mute writes retain their fresh identity and capability checks. An opt-in development acceptance window can record synchronous domain entries and attempted controller hardware writes; outside that window it retains no samples or timing work.
 - `ActivityController`: EventKit reads, calendar filters and alerts, bookmark-backed file references, a persistent timer, and app notifications. It never edits calendar events.
 - `WeatherController`: explicit location selection, bounded Open-Meteo refreshes, stale-state handling, and cancellation on opt-out.

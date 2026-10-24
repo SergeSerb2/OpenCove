@@ -13,20 +13,20 @@ struct LockScreenView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
-                if store.preferences.enableMedia {
+                if store.preferences.showsLockWidget(.media) {
                     CoveMediaSurface(media: store.media, system: store.system, waveform: store.waveform,
                                      showPlaybackIndicator: store.preferences.showPlaybackIndicator,
-                                     showLiveWaveform: store.preferences.showLiveWaveform, locked: true,
+                                     showLiveWaveform: store.preferences.usesLiveWaveform, locked: true,
                                      musicColorAccent: store.preferences.musicColorAccent,
                                      reduceMotion: store.preferences.reduceMotion)
                 }
-                if store.preferences.enableCalendar || store.preferences.enableWeather {
+                if store.preferences.showsLockWidget(.calendar) || store.preferences.showsLockWidget(.weather) {
                     HStack(alignment: .top, spacing: 18) {
-                        if store.preferences.enableCalendar {
+                        if store.preferences.showsLockWidget(.calendar) {
                             CoveLockCalendarSection(controller: store.activities,
                                                     showPrivateContent: store.preferences.showLockScreenPrivateContent)
                         }
-                        if store.preferences.enableWeather {
+                        if store.preferences.showsLockWidget(.weather) {
                             CoveLockWeatherSection(controller: weather,
                                 style: CoveWeatherStyle(rawValue: store.preferences.weatherStyle) ?? .conditions,
                                 motion: store.preferences.reduceMotion ? nil : CoveMotion.animation(preferences: store.preferences, hud: false))
@@ -34,11 +34,11 @@ struct LockScreenView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                if store.preferences.enableBattery || store.preferences.enableFocus || store.preferences.enableBluetooth {
+                if store.preferences.showsLockWidget(.battery) || store.preferences.showsLockWidget(.focus) || store.preferences.showsLockWidget(.bluetooth) {
                     CoveLockSystemSection(controller: store.system,
-                                          showBattery: store.preferences.enableBattery,
-                                          showFocus: store.preferences.enableFocus,
-                                          showConnectivity: store.preferences.enableBluetooth)
+                                          showBattery: store.preferences.showsLockWidget(.battery),
+                                          showFocus: store.preferences.showsLockWidget(.focus),
+                                          showConnectivity: store.preferences.showsLockWidget(.bluetooth))
                 }
             }
             .padding(18)

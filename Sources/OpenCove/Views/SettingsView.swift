@@ -129,20 +129,37 @@ struct SettingsView: View {
         Group {
             Section("Displays") {
                 CoveDisplayPreference(store: store)
-                Toggle("Show on the lock screen", isOn: preference(\.showOnLockScreen))
-                Toggle("Show event details while locked", isOn: preference(\.showLockScreenPrivateContent))
-                    .disabled(!store.preferences.showOnLockScreen)
-                CoveSettingsNote("Lock-screen visibility depends on macOS security policy.")
-                if !store.preferences.enablePrivateAPIs {
-                    CoveSettingsNote("Lock-screen widgets stay hidden while private integrations are off. They need a confirmed locked session.")
-                } else if !system.state.lockStateKnown {
-                    CoveSettingsNote(system.state.capabilityMessages["lock"] ?? "Waiting for a confirmed session lock state.")
-                }
                 Toggle("Hide when idle", isOn: preference(\.hideWhenIdle))
                 Toggle("Hide in full-screen apps", isOn: preference(\.hideInFullscreen))
                 Toggle("Hide in Mission Control", isOn: preference(\.hideInMissionControl))
                 Toggle("Hide while the Now Playing app is active", isOn: preference(\.hideWhenMediaAppActive))
                 CoveSettingsNote("Hides the panel while the app providing Now Playing is frontmost. Temporary alerts still appear. This choice applies to this Mac.")
+            }
+
+            Section("Lock-screen widgets") {
+                Toggle("Show widgets on the lock screen", isOn: preference(\.showOnLockScreen))
+                Toggle("Use the same widgets as activities", isOn: preference(\.lockWidgetsFollowActivities))
+                CoveSettingsNote("These choices apply only to this Mac. Changing mode clears independent choices.")
+                Toggle("Show event details while locked", isOn: preference(\.showLockScreenPrivateContent))
+                    .disabled(!store.preferences.showOnLockScreen)
+                CoveSettingsNote("Lock-screen visibility depends on macOS security policy. Widgets appear only in an app-confirmed locked, active session with displays awake.")
+                if !store.preferences.enablePrivateAPIs {
+                    CoveSettingsNote("Widgets stay hidden and independent readers stay off while private integrations are off. Enable this prerequisite separately; widget choices do not enable it.")
+                } else if !system.state.lockStateKnown {
+                    CoveSettingsNote(system.state.capabilityMessages["lock"] ?? "Waiting for a confirmed session lock state.")
+                }
+                if !store.preferences.lockWidgetsFollowActivities {
+                    CoveSettingsNote("Each widget you enable can keep its existing data reader running while this app session is active and lock-screen widgets are on, including while your Mac is unlocked. Existing permissions and source choices still apply. Widget choices do not request access.")
+                    ForEach(CoveLockWidget.allCases) { widget in
+                        Toggle("Enable \(widget.title) widget and reading", isOn: Binding(
+                            get: { store.preferences[keyPath: widget.selectionKey] },
+                            set: { store.setIndependentLockWidget(widget, enabled: $0) }))
+                            .disabled(!store.preferences.showOnLockScreen || !store.preferences.enablePrivateAPIs)
+                        CoveSettingsNote(widget.disclosure)
+                    }
+                    CoveSettingsNote("Turning an activity off also turns its independent widget off. Enable that widget in a separate action if you still want it. Turning widgets, private integrations, or event details off clears independent choices.")
+                    CoveSettingsNote("If saving an off choice fails, it stops extra reading for this session. The previous saved choice may return after restart. Check any save error shown above.")
+                }
             }
 
             Section("Interaction") {
@@ -328,9 +345,10 @@ struct SettingsView: View {
                 Picker("Playback indicator", selection: Binding(get: {
                     !store.preferences.showPlaybackIndicator ? "none" : store.preferences.showLiveWaveform ? "live" : "decorative"
                 }, set: { mode in
-                    store.preferences.showPlaybackIndicator = mode != "none"
-                    store.preferences.showLiveWaveform = mode == "live"
-                    store.savePreferences()
+                    store.updatePreferences {
+                        $0.showPlaybackIndicator = mode != "none"
+                        $0.showLiveWaveform = mode == "live"
+                    }
                 })) {
                     Text("None").tag("none")
                     Text("Decorative bars").tag("decorative")
@@ -395,14 +413,12 @@ struct SettingsView: View {
                 Toggle("Use default duration", isOn: Binding(
                     get: { store.preferences[keyPath: selectedHUD.durationKey] == 0 },
                     set: { useGlobal in
-                        store.preferences[keyPath: selectedHUD.durationKey] = useGlobal ? 0 : store.preferences.hudDuration
-                        store.savePreferences()
+                        store.updatePreferences { $0[keyPath: selectedHUD.durationKey] = useGlobal ? 0 : $0.hudDuration }
                     }))
                 CovePreferenceSlider(title: "Duration", value: Binding(
                     get: { store.preferences.duration(for: selectedHUD) },
                     set: { value in
-                        store.preferences[keyPath: selectedHUD.durationKey] = value
-                        store.savePreferences()
+                        store.updatePreferences { $0[keyPath: selectedHUD.durationKey] = value }
                     }), range: 0.5...10, step: 0.5, format: "%.1f s")
                     .disabled(store.preferences[keyPath: selectedHUD.durationKey] == 0)
                 Picker("Appearance animation", selection: preference(selectedHUD.speedKey)) {
@@ -416,9 +432,10 @@ struct SettingsView: View {
                     Button("Preview overlay") { hudPreviewMessage = store.previewHUD(selectedHUD) }
                         .disabled(store.isExpanded)
                     Button("Reset category timing") {
-                        store.preferences[keyPath: selectedHUD.durationKey] = 0
-                        store.preferences[keyPath: selectedHUD.speedKey] = "global"
-                        store.savePreferences()
+                        store.updatePreferences {
+                            $0[keyPath: selectedHUD.durationKey] = 0
+                            $0[keyPath: selectedHUD.speedKey] = "global"
+                        }
                     }
                 }
                 CoveSettingsNote(store.isExpanded ? "Collapse the panel to preview an overlay."
@@ -444,25 +461,33 @@ struct SettingsView: View {
                     Text("Fantastical").tag("fantastical")
                     Text("Notion Calendar").tag("notionCalendar")
                 }
-                LabeledContent("Calendar access", value: activities.calendarAuthorization)
+                LabeledContent("Calendar access", value: store.preferences.enableCalendar ? activities.calendarAuthorization : "Activity disabled")
                 if activities.calendarAuthorization == "Saved calendar settings need review" {
                     CoveCalendarSourceRecovery(activities: activities)
                 }
                 Toggle("Event alerts", isOn: Binding(get: { activities.calendarAlertsEnabled }, set: { activities.setCalendarAlertsEnabled($0) }))
                 Stepper("Alert \(activities.calendarPreEventLeadMinutes) minutes before", value: Binding(get: { activities.calendarPreEventLeadMinutes }, set: { activities.setCalendarPreEventLeadMinutes($0) }), in: 0...120)
-                ForEach(activities.calendarSources) { calendar in
-                    Toggle(calendar.title, isOn: Binding(get: { !calendar.isExcluded }, set: { activities.setCalendarExcluded(calendar.id, excluded: !$0) }))
+                if store.preferences.enableCalendar {
+                    ForEach(activities.calendarSources) { calendar in
+                        Toggle(calendar.title, isOn: Binding(get: { !calendar.isExcluded }, set: { activities.setCalendarExcluded(calendar.id, excluded: !$0) }))
+                    }
                 }
             }
 
             Section("Connected devices") {
                 AudioOutputPicker(system: system)
                 LabeledContent("Bluetooth access", value: system.state.bluetoothAuthorization)
-                Button("Allow Bluetooth Access") { system.requestBluetoothAccess() }
-                    .disabled(system.isRequestingBluetoothAccess)
+                Button("Allow Bluetooth Access") {
+                    guard store.preferences.enableBluetooth else { return }
+                    system.requestBluetoothAccess()
+                }
+                    .disabled(!store.preferences.enableBluetooth || system.isRequestingBluetoothAccess)
                 LabeledContent("Focus access", value: system.state.focusAuthorization)
-                Button("Allow Focus Status") { system.requestFocusAccess() }
-                    .disabled(system.isRequestingFocusAccess)
+                Button("Allow Focus Status") {
+                    guard store.preferences.enableFocus else { return }
+                    system.requestFocusAccess()
+                }
+                    .disabled(!store.preferences.enableFocus || system.isRequestingFocusAccess)
                 if let error = system.lastError { CoveSettingsError(error) }
             }
 
@@ -506,10 +531,10 @@ struct SettingsView: View {
                 CovePermissionRow(
                     title: "Calendar", symbol: "calendar",
                     detail: "Read upcoming events and meeting links.",
-                    status: activities.calendarAuthorization
+                    status: store.preferences.enableCalendar ? activities.calendarAuthorization : "Activity disabled"
                 ) {
                     Button("Request Access") { activities.requestCalendarAccess() }
-                        .disabled(["Restricted", "Unavailable", "Disabled", "Saved calendar settings need review"].contains(activities.calendarAuthorization))
+                        .disabled(!store.preferences.enableCalendar || ["Restricted", "Unavailable", "Disabled", "Saved calendar settings need review"].contains(activities.calendarAuthorization))
                     Button("System Settings…") {
                         CovePermissionAccess.openSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")
                     }
@@ -609,8 +634,7 @@ struct SettingsView: View {
         Binding(
             get: { store.preferences[keyPath: keyPath] },
             set: { value in
-                store.preferences[keyPath: keyPath] = value
-                store.savePreferences()
+                store.updatePreferences { $0[keyPath: keyPath] = value }
             }
         )
     }

@@ -37,6 +37,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     @Published private(set) var calendarPreEventLeadMinutes = 15
     @Published private(set) var calendarAlertsEnabled = true
     @Published private(set) var calendarEnabled = true
+    private var calendarReaderEnabled = true
     /// The parent owns this preference and its persistence.
     var preferredCalendarApp = "calendar"
     @Published var files: [TrayFile] = []
@@ -307,7 +308,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
         calendarReadTask = nil
         calendarReadCancellation?.cancel()
         calendarReadCancellation = nil
-        guard calendarEnabled else {
+        guard calendarReaderEnabled else {
             calendarAuthorization = "Disabled"
             clearCalendarSnapshot()
             return
@@ -349,7 +350,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
             do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
             guard let self, !Task.isCancelled else { return }
             let snapshot = await self.calendarReader.read(request)
-            guard !Task.isCancelled, self.calendarEnabled, self.calendarReadRevision == revision else { return }
+            guard !Task.isCancelled, self.calendarReaderEnabled, self.calendarReadRevision == revision else { return }
             self.calendarReadTask = nil
             self.calendarReadCancellation = nil
             self.isRefreshingCalendar = false
@@ -369,7 +370,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
 
     /// Select a civil day. A cache miss schedules a real, authorized EventKit read.
     func loadSelectedDate(_ date: Date) {
-        guard date.timeIntervalSinceReferenceDate.isFinite else { return }
+        guard calendarEnabled, date.timeIntervalSinceReferenceDate.isFinite else { return }
         let calendar = Calendar.current
         selectedCalendarDate = calendar.startOfDay(for: date)
         selectedDateFollowsToday = calendar.isDateInToday(date)
@@ -410,13 +411,16 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
                                  excludeSubscribedCalendars: excludeSubscribedCalendars)
     }
 
-    /// Apply enablement and filters together before queuing a read. A filter change
-    /// clears old activity/routing data; refresh retains permission and recovery gates.
-    func setCalendarConfiguration(enabled: Bool, showDeclinedEvents: Bool, excludeSubscribedCalendars: Bool) {
+    /// Apply activity intent, reader demand, and filters before queuing a read.
+    /// Widget-only demand never requests permission or starts activity/alert work.
+    /// A filter change clears old data; refresh retains permission/recovery gates.
+    func setCalendarConfiguration(enabled: Bool, readerEnabled: Bool? = nil, showDeclinedEvents: Bool, excludeSubscribedCalendars: Bool) {
         let filtersChanged = showDeclinedCalendarEvents != showDeclinedEvents
             || self.excludeSubscribedCalendars != excludeSubscribedCalendars
-        guard calendarEnabled != enabled || filtersChanged else { return }
+        let readerEnabled = enabled || (readerEnabled ?? enabled)
+        guard calendarEnabled != enabled || calendarReaderEnabled != readerEnabled || filtersChanged else { return }
         calendarEnabled = enabled
+        calendarReaderEnabled = readerEnabled
         showDeclinedCalendarEvents = showDeclinedEvents
         self.excludeSubscribedCalendars = excludeSubscribedCalendars
         lastCalendarActivityCheck = nil
@@ -424,7 +428,8 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
             calendarAccessTask?.cancel()
             calendarAccessTask = nil
         }
-        if filtersChanged { clearCalendarSnapshot() }
+        if filtersChanged || !readerEnabled { clearCalendarSnapshot() }
+        else { publishCalendarPresentation() }
         // Increments the read revision and cancels prior work even when a read is gated off.
         refreshCalendar()
     }
@@ -498,7 +503,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     }
 
     func openCalendar(at date: Date = Date()) {
-        guard date.timeIntervalSinceReferenceDate.isFinite else { return }
+        guard calendarEnabled, date.timeIntervalSinceReferenceDate.isFinite else { return }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.calendar = Calendar(identifier: .gregorian)
@@ -574,7 +579,8 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
             calendarPreEventLeadMinutes > 0 && $0.start.timeIntervalSince(now) <= Double(calendarPreEventLeadMinutes * 60) ? $0 : nil
         }
         let activity: CoveEventActivity?
-        if let current {
+        if !calendarEnabled { activity = nil }
+        else if let current {
             activity = CoveEventActivity(event: current, phase: .current,
                                          remainingSeconds: max(0, Int(ceil(current.end.timeIntervalSince(now)))))
         } else if let soon {
