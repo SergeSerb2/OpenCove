@@ -196,6 +196,15 @@ Record the exact source-tree hash, bundle path/variant, architecture, version/bu
 
 Native offscreen output needs visual inspection for wrapping, clipping, errors, empty states, and accessibility labels. The cache uses AppKit’s compatible bitmap format and waits for native containers to mount. Some system glass/vibrancy content, especially lock-widget text, can be absent from an unordered window capture. A PNG pass checks encoding and process survival; it does not prove every native element is visible. It does not establish menu actions, window resizing, VoiceOver, display geometry, Spaces, sleep/wake, or secure lock-screen visibility and credential clearance.
 
+`opencovectl render --surface settings-calendar` captures the same native Activities
+form at a fixed 760×1600 size. This exposes the Calendar controls below the
+ordinary 760×900 Activities preview. It creates no separate settings component,
+changes no preference, and sends no desktop input. The larger capture does not
+prove normal-window scroll reachability, native Toggle input, or compositor
+appearance. Inspect alpha and the embedded color profile before drawing contrast
+conclusions from offscreen pixels; a raw RGB value alone does not describe the
+composited color.
+
 Further manual coverage requires explicit feature consent and real existing data: granted EventKit/source filtering and alerts, meeting/calendar routes, real weather and MapKit responses, live-player command identity, readable notification banners, waveform audio capture, hardware-key holds/releases, stock HUD suppression, and natural privacy/session transitions. Never substitute generated desktop input, fabricated events/tracks, or a mock for those results. Empty or denied access proves only that path.
 
 Intel and each supported macOS version need runtime checks. Developer ID signing, notarization, downloaded-install/Gatekeeper behavior, and complete player/device compatibility remain separate gates. No measured parity with another application is claimed. Read [compatibility](compatibility.md) and [releasing](releasing.md) before describing a binary as ready.
