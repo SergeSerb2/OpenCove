@@ -25,6 +25,12 @@ final class SystemController: NSObject, ObservableObject {
 
     private var running = false
     private var privateAPIs = false
+    private var bluetoothEnabled = false
+    private var focusEnabled = false
+    // Reader revisions retire queued callbacks across opt-out/off-on changes
+    // without invalidating audio, power, lock or workspace observations.
+    private var bluetoothGeneration = 0
+    private var focusGeneration = 0
     private var generation = 0
     private var observations = SystemObservations()
     private var displayServices: SystemDisplayServices?
@@ -126,8 +132,9 @@ final class SystemController: NSObject, ObservableObject {
         }
     }
 
-    func start(privateAPIs: Bool) {
+    func start(privateAPIs: Bool, enableBluetooth: Bool, enableFocus: Bool) {
         if running, self.privateAPIs == privateAPIs {
+            configureProtectedReaders(enableBluetooth: enableBluetooth, enableFocus: enableFocus)
             refresh()
             return
         }
@@ -145,6 +152,7 @@ final class SystemController: NSObject, ObservableObject {
         screensAwake = true
         systemAwake = true
         displayServices = privateAPIs ? SystemDisplayServices() : nil
+        configureProtectedReaders(enableBluetooth: enableBluetooth, enableFocus: enableFocus)
         installWorkspaceObservers()
         installPowerObserver()
         installAudioSystemObservers()
@@ -178,6 +186,46 @@ final class SystemController: NSObject, ObservableObject {
         outputListenersNeedPolling = false
         outputObservedDevices.removeAll()
         bluetoothNeedsPolling = false
+        configureProtectedReaders(enableBluetooth: false, enableFocus: false)
+    }
+
+    /// Apply app opt-outs before any read, including the first startup baseline.
+    /// "disabled" is app configuration, not an inferred OS authorization result.
+    private func configureProtectedReaders(enableBluetooth: Bool, enableFocus: Bool) {
+        if bluetoothEnabled != enableBluetooth { bluetoothGeneration += 1 }
+        if focusEnabled != enableFocus { focusGeneration += 1 }
+        bluetoothEnabled = enableBluetooth
+        focusEnabled = enableFocus
+        var next = state
+        if !enableBluetooth {
+            observations.removeBluetooth()
+            bluetoothObserver = nil
+            bluetoothAccessRequest = nil
+            isRequestingBluetoothAccess = false
+            bluetoothNeedsPolling = false
+            connectedBluetooth.removeAll()
+            pendingParts.remove(.bluetooth)
+            next.bluetoothAvailable = false
+            next.bluetoothAuthorization = "disabled"
+            next.bluetoothDevices = []
+            next.accessoryBatteries = []
+            accessoryBatteries = []
+            next.capabilityMessages["bluetooth"] = "Bluetooth monitoring is disabled in OpenCove. Audio outputs remain available through CoreAudio."
+            next.capabilityMessages["accessoryBattery"] = "Accessory battery monitoring is disabled with Bluetooth monitoring."
+            setError("bluetoothAccess", nil)
+            if lastHUD?.kind == .bluetooth { lastHUD = nil }
+        }
+        if !enableFocus {
+            isRequestingFocusAccess = false
+            pendingParts.remove(.focus)
+            next.focusAvailable = false
+            next.focusAuthorization = "disabled"
+            next.focusEnabled = false
+            next.capabilityMessages["focus"] = "Focus monitoring is disabled in OpenCove."
+            setError("focusAccess", nil)
+            if lastHUD?.kind == .focus { lastHUD = nil }
+        }
+        if state != next { state = next }
     }
 
     func refresh() {
@@ -255,6 +303,7 @@ final class SystemController: NSObject, ObservableObject {
     /// The sole Bluetooth permission request path; never scans, connects, or pairs.
     func requestBluetoothAccess() {
         guard running else { return setError("bluetoothAccess", "System monitoring is stopped.") }
+        guard bluetoothEnabled else { return setError("bluetoothAccess", "Enable Bluetooth monitoring before requesting access.") }
         guard !isRequestingBluetoothAccess else { return }
         guard CBManager.authorization == .notDetermined else {
             read(parts: .bluetooth, emitHUD: false)
@@ -266,12 +315,13 @@ final class SystemController: NSObject, ObservableObject {
         }
         setError("bluetoothAccess", nil)
         isRequestingBluetoothAccess = true
-        bluetoothAccessRequest = SystemBluetoothAccessRequest(owner: self, generation: generation)
+        bluetoothAccessRequest = SystemBluetoothAccessRequest(owner: self, generation: bluetoothGeneration)
     }
 
     /// Requests read-only shared Focus status, never a Focus mode change.
     func requestFocusAccess() {
         guard running else { return setError("focusAccess", "System monitoring is stopped.") }
+        guard focusEnabled else { return setError("focusAccess", "Enable Focus monitoring before requesting access.") }
         guard !isRequestingFocusAccess else { return }
         let center = INFocusStatusCenter.default
         guard center.authorizationStatus == .notDetermined else {
@@ -284,10 +334,10 @@ final class SystemController: NSObject, ObservableObject {
         }
         setError("focusAccess", nil)
         isRequestingFocusAccess = true
-        let currentGeneration = generation
+        let currentGeneration = focusGeneration
         center.requestAuthorization { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, self.running, self.generation == currentGeneration else { return }
+                guard let self, self.running, self.focusEnabled, self.focusGeneration == currentGeneration else { return }
                 self.isRequestingFocusAccess = false
                 self.read(parts: .focus, emitHUD: false)
                 self.setError("focusAccess", self.state.focusAuthorization == "authorized" ? nil : "Focus status access was not granted.")
@@ -427,6 +477,10 @@ final class SystemController: NSObject, ObservableObject {
 
     private func scheduleRead(_ parts: SystemRefreshParts, after delay: TimeInterval = 0.04) {
         guard running else { return }
+        var parts = parts
+        if !bluetoothEnabled { parts.remove(.bluetooth) }
+        if !focusEnabled { parts.remove(.focus) }
+        guard !parts.isEmpty else { return }
         pendingParts.formUnion(parts)
         guard refreshWork == nil else { return }
         let currentGeneration = generation
@@ -453,14 +507,16 @@ final class SystemController: NSObject, ObservableObject {
         }
         if parts.contains(.battery) { readBattery(into: &next) }
         if parts.contains(.brightness), systemAwake, screensAwake { readBrightness(into: &next) }
-        if parts.contains(.bluetooth) { readBluetooth(into: &next) }
-        if parts.contains(.focus) { readFocus(into: &next) }
+        if bluetoothEnabled, parts.contains(.bluetooth) { readBluetooth(into: &next) }
+        if focusEnabled, parts.contains(.focus) { readFocus(into: &next) }
         if parts.contains(.lock) { readLock(into: &next) }
-        if !next.bluetoothAvailable {
-            next.bluetoothDevices = next.audioOutputIsBluetooth && !next.outputDevice.isEmpty ? [next.outputDevice] : []
-        } else if next.audioOutputIsBluetooth, !next.outputDevice.isEmpty, !next.bluetoothDevices.contains(next.outputDevice) {
-            next.bluetoothDevices.append(next.outputDevice)
-            next.bluetoothDevices.sort { $0.localizedStandardCompare($1) == .orderedAscending }
+        if bluetoothEnabled {
+            if !next.bluetoothAvailable {
+                next.bluetoothDevices = next.audioOutputIsBluetooth && !next.outputDevice.isEmpty ? [next.outputDevice] : []
+            } else if next.audioOutputIsBluetooth, !next.outputDevice.isEmpty, !next.bluetoothDevices.contains(next.outputDevice) {
+                next.bluetoothDevices.append(next.outputDevice)
+                next.bluetoothDevices.sort { $0.localizedStandardCompare($1) == .orderedAscending }
+            }
         }
         if next != state { state = next }
         if outputDevices != next.outputDevices { outputDevices = next.outputDevices }
@@ -1040,6 +1096,7 @@ final class SystemController: NSObject, ObservableObject {
     // MARK: Bluetooth (authorized passive connections and driver battery reports)
 
     private func readBluetooth(into next: inout SystemState) {
+        guard running, bluetoothEnabled else { return }
         let start = beginReadEvidence("bluetooth")
         defer { finishReadEvidence("bluetooth", since: start) }
         let authorization = CBManager.authorization
@@ -1064,7 +1121,7 @@ final class SystemController: NSObject, ObservableObject {
             return
         }
         if bluetoothObserver == nil {
-            let observer = SystemBluetoothObserver(owner: self, generation: generation)
+            let observer = SystemBluetoothObserver(owner: self, generation: bluetoothGeneration)
             bluetoothObserver = observer
             observations.bluetoothConnect = IOBluetoothDevice.register(forConnectNotifications: observer, selector: #selector(SystemBluetoothObserver.connected(_:device:)))
             bluetoothNeedsPolling = observations.bluetoothConnect == nil
@@ -1097,7 +1154,7 @@ final class SystemController: NSObject, ObservableObject {
         next.accessoryBatteries = []
         // IORegistry access is public, but these optional driver property names
         // are not a stable SDK contract. Honor the private integrations switch.
-        guard privateAPIs else {
+        guard bluetoothEnabled, privateAPIs else {
             next.capabilityMessages["accessoryBattery"] = "Driver accessory battery reporting requires the private integrations setting."
             return
         }
@@ -1185,7 +1242,8 @@ final class SystemController: NSObject, ObservableObject {
     }
 
     fileprivate func bluetoothPermissionChanged(_ manager: CBCentralManager, generation: Int) {
-        guard running, self.generation == generation, bluetoothAccessRequest?.manager === manager else { return }
+        guard running, bluetoothEnabled, self.bluetoothGeneration == generation,
+              bluetoothAccessRequest?.manager === manager else { return }
         guard CBManager.authorization != .notDetermined else {
             if manager.state == .unsupported {
                 bluetoothAccessRequest = nil
@@ -1201,7 +1259,8 @@ final class SystemController: NSObject, ObservableObject {
     }
 
     fileprivate func bluetoothChanged(_ device: IOBluetoothDevice, connected: Bool, generation: Int) {
-        guard running, self.generation == generation else { return }
+        // Reject retired/off-reader callbacks before touching any device property.
+        guard running, bluetoothEnabled, self.bluetoothGeneration == generation else { return }
         let identifier = device.addressString ?? device.nameOrAddress ?? ""
         if connected, !identifier.isEmpty { observations.bluetoothConnectedDevices[identifier] = device }
         else { observations.bluetoothConnectedDevices.removeValue(forKey: identifier) }
@@ -1211,6 +1270,7 @@ final class SystemController: NSObject, ObservableObject {
     // MARK: Public read-only Focus status
 
     private func readFocus(into next: inout SystemState) {
+        guard running, focusEnabled else { return }
         let start = beginReadEvidence("focus")
         defer { finishReadEvidence("focus", since: start) }
         let center = INFocusStatusCenter.default
@@ -1369,15 +1429,17 @@ final class SystemController: NSObject, ObservableObject {
                 owner.scheduleRead(.brightness)
             }
         }
-        setTimer("focusBluetooth", interval: 15, needed: state.focusAuthorization == "authorized" || bluetoothNeedsPolling) { owner in
+        setTimer("focusBluetooth", interval: 15,
+                 needed: (focusEnabled && state.focusAuthorization == "authorized") || (bluetoothEnabled && bluetoothNeedsPolling)) { owner in
             var parts: SystemRefreshParts = []
             // Public Focus status has no documented change notification.
-            if owner.state.focusAuthorization == "authorized" { parts.insert(.focus) }
-            if owner.bluetoothNeedsPolling { parts.insert(.bluetooth) }
+            if owner.focusEnabled, owner.state.focusAuthorization == "authorized" { parts.insert(.focus) }
+            if owner.bluetoothEnabled, owner.bluetoothNeedsPolling { parts.insert(.bluetooth) }
             if !parts.isEmpty { owner.scheduleRead(parts) }
         }
-        setTimer("accessoryBattery", interval: 30, needed: privateAPIs && state.bluetoothAvailable && !connectedBluetooth.isEmpty) { owner in
-            if owner.screensAwake { owner.scheduleRead(.bluetooth) }
+        setTimer("accessoryBattery", interval: 30,
+                 needed: bluetoothEnabled && privateAPIs && state.bluetoothAvailable && !connectedBluetooth.isEmpty) { owner in
+            if owner.bluetoothEnabled, owner.screensAwake { owner.scheduleRead(.bluetooth) }
         }
         setTimer("audio", interval: 3, needed: audioSystemNeedsPolling || audioDeviceNeedsPolling || outputDevicesNeedPolling || outputListenersNeedPolling) { owner in
             owner.scheduleRead(.audio)
@@ -1445,7 +1507,7 @@ private final class SystemBluetoothObserver: NSObject {
 }
 
 /// Allocated only by requestBluetoothAccess(), retained until a decision, and
-/// released on stop. It requests authorization without scanning or connecting.
+/// released on stop or Bluetooth opt-out. It requests authorization without scanning or connecting.
 private final class SystemBluetoothAccessRequest: NSObject, CBCentralManagerDelegate {
     weak var owner: SystemController?
     private let generation: Int

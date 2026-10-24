@@ -429,7 +429,8 @@ final class CoveStore: ObservableObject {
         activities.preferredCalendarApp = preferences.preferredCalendarApp
         activities.setCalendarEnabled(preferences.enableCalendar)
         if preferences.enableMedia { media.start(privateAPIs: preferences.enablePrivateAPIs, appleScript: preferences.allowAppleScript) }
-        system.start(privateAPIs: preferences.enablePrivateAPIs)
+        system.start(privateAPIs: preferences.enablePrivateAPIs,
+                     enableBluetooth: preferences.enableBluetooth, enableFocus: preferences.enableFocus)
         reconcileCalendarPrivacy()
         activities.start()
         if preferences.enableCalendar { travel.start() }
@@ -727,8 +728,11 @@ final class CoveStore: ObservableObject {
         let previous = appliedPreferences
         lastError = nil
         if started {
-            if preferences.enablePrivateAPIs != previous.enablePrivateAPIs {
-                system.stop(); system.start(privateAPIs: preferences.enablePrivateAPIs)
+            if preferences.enablePrivateAPIs != previous.enablePrivateAPIs
+                || preferences.enableBluetooth != previous.enableBluetooth
+                || preferences.enableFocus != previous.enableFocus {
+                system.start(privateAPIs: preferences.enablePrivateAPIs,
+                             enableBluetooth: preferences.enableBluetooth, enableFocus: preferences.enableFocus)
             }
             if preferences.enablePrivateAPIs != previous.enablePrivateAPIs || preferences.allowAppleScript != previous.allowAppleScript || preferences.enableMedia != previous.enableMedia {
                 media.stop()
