@@ -2,6 +2,12 @@
 
 Verify through the real built app, authenticated HTTP API, checked-in CLI, and native offscreen renderer. The project does not use unit tests, isolated-function checks, or mocked services for this workflow. Run from the repository root with the toolchain in [building](building.md).
 
+## Mission Control presentation
+
+The local `hideInMissionControl` choice defaults to false. Ordinary notch panels use AppKit's [`stationary`](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/stationary) behavior when off and [`transient`](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/transient) when on. AppKit documents that transient windows hide in Mission Control. The choice updates existing panels and applies to newly created panels. Other panel behaviors and the lock-screen controller stay unchanged. It adds no Mission Control observer, polling, permission, private API or cloud setting.
+
+Verify off/on/off through the real preferences command and inspect `nativeWindows[].missionControlPolicy` for the mounted notch panels. Verify persistence across restart and rejection of a non-Boolean value. These observations establish the app's actual window policy, not physical Mission Control visibility. Native toggle input, Mission Control entry/exit, Spaces, full-screen transitions and multiple displays remain separate acceptance gates.
+
 ## Build an isolated bundle
 
 ```sh
