@@ -15,7 +15,8 @@ struct CovePreferences: Codable, Equatable {
         // New integrations require an explicit saved choice in a legacy document.
         let consentFields: Set<String> = ["enablePrivateAPIs", "enableCalendar", "allowAppleScript", "mirrorSystemNotifications",
                                           "showLiveWaveform", "replaceSystemHUDs", "enableBetterDisplayFeedback", "showOnLockScreen",
-                                          "showLockScreenPrivateContent", "enableWeather", "launchAtLogin", "syncSettingsWithiCloud"]
+                                          "showLockScreenPrivateContent", "enableWeather", "launchAtLogin", "syncSettingsWithiCloud",
+                                          "hideForGamesCategory"]
         var repairs: [String] = []
         for key in Array(defaults.keys) {
             guard let value = saved[key] else {
@@ -188,6 +189,8 @@ struct CovePreferences: Codable, Equatable {
     var hideInMissionControl = false
     // Local presentation choice; never starts a media reader.
     var hideWhenMediaAppActive = false
+    // Opt-in bundle-category reading. Device-local, outside cloud settings.
+    var hideForGamesCategory = false
     var launchAtLogin = false
     // Per-device consent. Never included in CoveSyncedSettings.
     var syncSettingsWithiCloud = false

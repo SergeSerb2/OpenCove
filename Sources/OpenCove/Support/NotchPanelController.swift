@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import CoreGraphics
+import Darwin
 import QuartzCore
 import SwiftUI
 
@@ -25,6 +26,8 @@ final class NotchPanelController: NSObject {
     private var mediaPopoverDepth = 0
     private var lifecycleRevision: UInt = 0
     private var acceptingMiddleClick = false
+    // Only the current activation's result is retained. No app identity is saved.
+    private var frontmostDeclaresGames = false
     struct InputAcceptanceError: LocalizedError {
         let message: String
         var errorDescription: String? { message }
@@ -79,6 +82,66 @@ final class NotchPanelController: NSObject {
         return application.bundleIdentifier == source
     }
 
+    /// Cached declared-category policy only. Temporary HUDs keep their existing
+    /// priority and deadlines. This is neither Game Mode nor actual-play detection.
+    var hidesForDeclaredGameCategory: Bool {
+        started && !screensAsleep && sessionActive && !store.system.state.isLocked
+            && store.preferences.hideForGamesCategory && frontmostDeclaresGames && store.hud == nil
+    }
+
+    private func refreshDeclaredGameCategory(enabled: Bool) {
+        frontmostDeclaresGames = false
+        // An off/on/off sequence can retire surfaces while ending with the same
+        // preferences. Force the pending layout to restore that original state.
+        lastLayoutInputs = nil
+        // Opt-out must return before obtaining any frontmost bundle metadata.
+        guard started, enabled, let application = NSWorkspace.shared.frontmostApplication,
+              application.isActive, !application.isTerminated,
+              application.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              let bundleURL = application.bundleURL, bundleURL.isFileURL else { return }
+        frontmostDeclaresGames = Self.declaresGames(in: bundleURL)
+        if frontmostDeclaresGames, store.hud == nil {
+            // Also retire synchronously for an incoming opt-in, before @Published
+            // commits the preference and the coalesced layout job runs.
+            hideForSessionBoundary()
+        }
+    }
+
+    /// Exact public LSApplicationCategoryType values from Apple's Launch Services
+    /// Keys reference, tables 2 and 3. Unknown declarations never match.
+    private static let declaredGameCategories: Set<String> = [
+        "public.app-category.games", "public.app-category.action-games",
+        "public.app-category.adventure-games", "public.app-category.arcade-games",
+        "public.app-category.board-games", "public.app-category.card-games",
+        "public.app-category.casino-games", "public.app-category.dice-games",
+        "public.app-category.educational-games", "public.app-category.family-games",
+        "public.app-category.kids-games", "public.app-category.music-games",
+        "public.app-category.puzzle-games", "public.app-category.racing-games",
+        "public.app-category.role-playing-games", "public.app-category.simulation-games",
+        "public.app-category.sports-games", "public.app-category.strategy-games",
+        "public.app-category.trivia-games", "public.app-category.word-games"
+    ]
+
+    private static func declaresGames(in frontmostBundleURL: URL) -> Bool {
+        // Read only the supplied app's standard macOS plist. Do not use Bundle's
+        // metadata loader, enumerate files, or follow an Info.plist symlink.
+        let url = frontmostBundleURL.appendingPathComponent("Contents/Info.plist")
+        let descriptor = open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        guard descriptor >= 0 else { return false }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var status = stat()
+        let limit: off_t = 256 * 1024
+        guard fstat(descriptor, &status) == 0, status.st_mode & S_IFMT == S_IFREG,
+              status.st_size > 0, status.st_size <= limit,
+              let data = try? handle.read(upToCount: Int(status.st_size)),
+              data.count == Int(status.st_size),
+              let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let values = plist as? [String: Any],
+              let category = values["LSApplicationCategoryType"] as? String else { return false }
+        return declaredGameCategories.contains(category)
+    }
+
     init(store: CoveStore) {
         self.store = store
         super.init()
@@ -125,6 +188,9 @@ final class NotchPanelController: NSObject {
         // job runs. Elapsed/artwork updates are excluded; any renewed target
         // (including a controller identity change on metadata) still cancels.
         store.objectWillChange.sink { [weak self] _ in self?.cancelMediaSwipes() }.store(in: &subscriptions)
+        store.$preferences.map(\.hideForGamesCategory).removeDuplicates().dropFirst()
+            .sink { [weak self] enabled in self?.refreshDeclaredGameCategory(enabled: enabled) }
+            .store(in: &subscriptions)
         observeMediaSwipeActivityChanges()
         store.media.$state.map { CoveMediaSkipItem($0) }.removeDuplicates().dropFirst()
             .sink { [weak self] _ in self?.cancelMediaSwipes() }.store(in: &subscriptions)
@@ -160,7 +226,10 @@ final class NotchPanelController: NSObject {
         }
         let workspace = NSWorkspace.shared.notificationCenter
         observe(NSWorkspace.activeSpaceDidChangeNotification, center: workspace) { $0.refreshLayout() }
-        observe(NSWorkspace.didActivateApplicationNotification, center: workspace) { $0.refreshLayout() }
+        observe(NSWorkspace.didActivateApplicationNotification, center: workspace) { controller in
+            controller.refreshDeclaredGameCategory(enabled: controller.store.preferences.hideForGamesCategory)
+            controller.refreshLayout()
+        }
         observe(NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, center: workspace) { $0.refreshLayout() }
         for name in [NSWorkspace.screensDidSleepNotification, NSWorkspace.willSleepNotification] {
             observe(name, center: workspace) { controller in
@@ -182,6 +251,7 @@ final class NotchPanelController: NSObject {
                 controller.refreshLayout()
             }
         }
+        refreshDeclaredGameCategory(enabled: store.preferences.hideForGamesCategory)
         refreshLayout()
     }
 
@@ -201,6 +271,7 @@ final class NotchPanelController: NSObject {
         hoveredDisplays.removeAll()
         lastPreferences = nil
         lastLayoutInputs = nil
+        frontmostDeclaresGames = false
         mediaMenuTrackingDepth = 0
         mediaPopoverDepth = 0
     }
@@ -222,9 +293,9 @@ final class NotchPanelController: NSObject {
             return
         }
 
-        if hidesForActiveMediaSource {
+        if hidesForActiveMediaSource || hidesForDeclaredGameCategory {
             // Retire input, hover work and mounted media regions together. Keep
-            // the logical expanded/section state so leaving the source restores it.
+            // the logical expanded/section state so leaving the app restores it.
             hideForSessionBoundary()
             return
         }
