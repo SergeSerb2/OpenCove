@@ -15,6 +15,7 @@ struct SettingsView: View {
     @ObservedObject private var waveform: AudioWaveformController
     @ObservedObject private var system: SystemController
     @ObservedObject private var hardwareKeys: HardwareKeyController
+    @ObservedObject private var settingsSync: CoveSettingsSyncController
     @StateObject private var permissions = CovePermissionAccess()
     @State private var selection: CoveSettingsPage? = .general
     @State private var showsResetConfirmation = false
@@ -32,6 +33,7 @@ struct SettingsView: View {
         self.waveform = store.waveform
         self.system = store.system
         self.hardwareKeys = store.hardwareKeys
+        self.settingsSync = store.settingsSync
     }
 
     var body: some View {
@@ -178,6 +180,27 @@ struct SettingsView: View {
                     Text(store.preferences.completedOnboarding ? "Completed" : "Not completed")
                         .foregroundStyle(.secondary)
                     Button("Show Setup…") { showsOnboarding = true }
+                }
+            }
+
+            Section("iCloud settings") {
+                Toggle("Sync settings with iCloud on this Mac", isOn: preference(\.syncSettingsWithiCloud))
+                LabeledContent("Status", value: settingsSync.status)
+                CoveSettingsNote(settingsSync.detail)
+                CoveSettingsNote("Shares appearance, interaction, media presentation, and alert timing. Display selection, app access, permissions, files, calendar data, and other device choices stay local. Enable this separately on each Mac.")
+                if settingsSync.canChooseLocal {
+                    HStack {
+                        if settingsSync.canChooseCloud {
+                            Button("Use iCloud Settings") { settingsSync.useCloudSettings() }
+                        }
+                        Button("Use This Mac's Settings") { settingsSync.useThisMacSettings() }
+                    }
+                    CoveSettingsNote("Using this Mac's settings replaces the shared snapshot. Using iCloud settings replaces only the shared appearance and behavior settings on this Mac.")
+                }
+                if settingsSync.canCheck {
+                    Button("Check for Changes") { settingsSync.checkForChanges() }
+                } else if settingsSync.canReconnect {
+                    Button("Reconnect to iCloud") { settingsSync.reconnect() }
                 }
             }
 

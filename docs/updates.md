@@ -98,6 +98,13 @@ Events entitlement. Library validation is not disabled. `--deep` is used only to
 verify signatures, never to sign. See Sparkle's
 [manual signing instructions](https://sparkle-project.org/documentation/sandboxing/#code-signing).
 
+The [optional Developer ID KVS path](developer-id-kvs.md) embeds its caller-supplied
+profile only in the host before final host signing. It never adds that profile
+or the host's KVS, App ID, team, or automation claims to Sparkle helpers. Default
+packages keep the existing host entitlement set. The optional path also requires
+system provisioning checks on the staged and extracted app; it does not change
+Sparkle's update trust, consent, source provenance, or publication procedure.
+
 The ZIP writer preserves framework links as Unix symlinks. The validator permits
 only relative links contained within Sparkle.framework and rejects source ZIP
 symlinks, archive traversal, links with children, escaping targets, and missing

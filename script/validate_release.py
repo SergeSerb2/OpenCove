@@ -15,6 +15,9 @@ import tempfile
 import zipfile
 from urllib.parse import urlsplit
 
+sys.dont_write_bytecode = True
+import provisioning_profile as provisioning
+
 ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY = "https://github.com/SergeSerb2/OpenCove"
 ARCHITECTURES = {"arm64": {"arm64"}, "x86_64": {"x86_64"}, "universal2": {"arm64", "x86_64"}}
@@ -22,11 +25,11 @@ ROOT_FILES = {"README.md", "LICENSE", "Package.swift", ".gitignore", "version.js
               "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "CHANGELOG.md"}
 SCRIPT_FILES = {"build_and_run.sh", "make_icon.swift", "OpenCoveMediaAdapter.swift", "OpenCoveMediaAdapter.js",
                 "MediaFixture.swift", "opencovectl", "smoke.py", "verify_control.py",
-                "package_release.py", "validate_release.py", "signing_info.swift", "control_e2e.py", "runtime_e2e.py"}
+                "package_release.py", "validate_release.py", "signing_info.swift", "provisioning_profile.py", "control_e2e.py", "runtime_e2e.py"}
 DOC_FILES = {"building.md", "releasing.md", "privacy.md", "compatibility.md", "architecture.md",
              "calendar.md", "travel-alerts.md", "hardware-huds.md", "notification-mirroring.md",
              "quality.md", "updates.md", "Sparkle-LICENSE.txt", "update-hosting.md", "audio-monitoring.md",
-             "download-page-handoff.md", "calendar-readability.md"}
+             "download-page-handoff.md", "calendar-readability.md", "icloud-settings.md", "developer-id-kvs.md"}
 DEPLOY_FILES = {"infra/updates/worker.mjs", "infra/updates/wrangler.jsonc", "infra/updates/.gitignore"}
 REQUIRED = ROOT_FILES | {"script/" + name for name in SCRIPT_FILES - {"control_e2e.py"}} | {
     "docs/" + name for name in ("building.md", "releasing.md", "privacy.md", "compatibility.md", "quality.md")
@@ -320,15 +323,24 @@ def source_manifest(allow_dirty=False):
             "dirty": bool(status), "treeSHA256": tree, "files": entries, "dependencies": [sdk]}
 
 
-def bundle(app, arch, variant, signing, notarized=False, expected_version=None, source_root=None):
+def bundle(app, arch, variant, signing, notarized=False, expected_version=None, source_root=None, kvs_identifier=None):
     source_root = source_root or ROOT
     require(arch in ARCHITECTURES, "Unsupported architecture.")
     require(signing in {"adhoc", "developer-id"}, "Unsupported signing mode.")
     keychain = signing_keychain()
     require(signing == "developer-id" or keychain is None, "Ad-hoc verification rejects an ambient OPENCOVE_SIGN_KEYCHAIN.")
     require(not notarized or signing == "developer-id", "Notarization requires Developer ID signing.")
+    require(kvs_identifier is None or (signing == "developer-id" and variant == "release" and notarized),
+            "KVS validation requires an explicitly notarized Developer ID release bundle.")
+    if kvs_identifier is not None:
+        provisioning.resolved_kvs(kvs_identifier)
     require(app.is_dir() and not app.is_symlink(), "App bundle is missing or is a symlink.")
     contained_bundle_links(app)
+    embedded = app.resolve() / "Contents/embedded.provisionprofile"
+    profile_paths = {path for path in app.resolve().rglob("*") if path.suffix in {".provisionprofile", ".mobileprovision"}}
+    require(profile_paths == ({embedded} if kvs_identifier is not None else set()),
+            "Only the optional KVS host may contain its one embedded provisioning profile; helpers must not contain profiles.")
+    profile = provisioning.inspect_profile(provisioning.read_profile(embedded), kvs_identifier) if kvs_identifier is not None else None
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     update_info(info, variant)
     value = expected_version or version(source_root / "version.json")
@@ -373,7 +385,16 @@ def bundle(app, arch, variant, signing, notarized=False, expected_version=None, 
                     "Expected hardened runtime and a secure signing timestamp.")
             require(isinstance(item["teamIdentifier"], str) and re.fullmatch(r"[A-Z0-9]{10}", item["teamIdentifier"]) is not None,
                     "Developer ID team is missing.")
-            require(item["automationEntitlementOnly"] is True, "Unexpected hardened runtime entitlements.")
+            if profile is None:
+                require(item["automationEntitlementOnly"] is True, "Unexpected hardened runtime entitlements.")
+            else:
+                expected = profile["entitlements"]
+                require(item["kvsEntitlementsOnly"] is True and item["teamIdentifier"] == expected[provisioning.TEAM] and
+                        item["entitlementTeamIdentifier"] == expected[provisioning.TEAM] and
+                        item["applicationIdentifier"] == expected[provisioning.APP_ID] and
+                        item["kvsIdentifier"] == expected[provisioning.KVS], "Main-app KVS entitlements differ from the narrow profile contract.")
+                certificate = base64.b64decode(item["leafCertificate"], validate=True)
+                provisioning.require_certificate(profile, certificate)
     if signing == "developer-id":
         require(len({item["teamIdentifier"] for item in slices}) == 1, "Architecture signing teams differ.")
     team = slices[0]["teamIdentifier"]
@@ -392,6 +413,10 @@ def bundle(app, arch, variant, signing, notarized=False, expected_version=None, 
     if notarized:
         run(["xcrun", "stapler", "validate", app])
         run(["spctl", "--assess", "--type", "execute", "--verbose=2", app])
+    if profile is not None:
+        # Require the documented system provisioning checks as well. Neither
+        # these plist matches nor this result proves exact CMS/DER semantics.
+        provisioning.check_distribution(app.resolve())
     return info
 
 
@@ -467,7 +492,15 @@ def artifacts(directory):
         require({p.name for p in (scratch / "source").iterdir()} == {source_base}, "Unexpected source ZIP root.")
         manifest = json.loads((source / "SOURCE_MANIFEST.json").read_text())
         require(manifest.get("dependencies") == [dependency(source)], "Source ZIP dependency identity is missing or stale.")
-        info = bundle(app, arch, "release", signing, metadata["notarized"], metadata["version"], source_root=source)
+        profile_metadata = metadata.get("provisioning")
+        require("provisioning" not in metadata or isinstance(profile_metadata, dict), "Invalid provisioning metadata.")
+        kvs_identifier = profile_metadata.get("kvsIdentifier") if profile_metadata is not None else None
+        require(profile_metadata is None or kvs_identifier is not None, "Provisioning metadata needs a resolved KVS identifier.")
+        info = bundle(app, arch, "release", signing, metadata["notarized"], metadata["version"], source_root=source, kvs_identifier=kvs_identifier)
+        if profile_metadata is not None:
+            embedded = app.resolve() / "Contents/embedded.provisionprofile"
+            require(provisioning.inspect_profile(provisioning.read_profile(embedded), kvs_identifier)["metadata"] == profile_metadata,
+                    "Extracted profile differs from the release provisioning manifest.")
         require(metadata.get("updater") == {k: v for k, v in info.items() if k in {
             "OpenCoveUpdaterMode", "SUFeedURL", "SUPublicEDKey", "SUVerifyUpdateBeforeExtraction"}}, "Release metadata and bundle updater policy differ.")
         require(manifest == json.loads((app / "Contents/Resources/SOURCE_MANIFEST.json").read_text()) == metadata["source"], "App/source/release manifests differ.")
@@ -498,6 +531,7 @@ def main():
     app.add_argument("--variant", choices=["development", "release"], default="release")
     app.add_argument("--signing", choices=["adhoc", "developer-id"], default="adhoc")
     app.add_argument("--notarized", action="store_true")
+    app.add_argument("--kvs-identifier", help="Explicit resolved KVS identifier; requires the embedded profile and --notarized")
     archive = commands.add_parser("artifacts")
     archive.add_argument("directory", type=Path)
     args = parser.parse_args()
@@ -507,7 +541,7 @@ def main():
         manifest = source_manifest(args.allow_dirty)
         print(f"Public source: {len(manifest['files'])} files; dirty={manifest['dirty']}; SHA-256 {manifest['treeSHA256']}")
     elif args.command == "bundle":
-        bundle(args.app, args.arch, args.variant, args.signing, args.notarized)
+        bundle(args.app, args.arch, args.variant, args.signing, args.notarized, kvs_identifier=args.kvs_identifier)
         print("Bundle structure, source notices, architecture, version, and signature verified.")
     else:
         artifacts(args.directory)

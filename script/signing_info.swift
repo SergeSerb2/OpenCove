@@ -48,6 +48,22 @@ do {
         let exactEntitlement = entitlements.count == 1 && automation.map {
             CFGetTypeID($0) == CFBooleanGetTypeID() && $0.boolValue
         } == true
+        let kvs = entitlements["com.apple.developer.ubiquity-kvstore-identifier"] as? String
+        let appID = entitlements["com.apple.application-identifier"] as? String
+        let entitlementTeam = entitlements["com.apple.developer.team-identifier"] as? String
+        let kvsKeys: Set<String> = ["com.apple.security.automation.apple-events",
+            "com.apple.developer.ubiquity-kvstore-identifier", "com.apple.application-identifier",
+            "com.apple.developer.team-identifier"]
+        let identifierPattern = "\\A[A-Z0-9]{10}\\.org\\.opencove\\.OpenCove\\z"
+        let kvsEntitlementsOnly = Set(entitlements.keys) == kvsKeys && automation.map {
+            CFGetTypeID($0) == CFBooleanGetTypeID() && $0.boolValue
+        } == true && entitlementTeam == team && team != nil &&
+            kvs?.range(of: identifierPattern, options: .regularExpression) != nil &&
+            appID?.range(of: identifierPattern, options: .regularExpression) != nil
+        // Security.framework supplies the certificate bound to this slice's
+        // verified signature. Never infer it from a display name or profile.
+        let certificates = info[kSecCodeInfoCertificates as String] as? [SecCertificate]
+        let leafCertificate = certificates?.first.map { (SecCertificateCopyData($0) as Data).base64EncodedString() }
         // The only upstream helper that can need entitlements is Downloader.
         // Never accept debugging or disabled library-validation entitlements.
         let downloaderKeys: Set<String> = ["com.apple.security.app-sandbox", "com.apple.security.network.client"]
@@ -66,6 +82,11 @@ do {
             "teamIdentifier": team as Any? ?? NSNull(),
             "secureTimestamp": timestamp as Any? ?? NSNull(),
             "automationEntitlementOnly": exactEntitlement,
+            "kvsEntitlementsOnly": kvsEntitlementsOnly,
+            "kvsIdentifier": kvs as Any? ?? NSNull(),
+            "applicationIdentifier": appID as Any? ?? NSNull(),
+            "entitlementTeamIdentifier": entitlementTeam as Any? ?? NSNull(),
+            "leafCertificate": leafCertificate as Any? ?? NSNull(),
             "safeSparkleEntitlements": safeSparkleEntitlements,
         ])
     }

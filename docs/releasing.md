@@ -71,14 +71,22 @@ not applied to `codesign --verify`. A signature remains portable to machines
 without the signing keychain. The notary-profile path is unchanged and independent
 of this signing-keychain option.
 
-This enables hardened runtime and a secure signing timestamp. The only added entitlement is `com.apple.security.automation.apple-events`, for the optional Music/Spotify Apple Events path. There is no App Sandbox, `get-task-allow`, disabled library validation, or blanket entitlement inheritance. Do not add exceptions without a demonstrated feature need and revalidation.
+This enables hardened runtime and a secure signing timestamp. By default, the only added entitlement is `com.apple.security.automation.apple-events`, for the optional Music/Spotify Apple Events path. There is no App Sandbox, `get-task-allow`, disabled library validation, or blanket entitlement inheritance. Do not add exceptions without a demonstrated feature need and revalidation.
+
+The separate [optional Developer ID KVS contract](developer-id-kvs.md) accepts an
+external Apple-issued provisioning profile and an authorized full KVS identifier
+as a paired, explicit input. It requires explicit notarization and final system
+distribution checks. It binds the selected certificate to the profile before
+build or signing, then rechecks each signed architecture. No profile or KVS claim
+is added to the default path. The draft has only static validation; real assets,
+exact CMS/DER authentication guarantees, and two-Mac proof remain open.
 
 Sparkle's nested helpers and framework are signed individually from the inside
 out before the host. Its optional Downloader entitlements are preserved and
 checked separately. The host entitlement above is not copied to helpers. See
 [the framework and appcast workflow](updates.md) before shipping updates.
 
-Validation checks each Mach-O architecture through the Security framework. An Apple certificate requirement verifies the Developer ID Application certificate class and binds its team to the signed team identifier. Structured fields must show hardened runtime, a timestamp authority's signing timestamp, the same team across slices, and exactly the entitlement above. Human-readable `codesign` diagnostics are not signing evidence. The helper requires the selected Xcode Swift toolchain even for a standalone bundle check.
+Validation checks each Mach-O architecture through the Security framework. An Apple certificate requirement verifies the Developer ID Application certificate class and binds its team to the signed team identifier. Structured fields must show hardened runtime, a timestamp authority's signing timestamp, the same team across slices, and exactly the default entitlement above, or the explicit four-entitlement KVS contract with its certificate-bound embedded profile and required system distribution checks. Human-readable `codesign` diagnostics are not signing evidence. The helper requires the selected Xcode Swift toolchain even for a standalone bundle check.
 
 Signing alone does not notarize. Following [Apple's notary workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow), store credentials privately with `xcrun notarytool store-credentials`. Never put the credential value in a command in shared logs, CI, or a public issue. Then opt in to the Apple upload:
 
