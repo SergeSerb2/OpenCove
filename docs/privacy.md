@@ -30,6 +30,43 @@ Choosing an individual display saves its system display UUID in preferences. Nam
 
 Disable the related feature and remove its saved origin/location in Settings when available. To remove all local app data, quit OpenCove and remove its own data folder. This also removes saved timers and file references. It does not delete source files, revoke OS permissions, or cancel all OS-managed records. Turn off native notifications and login-item registration in the app before uninstalling if those options were enabled.
 
+## Optional BetterDisplay feedback
+
+**Show BetterDisplay brightness feedback** is off by default. This explicit native
+Settings choice applies only to this Mac and is excluded from iCloud settings.
+Generic preferences cannot enable it. A new grant starts reception only after the
+central preference save succeeds. Turning it off, or disabling the brightness
+category, stops reception and clears the report cache and external HUD immediately,
+even if saving fails. The settings error then explains if an old saved choice may
+return after restart. Missing/malformed fields and repaired documents do not grant
+this reader. Lock-widget consent remains separate.
+
+When enabled for one explicitly selected, unique external display, OpenCove listens
+for public local Foundation BetterDisplay `.osd`, `.launched` and `.terminated`
+notifications. It does not discover, launch or configure BetterDisplay, send any
+notification/request, invoke its CLI, contact a network service, read/write display
+hardware, request permission or take ownership of hardware keys for this feature.
+The user configures dispatch and any duplicate vendor overlays in BetterDisplay.
+
+Any local sender can spoof these notifications. Their JSON object string has a
+fixed 16 KiB bound. OpenCove accepts only the selected presentation display ID,
+`hardwareBrightness` and strictly typed finite in-range numbers. It ignores external
+text, symbols, commands, paths and other presentation instructions. It does not log
+or persist the payload. One in-memory report holds provider, UUID/current-ID/
+generation identity, control target, fraction and monotonic receipt time. The
+5-second receipt limit is a local eligibility rule, not a physical freshness or
+sender-authentication guarantee. Reports contain no source timestamp, and delivery
+can be delayed or lost.
+
+Selection, display and session changes, sleep, shutdown, stop, opt-out and category
+disable retire cached data and external presentation. Orderly provider termination
+also retires it; silent termination is not detectable. Hidden overlay labels pause
+reception so external values retain visible source attribution. These HUDs and the
+separate cache-only BetterDisplay preview never produce haptics. Native brightness
+state, setters, permission gates, key ownership and the ordinary native preview keep
+their existing paths. Physical readings, completed changes, installed-vendor positive
+acceptance and runtime privacy behavior remain unverified; see [acceptance limits](hardware-huds.md#betterdisplay-acceptance--unverified).
+
 ## Network and external services
 
 - **Weather:** When enabled with a selected location, OpenCove sends latitude and longitude to `api.open-meteo.com` for current conditions and hourly/daily forecasts in one request. It can refresh about every 15 minutes. The provider also sees normal network metadata, including your IP address. Weather data is credited to [Open-Meteo](https://open-meteo.com/) under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The [free-service terms](https://open-meteo.com/en/terms) permit non-commercial use and set request limits; they apply separately from the data license and the app's MIT license. Commercial use needs a separately arranged provider service; OpenCove currently uses the free endpoint. No weather dataset is bundled.

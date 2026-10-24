@@ -14,7 +14,7 @@ struct CovePreferences: Codable, Equatable {
         }
         // New integrations require an explicit saved choice in a legacy document.
         let consentFields: Set<String> = ["enablePrivateAPIs", "enableCalendar", "allowAppleScript", "mirrorSystemNotifications",
-                                          "showLiveWaveform", "replaceSystemHUDs", "showOnLockScreen",
+                                          "showLiveWaveform", "replaceSystemHUDs", "enableBetterDisplayFeedback", "showOnLockScreen",
                                           "showLockScreenPrivateContent", "enableWeather", "launchAtLogin", "syncSettingsWithiCloud"]
         var repairs: [String] = []
         for key in Array(defaults.keys) {
@@ -49,6 +49,9 @@ struct CovePreferences: Codable, Equatable {
             }
         }
         var result = try JSONDecoder().decode(Self.self, from: JSONSerialization.data(withJSONObject: defaults))
+        // File recovery and the central store transaction own revocation. Keep
+        // normalize() compatible with the generic API's existing range check.
+        if !result.enableBrightnessHUD { result.enableBetterDisplayFeedback = false }
         result.normalize()
         if let normalized = try JSONSerialization.jsonObject(with: JSONEncoder().encode(result)) as? [String: Any] {
             repairs += defaults.keys.filter { key in
@@ -58,6 +61,10 @@ struct CovePreferences: Codable, Equatable {
         }
         // Recovered documents cannot activate extra readers from surviving grants.
         if !repairs.isEmpty {
+            if result.enableBetterDisplayFeedback {
+                result.enableBetterDisplayFeedback = false
+                repairs.append("enableBetterDisplayFeedback")
+            }
             for widget in CoveLockWidget.allCases where result[keyPath: widget.selectionKey] {
                 result[keyPath: widget.selectionKey] = false
                 repairs.append(widget.preferenceName)
@@ -146,6 +153,8 @@ struct CovePreferences: Codable, Equatable {
     var mediaPeekDuration = 3.0
     var enableVolumeHUD = true
     var enableBrightnessHUD = true
+    // Explicit native Settings consent on this Mac; outside CoveSyncedSettings.
+    var enableBetterDisplayFeedback = false
     var enableBattery = true
     var enableBluetooth = true
     var enableCalendar = true

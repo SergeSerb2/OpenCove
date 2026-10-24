@@ -389,6 +389,16 @@ struct SettingsView: View {
                 }
                 Toggle("Volume", isOn: preference(\.enableVolumeHUD))
                 Toggle("Display brightness", isOn: preference(\.enableBrightnessHUD))
+                Toggle("Show BetterDisplay brightness feedback", isOn: Binding(
+                    get: { store.preferences.enableBetterDisplayFeedback },
+                    set: { store.setBetterDisplayFeedback(enabled: $0) }))
+                    .disabled(!store.preferences.enableBrightnessHUD && !store.preferences.enableBetterDisplayFeedback)
+                CoveSettingsNote("Off by default on this Mac; never synced. Receives local, unauthenticated BetterDisplay reports for one explicitly selected, unique external display. Requires overlay labels. Reports do not prove physical brightness or allow OpenCove to control that display.")
+                CoveSettingsNote("BetterDisplay must already be running with Dispatch OSD notifications enabled in its Integration settings. Configure its overlays yourself to avoid duplicates. OpenCove does not launch or configure BetterDisplay, send requests, change brightness, take over keys, request access, or play haptics for these reports.")
+                Text(store.betterDisplayFeedbackStatus).font(.caption).foregroundStyle(.secondary)
+                Button("Preview BetterDisplay feedback") { hudPreviewMessage = store.previewBetterDisplayFeedback() }
+                    .disabled(store.isExpanded || !store.preferences.enableBetterDisplayFeedback)
+                CoveSettingsNote("This separate preview uses only the last eligible cached report. A 5-second receipt limit is an OpenCove policy, not a physical freshness guarantee. Missing data stays unavailable. The ordinary overlay preview keeps its native source.")
                 Toggle("Brightness symbol glow", isOn: preference(\.brightnessHUDGlow))
                     .disabled(!store.preferences.enableBrightnessHUD)
                     .help("Add a soft glow to the sun symbol on display brightness overlays.")
