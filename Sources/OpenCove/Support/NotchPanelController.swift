@@ -21,6 +21,8 @@ final class NotchPanelController: NSObject {
     private var screensAsleep = false
     private var sessionActive = false
     private var menuTrackingDepth = 0
+    private var mediaMenuTrackingDepth = 0
+    private var mediaPopoverDepth = 0
     private var lifecycleRevision: UInt = 0
     private var acceptingMiddleClick = false
     struct InputAcceptanceError: LocalizedError {
@@ -92,6 +94,30 @@ final class NotchPanelController: NSObject {
                 self?.scheduleLayout()
             }.store(in: &subscriptions)
         }
+        // Invalidate on incoming values, including A -> B -> A before a layout
+        // job runs. Elapsed/artwork updates are excluded; any renewed target
+        // (including a controller identity change on metadata) still cancels.
+        for publisher in [store.objectWillChange, store.activities.objectWillChange] {
+            publisher.sink { [weak self] _ in self?.cancelMediaSwipes() }.store(in: &subscriptions)
+        }
+        store.media.$state.map { CoveMediaSkipItem($0) }.removeDuplicates().dropFirst()
+            .sink { [weak self] _ in self?.cancelMediaSwipes() }.store(in: &subscriptions)
+        observe(CoveMediaRegionView.didChange) { $0.cancelMediaSwipes() }
+        for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification,
+                     NSWindow.willBeginSheetNotification, NSControl.textDidBeginEditingNotification,
+                     NSText.didBeginEditingNotification] {
+            observe(name) { $0.cancelMediaSwipes() }
+        }
+        observe(NSMenu.didBeginTrackingNotification) {
+            $0.mediaMenuTrackingDepth += 1
+            $0.cancelMediaSwipes()
+        }
+        observe(NSMenu.didEndTrackingNotification) { $0.mediaMenuTrackingDepth = max(0, $0.mediaMenuTrackingDepth - 1) }
+        observe(NSPopover.willShowNotification) {
+            $0.mediaPopoverDepth += 1
+            $0.cancelMediaSwipes()
+        }
+        observe(NSPopover.didCloseNotification) { $0.mediaPopoverDepth = max(0, $0.mediaPopoverDepth - 1) }
         // Retire private content on the incoming lock value, before @Published
         // commits it or a deferred geometry refresh can run.
         store.system.$state.sink { [weak self] state in
@@ -149,6 +175,8 @@ final class NotchPanelController: NSObject {
         hoveredDisplays.removeAll()
         lastPreferences = nil
         lastLayoutInputs = nil
+        mediaMenuTrackingDepth = 0
+        mediaPopoverDepth = 0
     }
 
     func refreshLayout() {
@@ -255,6 +283,7 @@ final class NotchPanelController: NSObject {
 
     private func retire(_ surface: CovePanelSurface) {
         surface.layoutRevision &+= 1
+        surface.mediaScroll.cancel()
         surface.scroll.reset()
         surface.content.onHover = nil
         surface.panel.onEvent = nil
@@ -404,6 +433,7 @@ final class NotchPanelController: NSObject {
         // A replacement HUD or Reduce Motion can change timing without changing
         // the destination. Retarget active motion only when its duration changes.
         guard surface.targetFrame != frame || (wasAnimating && surface.frameAnimationDuration != duration) else { return }
+        surface.mediaScroll.cancel()
         surface.targetFrame = frame
         surface.hasLayout = true
         surface.layoutRevision &+= 1
@@ -550,9 +580,71 @@ final class NotchPanelController: NSObject {
         collapseTask = nil
     }
 
+    private func cancelMediaSwipes() {
+        for surface in surfaces.values { surface.mediaScroll.cancel() }
+    }
+
+    /// nil leaves the established activity route in charge; false passes the
+    /// event to its real control. A claimed media gesture never becomes a tab
+    /// gesture after cancellation, completion, a pause, or a metadata refresh.
+    private func handleMediaScroll(_ event: NSEvent, surface: CovePanelSurface) -> Bool? {
+        let point = event.locationInWindow
+        let topEdge = point.y >= surface.panel.frame.height - 6
+        let context = CoveMediaSkipContext.current(in: store)
+        let editable = (surface.panel.firstResponder as? NSTextView)?.isEditable == true
+        var control = surface.content.hitTest(surface.content.convert(point, from: nil))
+        var nativeControl = false
+        while let view = control {
+            if view is NSControl || view is NSScrollView || view is NSTextView { nativeControl = true; break }
+            control = view.superview
+        }
+        let blocked = surface.content.hosting.isHidden || surface.frameAnimationInFlight
+            || surface.panel.contentView !== surface.content || surface.panel.attachedSheet != nil
+            || menuTrackingDepth > 0 || mediaMenuTrackingDepth > 0 || mediaPopoverDepth > 0
+            || editable || nativeControl || NSEvent.pressedMouseButtons != 0
+            || event.windowNumber != surface.panel.windowNumber
+            || !surface.content.bounds.contains(point)
+        let region = !blocked && !topEdge ? context.flatMap {
+            CoveMediaRegionView.region(at: point, in: surface.content.hosting, window: surface.panel,
+                                       context: $0, layoutRevision: surface.layoutRevision)
+        } : nil
+        if event.phase.contains(.began), event.momentumPhase.isEmpty {
+            surface.scroll.reset()
+            let route: CoveMediaSkipScroll.Route
+            if !store.preferences.swipeToSkip || topEdge { route = .navigation }
+            else if blocked { route = .passthrough }
+            else if region != nil && CoveMediaSkipScroll.accepts(event) { route = .media }
+            else { route = context == nil ? .navigation : .passthrough }
+            surface.mediaScroll.begin(route: route, region: region, event: event,
+                                      reverse: store.preferences.reverseSkipSwipe)
+        }
+        switch surface.mediaScroll.route {
+        case .media:
+            if let action = surface.mediaScroll.consume(event, region: region,
+                                                       reverse: store.preferences.reverseSkipSwipe) {
+                switch action {
+                case .skip(let forward, let target):
+                    store.media.skip(forward: forward, target: target)
+                case .expand: store.expand()
+                case .collapse: collapseOrDismiss()
+                }
+            }
+            return true
+        case .passthrough: return false
+        case .unstarted: return context != nil && !topEdge ? false : nil
+        case .navigation: return surface.mediaScroll.suppressesNavigation ? true : nil
+        }
+    }
+
     private func handle(_ event: NSEvent, surface: CovePanelSurface) -> Bool {
         guard started, surface.panel.isVisible, !screensAsleep,
-              sessionActive, currentSessionIsActive(), !store.system.state.isLocked else { return false }
+              sessionActive, currentSessionIsActive(), !store.system.state.isLocked else {
+            surface.mediaScroll.cancel()
+            return false
+        }
+        if [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .swipe].contains(event.type) {
+            surface.mediaScroll.cancel()
+        }
         if event.type == .keyDown, event.keyCode == 53 {
             cancelHoverWork()
             store.collapse()
@@ -560,6 +652,14 @@ final class NotchPanelController: NSObject {
             surface.panel.resignKey()
             return true
         }
+        if event.type == .scrollWheel, store.preferences.swipeToSkip || surface.mediaScroll.ownsMediaGesture,
+           let handled = handleMediaScroll(event, surface: surface) { return handled }
+        // A legacy unphased swipe cannot skip, nor fall through to horizontal
+        // activity cycling over media. The reserved top edge remains distinct.
+        if event.type == .swipe, store.preferences.swipeToSkip,
+           CoveMediaSkipContext.current(in: store) != nil,
+           event.locationInWindow.y < surface.panel.frame.height - 6,
+           abs(event.deltaX) > abs(event.deltaY) { return false }
         let inGestureStrip = !store.isExpanded || event.locationInWindow.y >= surface.panel.frame.height - surface.gestureStripHeight
         guard inGestureStrip else { surface.scroll.reset(); return false }
         switch event.type {
@@ -586,6 +686,7 @@ final class NotchPanelController: NSObject {
                 return false
             }
             if let gesture = surface.scroll.consume(event) {
+                if store.preferences.swipeToSkip { surface.mediaScroll.cancel() }
                 switch gesture {
                 case .nextTab: changeTab(forward: true)
                 case .previousTab: changeTab(forward: false)
@@ -781,6 +882,7 @@ private final class CovePanelSurface {
     var frameAnimationDuration: TimeInterval = 0
     var gestureStripHeight: CGFloat = 32
     var scroll = CovePanelScroll()
+    var mediaScroll = CoveMediaSkipScroll()
 
     init(panel: CoveNotchPanel, content: CovePanelTrackingView) {
         self.panel = panel

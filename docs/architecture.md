@@ -9,6 +9,55 @@ neither target enabled, the event does not change selection. Expanded content
 keeps its normal event path. Swipe and scroll navigation retain their existing
 enabled-section order. The handler adds no timer, event tap or global monitor.
 
+General settings also has local `swipeToSkip` and `reverseSkipSwipe` choices.
+Both default to false and stay outside the iCloud allowlist. They use the normal
+preference recovery, normalization, save and error path. With skipping off, the
+existing navigation handler retains its behavior. With it on, the top six points
+of the panel remain an activity-navigation route. A precise, phased horizontal
+scroll gesture can skip over compact media, Quick Peek, expanded media, or the
+media view in Duo. Background AppKit markers measure the mounted media views;
+Duo bounds do not come from a half-width calculation. Current presentation and
+section identities revoke markers in retained outgoing views. Calendar, Files,
+Timer, HUDs, hidden idle content and lock widgets supply no skip region.
+
+The OpenCove thresholds are 28 points horizontally and 20 vertically, with a
+1.25 dominant-axis ratio. These are independent choices, not measured reference
+values. A skip uses leftward device movement for Next and rightward for Previous;
+`isDirectionInvertedFromDevice` removes Natural Scrolling inversion, and the
+optional reverse choice flips skipping only. Activity navigation retains its
+original deltas. Vertical media gestures use the existing expand/collapse or
+compact-dismiss actions. There is no new visual tracking animation. Scrubbers,
+transport buttons, player-opening artwork, menus, output controls and compact
+Calendar/Timer badges have input-exclusion markers. Native controls, editable
+text, scroll views, sheets and open menus/popovers keep their own event paths.
+
+Only a non-momentum `.began` can start a skip interaction. It captures the
+source/item `seekTarget`, direction capabilities, view kind, marker identity and
+revision, window frame and panel layout revision. Incoming item/capability,
+store/activity, lock, session, sleep, presentation, disappearance and geometry
+changes cancel it. Marker ancestry frame/bounds notifications cover geometry
+changes between events. A canceled or completed media interaction remains
+claimed until the next real beginning; pauses, `.mayBegin`, metadata refreshes,
+end events and momentum cannot rearm it or turn it into activity navigation.
+The enabled phased navigation route also latches after one action. Coarse or
+unphased input, momentum and modified input cannot skip. Public `NSEvent` phase
+and precision properties do not establish physical device identity: this filters
+ordinary mouse wheels, but does not prove that every mouse is excluded.
+
+`MediaController.skip(forward:target:)` requires available media, the captured
+target and the actual direction capability. It submits synchronously through
+the existing native bridge after fresh source, item and command checks. Adapter
+metadata can use this entry only when that native bridge independently verifies
+the current item. Otherwise it rejects the skip. No source-only adapter command
+is queued: the existing adapter skip protocol accepts no item identifier. The
+AppleScript queue has item epochs and track checks for item-bound work, but no
+presentation/lifecycle cancellation lease; AppleScript-only swipe skips remain
+unsupported. Existing button transports and seek behavior are unchanged. No new
+private symbol or command option is introduced. These adjacent app-local checks
+do not make the global OS command atomic, and submission does not confirm player
+acceptance. This implementation has static parse and source-review evidence
+only; the parent must verify real native gestures and owned-player behavior.
+
 ## State and service ownership
 
 Overlay timing uses the existing single cancellable dismissal task. Each category can inherit the default duration/appearance animation or override them. A zero category duration and `global` category speed select the defaults. A nonzero duration is 0.5–10 seconds; appearance choices are `smooth`, `fast`, and `instant`. The animation-speed multiplier and Reduce Motion still apply. Opening expanded controls and restoring the underlying activity use normal panel motion. Timing edits apply to the next presentation; repeated events replace the monotonic deadline. No countdown publication, polling schedule, helper, or per-frame task is added.

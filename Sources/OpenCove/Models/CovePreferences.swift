@@ -95,6 +95,9 @@ struct CovePreferences: Codable, Equatable {
     var showLockScreenPrivateContent = false
     var hideWhenIdle = true
     var expandOnHover = true
+    // Per-device gesture choices. Deliberately outside CoveSyncedSettings.
+    var swipeToSkip = false
+    var reverseSkipSwipe = false
     var hoverDelay = 0.25
     var collapseDelay = 0.6
     var notchWidth = 190.0

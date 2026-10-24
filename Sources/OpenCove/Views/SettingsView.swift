@@ -157,6 +157,10 @@ struct SettingsView: View {
                     Text("Media & Calendar").tag("duo")
                 }
                 CoveSettingsNote("Automatic pairs playing media with a current or starting-soon calendar activity. Otherwise it shows Now Playing. Explicit layouts stay selected until you choose another section.")
+                Toggle("Swipe to skip media", isOn: preference(\.swipeToSkip))
+                Toggle("Reverse skip swipe direction", isOn: preference(\.reverseSkipSwipe))
+                    .disabled(!store.preferences.swipeToSkip)
+                CoveSettingsNote("Swipe left over media for Next, or right for Previous. Direction follows device movement regardless of Natural Scrolling. Reverse changes skipping only. The top edge still changes sections. Some players support buttons only. These choices apply to this Mac.")
                 Toggle("Expand on hover", isOn: preference(\.expandOnHover))
                 CovePreferenceSlider(
                     title: "Hover delay", value: preference(\.hoverDelay),
