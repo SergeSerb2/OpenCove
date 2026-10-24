@@ -66,3 +66,28 @@ Build the real app with the checked-in [bundle workflow](building.md). The [inte
 - [AXIsProcessTrustedWithOptions](https://developer.apple.com/documentation/applicationservices/1459186-axisprocesstrustedwithoptions): explicit, asynchronous Accessibility prompt.
 - [CGPreflightListenEventAccess](https://developer.apple.com/documentation/coregraphics/cgpreflightlisteneventaccess()): nonprompting event access check.
 - Installed macOS SDK: `IOKit.framework/Headers/hidsystem/ev_keymap.h` (media codes), `IOLLEvent.h` (system-defined type, subtype, down/up codes), `AppKit.framework/Headers/NSEvent.h`, and `CoreGraphics.framework/Headers/CGEvent.h` (tap lifetime and permission declarations).
+
+
+### Recorded visibility-option acceptance
+
+An optimized arm64 development bundle of `7da217d` passed 22 recorded checks.
+Mounted captures covered all four visual choices for real finite volume and
+battery readings, unavailable brightness and nonnumeric notification previews.
+Continuous and supported simulated-notch center-gap layouts both ran. Across
+live preference edits, the model and original dismissal deadline stayed fixed;
+no second preview was submitted within each matrix. Icon/progress regions and
+center clearance were checked separately from label and percentage pixels.
+
+The actual Activities settings views showed the controls and save/repair/error
+states. Both-false and mixed choices survived process restart. Legacy omissions
+kept both choices on; malformed fields followed the existing repair path. A real
+unwritable destination returned a save error, kept the session choice and did not
+claim persistence. The browser used the actual Preview overlay button and the
+same authenticated preference path. All nine owned launches stopped and their
+credentials were cleared.
+
+This establishes the recorded presentation and persistence subset. Physical
+notch behavior, a finite brightness reading, native accessibility/VoiceOver and
+compositor output remain unverified. Source preserves the accessible compact
+label; that is separate from runtime accessibility proof. No hardware write,
+key interception, personal player control or new permission was exercised.
