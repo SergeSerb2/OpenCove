@@ -585,10 +585,12 @@ struct CoveMediaSurface: View {
                                         .padding(14).frame(width: 330)
                                         .preferredColorScheme(.dark)
                                 }
+                                .background(CoveMediaRegionMarker(blocksInput: true))
                         }
                     }
                 }
                 .tint(musicColorAccent ? artwork?.tint : nil)
+                .background(CoveMediaRegionMarker(blocksInput: scrubbing || showsOutput))
             }
             .onAppear {
                 acceptsSliderChanges = true
@@ -626,6 +628,7 @@ struct CoveMediaSurface: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open media player")
+                .background(CoveMediaRegionMarker(blocksInput: true))
             }
             metadata
             if !condensed && showPlaybackIndicator {
@@ -659,6 +662,7 @@ struct CoveMediaSurface: View {
                     Button("Open Player", action: media.openPlayer)
                 } label: { Image(systemName: "ellipsis.circle").font(.system(size: 13)) }
                 .menuStyle(.borderlessButton)
+                .background(CoveMediaRegionMarker(blocksInput: true))
                 .fixedSize()
                 .accessibilityLabel("More playback actions")
             }
@@ -755,6 +759,7 @@ struct CoveMediaSurface: View {
             .disabled(!canSeek)
             .accessibilityLabel("Playback position")
             .accessibilityValue(duration > 0 ? "\(CoveNotchStyle.duration(displayedPosition)) of \(CoveNotchStyle.duration(duration))" : "Position unavailable")
+            .background(CoveMediaRegionMarker(blocksInput: true))
             HStack {
                 Text(duration > 0 ? CoveNotchStyle.duration(displayedPosition) : "—")
                 Spacer()
@@ -795,6 +800,7 @@ struct CoveMediaSurface: View {
                     .foregroundStyle(media.state.isRepeating == true ? Color.mint : Color.white.opacity(0.5))
             }
         }
+        .background(CoveMediaRegionMarker(blocksInput: true))
     }
 
     private func cancelScrubbing() {

@@ -202,6 +202,24 @@ private struct CoveExpandedSectionFade: AnimatableModifier {
     }
 }
 
+/// Retained outgoing trees must revoke their native marker as well as SwiftUI
+/// hit testing. The controller also compares this identity with live state.
+private struct CoveMediaSkipRegionGate: ViewModifier {
+    let context: CoveMediaSkipContext?
+    let kind: CoveMediaSkipContext.Kind
+    let mode: CovePanelMode
+    var section: CoveExpandedSectionIdentity? = nil
+    @Environment(\.covePanelPresentation) private var panel
+    @Environment(\.coveExpandedSection) private var expanded
+
+    func body(content: Content) -> some View {
+        let activeSection = section.map { $0 == expanded.presentation.active && expanded.expanded
+            && expanded.permissions.permits($0.section, outgoing: false) } ?? true
+        let active = panel.mode == mode && activeSection && context?.kind == kind
+        content.background(CoveMediaRegionMarker(context: active ? context : nil))
+    }
+}
+
 @MainActor
 struct NotchView: View {
     @ObservedObject var store: CoveStore
@@ -494,6 +512,7 @@ struct NotchView: View {
                             reduceMotion: store.preferences.reduceMotion)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Color.clear.frame(width: compactGap)
+                    .background(CoveMediaRegionMarker(blocksInput: true))
                 HStack(spacing: 8) {
                 if store.preferences.enableFocus && system.state.focusAvailable && system.state.focusEnabled {
                     Image(systemName: "moon.fill")
@@ -523,11 +542,14 @@ struct NotchView: View {
                     }
                     .font(.system(size: 9, weight: .medium, design: .rounded)).monospacedDigit()
                     .foregroundStyle(CoveNotchStyle.secondary).lineLimit(1)
+                    .background(CoveMediaRegionMarker(blocksInput: true))
                 }
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.horizontal, 15)
+            .modifier(CoveMediaSkipRegionGate(context: CoveMediaSkipContext.current(in: store),
+                kind: .compact, mode: .compact(.activity(.media))))
         } else if mode == .activity(.timer) && store.preferences.enableTimer && activities.timer.remaining > 0 {
             HStack(spacing: 0) {
                 Image(systemName: activities.timer.running ? "timer" : "pause.fill")
@@ -607,6 +629,8 @@ struct NotchView: View {
             }
         }
         .padding(.horizontal, 18)
+        .modifier(CoveMediaSkipRegionGate(context: CoveMediaSkipContext.current(in: store),
+            kind: .peek, mode: .compact(.peek)))
         .padding(.top, cutoutHeight + 8)
         .padding(.bottom, 12)
     }
@@ -616,7 +640,7 @@ struct NotchView: View {
         return VStack(spacing: 0) {
             ZStack {
                 CoveExpandedSectionContent(identity: identity) {
-                    expandedContent(section: identity.section)
+                    expandedContent(identity: identity)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .id(identity)
@@ -658,7 +682,8 @@ struct NotchView: View {
         .padding(.bottom, 10)
     }
 
-    @ViewBuilder private func expandedContent(section: CoveExpandedSection) -> some View {
+    @ViewBuilder private func expandedContent(identity: CoveExpandedSectionIdentity) -> some View {
+        let section = identity.section
         switch section.tab {
         case .media:
             if section.duo {
@@ -669,6 +694,8 @@ struct NotchView: View {
                                      musicColorAccent: store.preferences.musicColorAccent,
                                      reduceMotion: store.preferences.reduceMotion)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .modifier(CoveMediaSkipRegionGate(context: CoveMediaSkipContext.current(in: store),
+                            kind: .duo, mode: .expanded, section: identity))
                     Rectangle().fill(.white.opacity(0.09)).frame(width: 1)
                     CoveCalendarView(activities: activities, condensed: true)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -679,6 +706,8 @@ struct NotchView: View {
                                  showLiveWaveform: store.preferences.showLiveWaveform,
                                  musicColorAccent: store.preferences.musicColorAccent,
                                  reduceMotion: store.preferences.reduceMotion)
+                    .modifier(CoveMediaSkipRegionGate(context: CoveMediaSkipContext.current(in: store),
+                        kind: .expanded, mode: .expanded, section: identity))
             }
         case .calendar:
             CoveCalendarView(activities: activities)

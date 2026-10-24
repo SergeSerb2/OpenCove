@@ -206,6 +206,30 @@ final class MediaController: ObservableObject {
     func next() { command(.next) }
     func previous() { command(.previous) }
 
+    /// A gesture must echo the item displayed at its start. Keep this path
+    /// synchronous: adapter skip messages have no item argument, and a queued
+    /// Apple Event has no presentation/lifecycle cancellation lease.
+    @discardableResult
+    func skip(forward: Bool, target: String) -> Bool {
+        guard running, state.available, target == state.seekTarget,
+              forward ? state.supportsNext : state.supportsPrevious else { return false }
+        let itemID = backend == .adapter ? adapterItemID : remoteItemID
+        guard backend == .remote || backend == .adapter,
+              let bundleID = sourceBundleID, acceptsSource(bundleID),
+              let itemID, let remote else {
+            lastError = "Swipe to skip requires a source and item verified by the native media bridge. Use the player controls."
+            return false
+        }
+        guard remote.skip(forward: forward, for: bundleID, itemID: itemID) else {
+            lastError = "The source, item, or skip capability changed or could not be verified. Refresh before trying again."
+            scheduleRefresh(after: 0.1)
+            return false
+        }
+        lastError = nil
+        scheduleRefresh()
+        return true // Submission, not player acknowledgement or an atomic OS compare-and-send.
+    }
+
     @discardableResult
     func seek(to seconds: Double, target: String? = nil) -> Bool {
         guard seconds.isFinite else { lastError = "The seek time must be finite."; return false }
@@ -1231,6 +1255,17 @@ private final class CoveMediaRemote {
             Self.object($0, "dictionaryRepresentation") as? [String: Any]
         }
         return currentBundleID == bundleID && CoveRemoteResult.enabled(name, commands: commands)
+    }
+
+    func skip(forward: Bool, for bundleID: String, itemID: String) -> Bool {
+        guard MediaController.mediaItemID(itemID) != nil, let sendCommand,
+              commandEnabled(forward ? "NextTrack" : "PreviousTrack", for: bundleID),
+              let current = currentItemInfo(for: bundleID),
+              MediaController.mediaItemID(current[key("kMRMediaRemoteNowPlayingInfoContentItemIdentifier")]) == itemID,
+              currentBundleID == bundleID else { return false }
+        // These are the existing opcodes, with an adjacent fresh item check.
+        // The global OS command still has no atomic item-bound submission API.
+        return sendCommand(forward ? 4 : 5, nil)
     }
 
     func setPlaybackSpeed(_ speed: Double, for bundleID: String, itemID: String) -> Bool {
