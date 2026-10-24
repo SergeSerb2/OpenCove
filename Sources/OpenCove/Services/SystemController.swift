@@ -205,7 +205,7 @@ final class SystemController: NSObject, ObservableObject {
     func refreshHardwareControls(volume: Bool) {
         guard running else { return }
         if volume {
-            withAudioReadEvidence(caller: .hardwareControl) { read(parts: .audio, emitHUD: false) }
+            withAudioReadEvidence(caller: .hardwareControl) { read(parts: .audioLevels, emitHUD: false) }
         } else { read(parts: .brightness, emitHUD: false) }
     }
 
@@ -434,7 +434,9 @@ final class SystemController: NSObject, ObservableObject {
         let previous = state
         let previousBluetooth = connectedBluetooth
         var next = state
-        if parts.contains(.audio) { readAudio(into: &next) }
+        if parts.contains(.audio) || parts.contains(.audioLevels) {
+            readAudio(into: &next, refreshOutputs: parts.contains(.audio))
+        }
         if parts.contains(.battery) { readBattery(into: &next) }
         if parts.contains(.brightness), systemAwake, screensAwake { readBrightness(into: &next) }
         if parts.contains(.bluetooth) { readBluetooth(into: &next) }
@@ -675,15 +677,26 @@ final class SystemController: NSObject, ObservableObject {
         }
     }
 
-    private func readAudio(into next: inout SystemState) {
+    private func readAudio(into next: inout SystemState, refreshOutputs: Bool) {
         let start = beginReadEvidence("audio")
         defer { finishReadEvidence("audio", since: start) }
-        readOutputDevices(into: &next)
+        // Level/mute notifications do not invalidate output names, UIDs or
+        // eligibility. Their dedicated listeners and full refresh paths do.
+        var inventoryWasRead = refreshOutputs || audioSystemNeedsPolling
+            || outputDevicesNeedPolling || outputListenersNeedPolling
+            || audioListenersNeedRefresh || pendingParts.contains(.audio)
+        if inventoryWasRead { readOutputDevices(into: &next) }
+        let previousDevice = audioDevice
+        let previousUID = next.outputDeviceUID
         var property = address(kAudioHardwarePropertyDefaultOutputDevice)
         var device = AudioObjectID(kAudioObjectUnknown)
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
         let result = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &property, 0, nil, &size, &device)
         if result != noErr || size != MemoryLayout<AudioObjectID>.size { device = AudioObjectID(kAudioObjectUnknown) }
+        if !inventoryWasRead, device != previousDevice || result != noErr || size != MemoryLayout<AudioObjectID>.size {
+            readOutputDevices(into: &next)
+            inventoryWasRead = true
+        }
         if device != audioDevice || audioListenersNeedRefresh {
             observations.removeDeviceAudioListeners()
             audioDevice = device
@@ -707,6 +720,7 @@ final class SystemController: NSObject, ObservableObject {
         if device == kAudioObjectUnknown { audioDeviceNeedsPolling = false }
         guard device != kAudioObjectUnknown,
               readUInt32(device, address(kAudioDevicePropertyDeviceIsAlive)) == 1 else {
+            if !inventoryWasRead { readOutputDevices(into: &next) }
             audioDeviceNeedsPolling = device != kAudioObjectUnknown
             next.capabilityMessages["audio"] = "No default audio output is connected."
             setError("audioRead", nil)
@@ -715,6 +729,11 @@ final class SystemController: NSObject, ObservableObject {
         next.outputDevice = readString(device, kAudioObjectPropertyName) ?? "Audio output"
         next.outputDeviceID = device
         next.outputDeviceUID = readString(device, kAudioDevicePropertyDeviceUID) ?? ""
+        // HAL IDs can be reused. A fresh UID check also protects a level read
+        // that races the normal route/inventory notification.
+        if !inventoryWasRead, next.outputDeviceUID != previousUID || next.outputDeviceUID.isEmpty {
+            readOutputDevices(into: &next)
+        }
         let transport = readUInt32(device, address(kAudioDevicePropertyTransportType))
         next.audioOutputIsBluetooth = transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE
         let levels = volumeAddresses(for: device, writableOnly: false).compactMap { readFloat(device, $0) }
@@ -743,12 +762,13 @@ final class SystemController: NSObject, ObservableObject {
 
     private func installAudioDeviceObservers(_ device: AudioObjectID) {
         audioDeviceNeedsPolling = false
-        var properties = [address(kAudioObjectPropertyName), address(kAudioDevicePropertyDeviceIsAlive),
+        let properties = [address(kAudioObjectPropertyName), address(kAudioDevicePropertyDeviceIsAlive),
                           address(kAudioDevicePropertyStreamConfiguration, scope: kAudioDevicePropertyScopeOutput)]
-        properties += volumeAddresses(for: device, writableOnly: false)
-        properties += muteAddresses(for: device, writableOnly: false)
         for property in properties {
             if !addAudioListener(device, property, deviceListener: true) { audioDeviceNeedsPolling = true }
+        }
+        for property in volumeAddresses(for: device, writableOnly: false) + muteAddresses(for: device, writableOnly: false) {
+            if !addAudioListener(device, property, deviceListener: true, levelOnly: true) { audioDeviceNeedsPolling = true }
         }
     }
 
@@ -773,7 +793,7 @@ final class SystemController: NSObject, ObservableObject {
     }
 
     private func addAudioListener(_ object: AudioObjectID, _ valueAddress: AudioObjectPropertyAddress,
-                                  deviceListener: Bool, outputListListener: Bool = false) -> Bool {
+                                  deviceListener: Bool, outputListListener: Bool = false, levelOnly: Bool = false) -> Bool {
         var property = valueAddress
         let currentGeneration = generation
         let block: AudioObjectPropertyListenerBlock = { [weak self] count, changed in
@@ -797,7 +817,10 @@ final class SystemController: NSObject, ObservableObject {
                             selectors.contains(kAudioDevicePropertyDeviceUID) {
                     self.audioListenersNeedRefresh = true
                 }
-                self.scheduleRead(deviceListener || outputListListener ? .audio : [.audio, .bluetooth])
+                let matchingLevel = levelOnly && !selectors.isEmpty
+                    && selectors.allSatisfy { $0 == valueAddress.mSelector }
+                let audioParts: SystemRefreshParts = matchingLevel ? .audioLevels : .audio
+                self.scheduleRead(deviceListener || outputListListener ? audioParts : [.audio, .bluetooth])
             }
         }
         let result = AudioObjectAddPropertyListenerBlock(object, &property, .main, block)
@@ -1326,6 +1349,7 @@ private struct SystemRefreshParts: OptionSet {
     static let bluetooth = Self(rawValue: 1 << 3)
     static let focus = Self(rawValue: 1 << 4)
     static let lock = Self(rawValue: 1 << 5)
+    static let audioLevels = Self(rawValue: 1 << 6)
     static let all: Self = [.audio, .battery, .brightness, .bluetooth, .focus, .lock]
 }
 
