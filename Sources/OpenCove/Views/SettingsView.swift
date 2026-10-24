@@ -405,6 +405,13 @@ struct SettingsView: View {
                     .disabled(!store.preferences.enableBrightnessHUD)
                     .help("Add a soft glow to the sun symbol on display brightness overlays.")
                 Toggle("Battery & charging", isOn: preference(\.enableBattery))
+                Toggle("Low Power Mode changes", isOn: Binding(
+                    get: { store.preferences.enableLowPowerModeAlerts },
+                    set: { store.setLowPowerModeAlerts(enabled: $0) }))
+                    .disabled(!store.preferences.enableBattery && !store.preferences.enableLowPowerModeAlerts)
+                CoveSettingsNote("Off by default on this Mac; never synced. After consent is saved, reads the public Low Power Mode Boolean and receives its change notifications. Shows an OpenCove overlay for observed on/off changes, with the existing battery timing, motion, labels and haptics settings. The first reading is silent.")
+                CoveSettingsNote("Does not change Low Power Mode or send a Notification Center alert. A false reading can mean off, unknown or unsupported hardware. Battery & charging is the master: turning it off clears this choice. Battery widgets grant no mode reading or alerts. The existing charge monitor keeps its current behavior.")
+                Text(store.lowPowerModeAlertsStatus).font(.caption).foregroundStyle(.secondary)
                 Toggle("Bluetooth & audio devices", isOn: preference(\.enableBluetooth))
                 Toggle("Focus status", isOn: preference(\.enableFocus))
                 Toggle("Show overlay labels", isOn: preference(\.showHUDLabels))

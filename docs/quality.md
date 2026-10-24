@@ -71,6 +71,98 @@ A match retires the normal panels through the existing teardown: hover/collapse 
 
 This slice received source parsing, diff review, and static call tracing only. **Build and all real acceptance are UNVERIFIED and owned by the parent.** Parent acceptance must cover default/legacy false, strict Boolean persistence and rejection, off/on/off including rapid changes, own-process and unknown cases, real game-category and game-subcategory activation/leave, restored expansion/section, input retirement, HUD expiry, lock/session/sleep, multiple displays, and interaction with existing media/fullscreen hiding. Positive coverage requires an actual game app with a supported declaration. No real game fixture was supplied or inspected here. No test, mock, synthetic activation, app, helper, or runtime check ran. **C-PID remains FAILED. M1 remains USER-DEFERRED.**
 
+## Public Low Power Mode overlays
+
+Retained W02 is “Added low power mode notification”, version 1.3.2,
+14 Sep 2025, `/entries/4/minors/7/features/1`. It does not specify defaults,
+direction, consent, visuals or native-notification behavior. This bounded OpenCove
+slice selects local default-off, save-first native consent and both observed
+Boolean directions. It does not establish exact reference-product parity.
+
+The public contract is `ProcessInfo.isLowPowerModeEnabled` plus
+`NSProcessInfoPowerStateDidChange` (macOS 12+, below this app's minimum).
+The retained Foundation header explicitly collapses unknown/unsupported hardware
+to false. Status is typed; only `reported` has an optional real Boolean. Disabled,
+paused and awaiting-baseline states have nil. `apiUnavailable` is reserved for API
+availability, unreachable at the current target; it is not a fabricated getter
+error or a hardware inference. No permission or private API is a prerequisite.
+
+Source invariants for this slice:
+
+- `enableLowPowerModeAlerts = false` is outside the fixed sync allowlist.
+  Only the disclosed native action can add it, after the central save and existing
+  registration handling succeed. Generic/reset/cloud/widget paths cannot grant it.
+  Recovery fails closed; Battery & charging opt-out clears it. Revocation reaches
+  the controller before fallible saves. A failed write retains the explicit warning
+  that an older saved grant may return after restart.
+- The dedicated MainActor domain is outside `SystemRefreshParts`, `.all`, battery
+  invalidations and existing timers. One default-center token has a weak owner,
+  exact ProcessInfo object and main delivery queue. Registration precedes a silent
+  baseline. Before each getter and after publication, running/demand, global and
+  domain revisions, and token ownership must still match. Equal readings do nothing.
+  State publication that reenters teardown cannot emit an old-domain event. A
+  cache-only state-commit check repairs stale mode fields in an unrelated reader's
+  pre-revocation copy; it neither configures the domain nor calls its getter.
+- Store admission uses current saved effective consent, started/session state,
+  the session latch, existing awake/shutdown caches and cached lock state. The latch
+  is seeded from the existing startup result, cleared on resignation and reopened
+  only by the matching session-active handler after its existing refresh and a
+  session-revision check. Ordinary
+  session refresh and lock callbacks cannot reopen it. System startup/restart
+  suspends mode demand; reconciliation then recomputes current Store demand.
+- Stop/opt-out and processed session/sleep/screen-sleep/lock/shutdown boundaries
+  remove only this token and clear its comparison, cached report and mode-origin
+  HUD/dismissal task/deadline/dedup. Return establishes a quiet baseline. Other
+  readers, observations and unrelated overlays keep their ownership. The existing
+  deinit cleanup transfer still owns final observer removal.
+- Only real observed differences emit nil-valued `.battery` events with fixed
+  `systemLowPowerMode` origin. Final Store admission repeats the category, consent
+  and lifecycle gates before `showHUD` can replace an overlay or perform haptics.
+  Existing timing, motion, labels, panel rules and haptics policy apply. No new
+  preview, history, native notification, sound, helper, setter or polling exists.
+
+This slice permits **Swift parse, diff review and static hashes only**. No build,
+typecheck, runtime/app/helper/fixture/probe/test, power/permission/device read,
+notification post, mode change, network or native input ran for its implementation.
+Compilation, native UI, natural transitions, session races, performance and full
+parity acceptance are **UNVERIFIED**, and remain parent-owned.
+
+Parent real acceptance plan, after separate authorization, with no mode change:
+
+1. Use the actual app with an owned private profile and unrelated protected readers
+   and extra grants already off. Check default/legacy/malformed/damaged/repaired
+   recovery, exact backups, generic true/reset/cloud rejection, unrelated saves,
+   activation, refresh and restart. Require nil/disabled mode state while off.
+   Claim zero reads only with independent evidence at the actual service boundary;
+   absence of a HUD alone is insufficient. Do not add mocks or fake events.
+2. Use the native disclosed action with the category already enabled. Require saved
+   readback, one observer and one silent real baseline where independently visible.
+   Accept whichever Boolean the OS reports. Check restart and quiet re-admission.
+   Human native reachability, text, accessibility and optional haptics need their
+   own evidence; browser/API readback cannot prove them.
+3. Revoke the choice and then its category through the real interface. Require
+   immediate selective teardown and successful saved clearing. Category re-enable
+   must leave consent off. Use a genuine failure in the owned preference-save path
+   to check that failed grants never read/install and failed revocations remain off
+   in-session with the older-grant restart warning. Existing widget authorization
+   may check separation; do not grant extra readers merely to obtain coverage.
+4. Only with later explicit authorization, wait for real independent natural mode
+   notifications. Do not change power mode, charging or power settings, post a
+   notification, inject cached values or manufacture a transition. Retain the actual
+   Boolean before/after, callback/read, revisions, Store admission and live HUD/
+   expiry. Each direction is a separate unproved variant until naturally observed.
+   If no transition occurs, keep this gate UNVERIFIED. Charge previews, baseline
+   reads and notification receipt alone cannot substitute.
+5. Observe later authorized natural session/lock/sleep/wake boundaries, quiet return,
+   selective HUD retirement and existing panel suppression. Late/duplicate callback
+   races require actual evidence; source guards alone prove only static intent.
+   Unknown initial lock state, intermediate burst states, display frame timing and
+   hardware/OS breadth remain unproved. Do not invent an unsupported/error positive
+   from false or lower the deployment target to manufacture one.
+
+**C-PID remains FAILED. M1 remains USER-DEFERRED. Stage4 remains HOLD.
+Focus default backend remains UNVERIFIED.** This source slice upgrades none of them.
+
 ## Build an isolated bundle
 
 ```sh

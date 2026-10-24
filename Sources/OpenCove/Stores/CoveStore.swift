@@ -48,10 +48,11 @@ final class CoveStore: ObservableObject {
     let settingsSync = CoveSettingsSyncController()
     private let betterDisplayFeedback = BetterDisplayFeedbackController()
     private var betterDisplaySnapshotCurrent = false
-    private var betterDisplaySystemAwake = true
-    private var betterDisplayScreensAwake = true
-    private var betterDisplayShuttingDown = false
+    private var systemAwake = true
+    private var screensAwake = true
+    private var shuttingDown = false
     private var persistedBetterDisplayFeedback = false
+    private var persistedLowPowerModeAlerts = false
     lazy var hardwareKeys = HardwareKeyController(system: system)
     var onOpenSettings: (() -> Void)?
     var onPreferencesChange: (() -> Void)?
@@ -260,6 +261,7 @@ final class CoveStore: ObservableObject {
     private var appliedPreferences: CovePreferences
     private(set) var persistedLockWidgets: Set<CoveLockWidget> = []
     private var activeReaderPolicy: ReaderPolicy?
+    private var restartingSystemReaders = false
 
     private struct ReaderPolicy: Equatable {
         var media: Bool
@@ -314,12 +316,26 @@ final class CoveStore: ObservableObject {
         // their demand without an outer call subsequently starting them again.
         if previous == nil || previous?.privateAPIs != next.privateAPIs
             || previous?.bluetooth != next.bluetooth || previous?.focus != next.focus {
+            let restarting = previous == nil || previous?.privateAPIs != next.privateAPIs
+            let wasRestarting = restartingSystemReaders
+            if restarting {
+                restartingSystemReaders = true
+                reconcileLowPowerModeAlerts()
+            }
             system.start(privateAPIs: next.privateAPIs, enableBluetooth: next.bluetooth, enableFocus: next.focus)
+            restartingSystemReaders = wasRestarting
         }
+        // Startup can reenter onLockChange. Recompute from current Store state,
+        // never from the ReaderPolicy captured before system.start.
+        reconcileLowPowerModeAlerts()
     }
     private var subscriptions = Set<AnyCancellable>()
     private var started = false
     private var sessionActive = false
+    // Seed once from the existing startup result. Ordinary session refreshes
+    // and onLockChange cannot reopen a processed session resignation.
+    private var lowPowerModeSessionAdmitted = false
+    private var lowPowerModeSessionRevision: UInt64 = 0
     private var needsPreferencesBackup = false
     private let mediaIdleClock = ContinuousClock()
     private var mediaIdleInput: CompactMediaInput?
@@ -411,6 +427,7 @@ final class CoveStore: ObservableObject {
         appliedPreferences = loaded
         persistedLockWidgets = loaded.independentLockWidgets
         persistedBetterDisplayFeedback = loaded.enableBetterDisplayFeedback
+        persistedLowPowerModeAlerts = loaded.enableLowPowerModeAlerts
         lastError = loadError
         needsPreferencesBackup = needsBackup
         settingsSync.currentPreferences = { [weak self] in self?.preferences }
@@ -429,6 +446,7 @@ final class CoveStore: ObservableObject {
                 self.observeMediaPeek(observed)
             }.store(in: &subscriptions)
         system.onHUD = { [weak self] in self?.showHUD($0) }
+        system.onLowPowerModeInvalidation = { [weak self] in self?.clearLowPowerModeHUD() }
         betterDisplayFeedback.canReceive = { [weak self] in self?.mayReceiveBetterDisplayFeedback ?? false }
         betterDisplayFeedback.onInvalidation = { [weak self] in
             self?.clearBetterDisplayHUD()
@@ -483,7 +501,10 @@ final class CoveStore: ObservableObject {
         }
         let workspace = NSWorkspace.shared.notificationCenter
         workspace.publisher(for: NSWorkspace.sessionDidResignActiveNotification).sink { [weak self] _ in
+            self?.lowPowerModeSessionRevision &+= 1
+            self?.lowPowerModeSessionAdmitted = false
             self?.sessionActive = false
+            self?.reconcileLowPowerModeAlerts()
             self?.invalidateBetterDisplaySnapshot()
             self?.reconcileReaders()
             self?.collapse()
@@ -493,35 +514,47 @@ final class CoveStore: ObservableObject {
             self?.reconcileBetterDisplayFeedback()
         }.store(in: &subscriptions)
         workspace.publisher(for: NSWorkspace.sessionDidBecomeActiveNotification).sink { [weak self] _ in
-            self?.invalidateBetterDisplaySnapshot()
-            self?.refreshSessionActivity()
-            self?.reconcileReaders()
-            self?.resetMediaPeek()
-            self?.system.refresh()
-            self?.reconcileCalendarPrivacy()
-            self?.reconcileMirroring()
-            self?.reconcileBetterDisplayFeedback()
+            guard let self else { return }
+            self.lowPowerModeSessionRevision &+= 1
+            let revision = self.lowPowerModeSessionRevision
+            self.invalidateBetterDisplaySnapshot()
+            self.refreshSessionActivity()
+            self.reconcileReaders()
+            self.resetMediaPeek()
+            self.system.refresh()
+            // Only this matching active path reopens admission after resignation,
+            // and only after the existing refresh (including reentrant callbacks).
+            if self.lowPowerModeSessionRevision == revision {
+                self.lowPowerModeSessionAdmitted = self.sessionActive
+            }
+            self.reconcileLowPowerModeAlerts()
+            self.reconcileCalendarPrivacy()
+            self.reconcileMirroring()
+            self.reconcileBetterDisplayFeedback()
         }.store(in: &subscriptions)
         // Reuse lifecycle notifications and the panel's existing display
         // snapshot. No display getter, running-app discovery or new polling.
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
             workspace.publisher(for: name).sink { [weak self] _ in
                 guard let self else { return }
-                if name == NSWorkspace.willSleepNotification { self.betterDisplaySystemAwake = false }
-                else { self.betterDisplayScreensAwake = false }
+                if name == NSWorkspace.willSleepNotification { self.systemAwake = false }
+                else { self.screensAwake = false }
+                self.reconcileLowPowerModeAlerts()
                 self.invalidateBetterDisplaySnapshot()
             }.store(in: &subscriptions)
         }
         for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
             workspace.publisher(for: name).sink { [weak self] _ in
                 guard let self else { return }
-                if name == NSWorkspace.didWakeNotification { self.betterDisplaySystemAwake = true }
-                else { self.betterDisplayScreensAwake = true }
+                if name == NSWorkspace.didWakeNotification { self.systemAwake = true }
+                else { self.screensAwake = true }
+                self.reconcileLowPowerModeAlerts()
                 self.invalidateBetterDisplaySnapshot()
             }.store(in: &subscriptions)
         }
         workspace.publisher(for: NSWorkspace.willPowerOffNotification).sink { [weak self] _ in
-            self?.betterDisplayShuttingDown = true
+            self?.shuttingDown = true
+            self?.reconcileLowPowerModeAlerts()
             self?.invalidateBetterDisplaySnapshot()
         }.store(in: &subscriptions)
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification).sink { [weak self] _ in
@@ -533,12 +566,13 @@ final class CoveStore: ObservableObject {
         }.store(in: &subscriptions)
         reconcileLoginItem()
         refreshSessionActivity()
+        lowPowerModeSessionAdmitted = sessionActive
     }
 
     func start() {
         guard !started else { return }
         started = true
-        betterDisplayShuttingDown = false
+        shuttingDown = false
         resetMediaPeek()
         refreshSessionActivity()
         reconcileReaders()
@@ -559,6 +593,7 @@ final class CoveStore: ObservableObject {
 
     func stop() {
         started = false
+        reconcileLowPowerModeAlerts()
         invalidateBetterDisplaySnapshot()
         settingsSync.stop()
         resetCompactDismissals()
@@ -688,9 +723,47 @@ final class CoveStore: ObservableObject {
         clearMirroredContent()
     }
 
+    private var mayReceiveLowPowerModeAlerts: Bool {
+        started && preferences.enableBattery && preferences.enableLowPowerModeAlerts
+            && sessionActive && lowPowerModeSessionAdmitted && !system.state.isLocked
+            && systemAwake && screensAwake && !shuttingDown && !restartingSystemReaders
+    }
+
+    private func reconcileLowPowerModeAlerts() {
+        let enabled = preferences.enableBattery && preferences.enableLowPowerModeAlerts
+        let admitted = mayReceiveLowPowerModeAlerts
+        // Controller invalidates ownership before its invalidation callback
+        // clears presentation, so reentrant work cannot use the retired token.
+        system.configureLowPowerModeAlerts(enabled: enabled, admitted: admitted)
+        if !admitted { clearLowPowerModeHUD() }
+    }
+
+    private func clearLowPowerModeHUD() {
+        guard hud?.origin == CoveHUD.lowPowerModeOrigin else { return }
+        hudDismiss?.cancel()
+        hudDismiss = nil
+        hudDeadline = nil
+        hud = nil
+    }
+
+    var lowPowerModeAlertsStatus: String {
+        guard preferences.enableBattery else { return "Enable Battery & charging separately before choosing mode alerts." }
+        guard preferences.enableLowPowerModeAlerts else { return "Low Power Mode changes are off on this Mac." }
+        switch system.state.lowPowerModeStatus {
+        case .disabled: return "Low Power Mode monitoring is stopped."
+        case .paused: return "Low Power Mode monitoring is paused in this session. Return establishes a quiet baseline."
+        case .awaitingBaseline: return "Waiting for a quiet Low Power Mode baseline."
+        case .reported:
+            guard let reported = system.state.lowPowerModeEnabled else { return "Waiting for a quiet Low Power Mode baseline." }
+            if reported { return "The public API reports Low Power Mode on." }
+            return "The public API reports false: off, unknown or unsupported hardware."
+        case .apiUnavailable: return "The public Low Power Mode API is unavailable."
+        }
+    }
+
     private var mayReceiveBetterDisplayFeedback: Bool {
-        started && sessionActive && !system.state.isLocked && !betterDisplayShuttingDown
-            && betterDisplaySystemAwake && betterDisplayScreensAwake && betterDisplaySnapshotCurrent
+        started && sessionActive && !system.state.isLocked && !shuttingDown
+            && systemAwake && screensAwake && betterDisplaySnapshotCurrent
             && preferences.enableBetterDisplayFeedback && preferences.enableBrightnessHUD && preferences.showHUDLabels
             && !preferences.showOnAllDisplays && !preferences.selectedDisplayUUID.isEmpty
             && UUID(uuidString: preferences.selectedDisplayUUID) == UUID(uuidString: displaySelection.requestedUUID)
@@ -722,8 +795,8 @@ final class CoveStore: ObservableObject {
         guard preferences.enableBetterDisplayFeedback else { return "BetterDisplay feedback is off on this Mac." }
         guard preferences.enableBrightnessHUD else { return "Enable the display brightness overlay separately." }
         guard preferences.showHUDLabels else { return "Paused: enable overlay labels to show the BetterDisplay source." }
-        guard started, sessionActive, !system.state.isLocked, !betterDisplayShuttingDown,
-              betterDisplaySystemAwake, betterDisplayScreensAwake else { return "BetterDisplay feedback is paused in this session." }
+        guard started, sessionActive, !system.state.isLocked, !shuttingDown,
+              systemAwake, screensAwake else { return "BetterDisplay feedback is paused in this session." }
         guard betterDisplaySnapshotCurrent, mayReceiveBetterDisplayFeedback,
               BetterDisplayFeedback.Display.selected(in: displaySelection) != nil else {
             return "Select one unique external display in General. All, Main, Built-in and fallback selections are unavailable."
@@ -752,6 +825,7 @@ final class CoveStore: ObservableObject {
     }
 
     private func refreshSessionActivity() {
+        defer { reconcileLowPowerModeAlerts() }
         guard let session = CGSessionCopyCurrentDictionary() as? [String: Any],
               let onConsole = session[kCGSessionOnConsoleKey as String] as? Bool,
               let loginDone = session[kCGSessionLoginDoneKey as String] as? Bool else {
@@ -876,6 +950,10 @@ final class CoveStore: ObservableObject {
     }
 
     private func isHUDEnabled(_ value: CoveHUD) -> Bool {
+        if value.origin == CoveHUD.lowPowerModeOrigin {
+            // Final admission precedes showHUD's replacement, deadline and haptic.
+            guard value.kind == .battery, mayReceiveLowPowerModeAlerts else { return false }
+        }
         if Self.isBetterDisplayHUD(value) {
             guard value.kind == .brightness, mayReceiveBetterDisplayFeedback, !isExpanded,
                   BetterDisplayFeedback.Display.selected(in: displaySelection) != nil else { return false }
@@ -944,15 +1022,32 @@ final class CoveStore: ObservableObject {
         return commitPreferences(candidate, grantingBetterDisplayFeedback: true)
     }
 
+    /// Only the disclosed native Settings control adds this local reader grant.
+    /// It does not enable the category, a widget or any system permission.
+    @discardableResult func setLowPowerModeAlerts(enabled: Bool) -> Bool {
+        if !enabled { return updatePreferences { $0.enableLowPowerModeAlerts = false } }
+        guard preferences.enableBattery else {
+            lastError = "Enable Battery & charging separately before choosing Low Power Mode changes."
+            return false
+        }
+        guard !preferences.enableLowPowerModeAlerts else { return true }
+        var candidate = preferences
+        candidate.enableLowPowerModeAlerts = true
+        return commitPreferences(candidate, grantingLowPowerModeAlerts: true)
+    }
+
     /// Revocations win over additions before publication or service changes.
     /// There is no pending grant: an unsuccessful addition is discarded here.
     private func sanitizedPreferences(_ requested: CovePreferences, granting: CoveLockWidget?,
-                                      grantingBetterDisplayFeedback: Bool) -> CovePreferences {
+                                      grantingBetterDisplayFeedback: Bool, grantingLowPowerModeAlerts: Bool) -> CovePreferences {
         let previous = preferences
         var candidate = requested
         candidate.normalize()
         if !candidate.enableBrightnessHUD || (!previous.enableBetterDisplayFeedback && !grantingBetterDisplayFeedback) {
             candidate.enableBetterDisplayFeedback = false
+        }
+        if !candidate.enableBattery || (!previous.enableLowPowerModeAlerts && !grantingLowPowerModeAlerts) {
+            candidate.enableLowPowerModeAlerts = false
         }
         let clearAll = candidate.lockWidgetsFollowActivities != previous.lockWidgetsFollowActivities
             || !candidate.showOnLockScreen || !candidate.enablePrivateAPIs
@@ -976,6 +1071,7 @@ final class CoveStore: ObservableObject {
             invalidateBetterDisplaySnapshot()
         }
         if preferences != candidate { preferences = candidate }
+        reconcileLowPowerModeAlerts()
         reconcileBetterDisplayFeedback()
         if !preferences.syncSettingsWithiCloud { settingsSync.stop() }
         if started {
@@ -1016,14 +1112,19 @@ final class CoveStore: ObservableObject {
     }
 
     @discardableResult private func commitPreferences(_ requested: CovePreferences, granting: CoveLockWidget? = nil,
-                                                     grantingBetterDisplayFeedback: Bool = false) -> Bool {
+                                                     grantingBetterDisplayFeedback: Bool = false,
+                                                     grantingLowPowerModeAlerts: Bool = false) -> Bool {
         let previous = preferences
-        var candidate = sanitizedPreferences(requested, granting: granting, grantingBetterDisplayFeedback: grantingBetterDisplayFeedback)
+        var candidate = sanitizedPreferences(requested, granting: granting,
+                                             grantingBetterDisplayFeedback: grantingBetterDisplayFeedback,
+                                             grantingLowPowerModeAlerts: grantingLowPowerModeAlerts)
         let hasNewGrant = granting.map { candidate[keyPath: $0.selectionKey] && !previous[keyPath: $0.selectionKey] } ?? false
         let hasNewBetterDisplayGrant = candidate.enableBetterDisplayFeedback && !previous.enableBetterDisplayFeedback
+        let hasNewLowPowerModeGrant = candidate.enableLowPowerModeAlerts && !previous.enableLowPowerModeAlerts
         var effective = candidate
         if hasNewGrant, let granting { effective[keyPath: granting.selectionKey] = false }
         if hasNewBetterDisplayGrant { effective.enableBetterDisplayFeedback = false }
+        if hasNewLowPowerModeGrant { effective.enableLowPowerModeAlerts = false }
         lastError = nil
         // Reductions reach controllers synchronously, before any fallible save.
         applyEffectivePreferences(effective)
@@ -1053,6 +1154,7 @@ final class CoveStore: ObservableObject {
             candidate.completedOnboarding = previous.completedOnboarding
             if hasNewGrant, let granting { candidate[keyPath: granting.selectionKey] = false }
             if hasNewBetterDisplayGrant { candidate.enableBetterDisplayFeedback = false }
+            if hasNewLowPowerModeGrant { candidate.enableLowPowerModeAlerts = false }
         }
         var preferencesPersisted = false
         do {
@@ -1066,6 +1168,7 @@ final class CoveStore: ObservableObject {
             preferencesPersisted = true
             persistedLockWidgets = candidate.independentLockWidgets
             persistedBetterDisplayFeedback = candidate.enableBetterDisplayFeedback
+            persistedLowPowerModeAlerts = candidate.enableLowPowerModeAlerts
         } catch {
             success = false
             lastError = [lastError, "Settings apply for this session, but could not be saved: \(error.localizedDescription)"].compactMap { $0 }.joined(separator: " ")
@@ -1080,6 +1183,10 @@ final class CoveStore: ObservableObject {
                 candidate.enableBetterDisplayFeedback = false
                 lastError = [lastError, "BetterDisplay feedback was not enabled because its consent could not be saved. Enable it again after saving succeeds."].compactMap { $0 }.joined(separator: " ")
             }
+            if hasNewLowPowerModeGrant {
+                candidate.enableLowPowerModeAlerts = false
+                lastError = [lastError, "Low Power Mode changes were not enabled because consent could not be saved. Enable them again after saving succeeds."].compactMap { $0 }.joined(separator: " ")
+            }
         }
         applyEffectivePreferences(candidate)
         if !preferencesPersisted, !persistedLockWidgets.isSubset(of: preferences.independentLockWidgets) {
@@ -1087,6 +1194,9 @@ final class CoveStore: ObservableObject {
         }
         if !preferencesPersisted, persistedBetterDisplayFeedback, !preferences.enableBetterDisplayFeedback {
             lastError = [lastError, "BetterDisplay feedback is off for this session. Its previous saved choice could not be updated and may return after restart."].compactMap { $0 }.joined(separator: " ")
+        }
+        if !preferencesPersisted, persistedLowPowerModeAlerts, !preferences.enableLowPowerModeAlerts {
+            lastError = [lastError, "Low Power Mode changes are off for this session. The previous saved choice could not be updated and may return after restart."].compactMap { $0 }.joined(separator: " ")
         }
         if started { settingsSync.preferencesDidSave(preferences, persisted: preferencesPersisted) }
         return success
