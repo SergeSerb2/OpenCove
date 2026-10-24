@@ -1,8 +1,9 @@
 # Download page handoff
 
-This change starts at `75fbec47915d0c32dc3d8f5985fdee5d762615db` and owns
-only the landing-page presentation in `infra/updates/worker.mjs` and this file.
-It does not publish a Worker, release, feed, or archive.
+The initial presentation change starts at
+`75fbec47915d0c32dc3d8f5985fdee5d762615db`. It changes the landing page in
+`infra/updates/worker.mjs`; integration also registers this guide in the public
+source allowlist. Application releases and update-feed contents are unchanged.
 
 ## Content and design
 
@@ -65,6 +66,28 @@ No server, browser, Worker runtime, R2/API call, build, native app, permission
 operation, signing command, profiling, or deployment ran here. There is no
 TypeScript package in this change. Static checks do not prove rendered layout,
 accessibility, CSP enforcement, or HTTP behavior.
+
+## Integration verification
+
+The exact Worker passed 242 real local Wrangler/R2 HTTP checks with no failures.
+Literal-backslash rejection remains inconclusive because the runtime normalizes
+that separator before the handler sees it. The archive, descriptor and feed
+still match the published beta.2 bytes.
+
+Browser checks passed at widths 320, 375, 768 and 1440 CSS pixels, including an
+open checksum disclosure. Keyboard checks cover the first skip link, focus on
+main content, visible focus and opening the disclosure. Forced-colors and a
+forced double-text-size diagnostic showed no horizontal overflow. The approved
+stylesheet applied; an extra inline stylesheet was blocked. No remote asset
+request or page error occurred. The displayed archive link returned the expected
+6,030,282 bytes and SHA-256.
+
+The collaborative browser supplied functional checks. Its snapshot operation
+timed out twice, so an isolated Chromium process supplied the screenshots and
+additional checks. The actual 320-pixel layout supports reflow at that width;
+host browser 400% zoom and screen-reader speech remain unverified. These checks
+do not establish native installation or updater behavior beyond the separate
+published-beta verification record.
 
 ## Parent validation before deployment
 

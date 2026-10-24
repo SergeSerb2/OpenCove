@@ -25,7 +25,8 @@ SCRIPT_FILES = {"build_and_run.sh", "make_icon.swift", "OpenCoveMediaAdapter.swi
                 "package_release.py", "validate_release.py", "signing_info.swift", "control_e2e.py", "runtime_e2e.py"}
 DOC_FILES = {"building.md", "releasing.md", "privacy.md", "compatibility.md", "architecture.md",
              "calendar.md", "travel-alerts.md", "hardware-huds.md", "notification-mirroring.md",
-             "quality.md", "updates.md", "Sparkle-LICENSE.txt", "update-hosting.md", "audio-monitoring.md"}
+             "quality.md", "updates.md", "Sparkle-LICENSE.txt", "update-hosting.md", "audio-monitoring.md",
+             "download-page-handoff.md"}
 DEPLOY_FILES = {"infra/updates/worker.mjs", "infra/updates/wrangler.jsonc", "infra/updates/.gitignore"}
 REQUIRED = ROOT_FILES | {"script/" + name for name in SCRIPT_FILES - {"control_e2e.py"}} | {
     "docs/" + name for name in ("building.md", "releasing.md", "privacy.md", "compatibility.md", "quality.md")
