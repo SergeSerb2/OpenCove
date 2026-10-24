@@ -282,13 +282,13 @@ final class DevelopmentServer {
                 if action == "system.refreshAudio" {
                     let caller = object["caller"] as? String ?? "developmentAPI"
                     guard object["caller"] == nil || object["caller"] is String,
-                          ["developmentAPI", "nativePicker"].contains(caller) else {
-                        throw ControlError.invalid("Use developmentAPI or nativePicker for the audio refresh caller.")
+                          SystemController.AudioRefreshCaller(rawValue: caller) != nil else {
+                        throw ControlError.invalid("Use developmentAPI, nativePicker or hardwareControl for the audio refresh caller.")
                     }
                     connections[ObjectIdentifier(connection)]?.renderTask = Task { @MainActor [weak self] in
                         guard let self else { return }
                         do {
-                            self.respond(connection, status: 200, json: try await self.acceptAudioRefresh(mountPicker: caller == "nativePicker"))
+                            self.respond(connection, status: 200, json: try await self.acceptAudioRefresh(caller: SystemController.AudioRefreshCaller(rawValue: caller)!))
                         } catch is CancellationError { }
                         catch let failure as ControlError { self.fail(connection, failure.status, failure.localizedDescription) }
                         catch { self.fail(connection, 500, "Audio refresh acceptance could not return evidence.") }
@@ -309,12 +309,13 @@ final class DevelopmentServer {
         respond(connection, status: status, json: ["error": message])
     }
 
-    private func acceptAudioRefresh(mountPicker: Bool) async throws -> [String: Any] {
+    private func acceptAudioRefresh(caller: SystemController.AudioRefreshCaller) async throws -> [String: Any] {
         // Mount the actual Activities settings through the unordered renderer.
         // Its onAppear alone uses the default nativePicker caller; the API path
         // names itself explicitly and invokes the same refreshAudio entry.
         guard let evidence = try await store.system.withAudioRefreshAcceptance({
-            if mountPicker { _ = try await self.render(surface: "settings-activities") }
+            if caller == .nativePicker { _ = try await self.render(surface: "settings-activities") }
+            else if caller == .hardwareControl { self.store.system.refreshHardwareControls(volume: true) }
             else { self.store.system.refreshAudio(caller: .developmentAPI) }
         }) else {
             throw ControlError.rejected("Audio acceptance requires running system monitoring, no other acceptance, and an unchanged monitoring generation.")

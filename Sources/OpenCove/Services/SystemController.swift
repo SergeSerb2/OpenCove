@@ -49,11 +49,23 @@ final class SystemController: NSObject, ObservableObject {
     private var audioRefreshAcceptance: AudioRefreshAcceptance?
     private var audioRefreshCapture: AudioRefreshEvidence?
 
-    enum AudioRefreshCaller: String, Encodable { case nativePicker, developmentAPI }
+    enum AudioRefreshCaller: String, Encodable { case nativePicker, developmentAPI, hardwareControl }
 
     struct ReadEvidence: Encodable {
         var count = 0
         var milliseconds = 0.0
+    }
+
+    struct AudioInventoryDecision: Encodable {
+        enum Action: String, Encodable { case scan, skip }
+        enum Reason: String, Encodable {
+            case fullRefresh, systemPolling, devicePolling, inventoryPolling, inventoryListenerPolling
+            case listenerInvalidation, pendingFullRefresh, invalidDefaultDevice, unknownDefaultDevice
+            case routeChanged, deviceNotAlive, missingUID, uidChanged, uncachedRoute
+        }
+        let action: Action
+        let skipEligible: Bool
+        let reasons: [Reason]
     }
 
     struct AudioRefreshEvidence: Encodable {
@@ -68,6 +80,8 @@ final class SystemController: NSObject, ObservableObject {
         var hardwareWritesAfter = 0
         var hardwareWriteDelta = 0
         var audioReadErrors: [String] = []
+        // One decision per synchronous audio read, only inside this capture.
+        var inventoryDecisions: [AudioInventoryDecision] = []
     }
 
     private final class AudioRefreshAcceptance {
@@ -174,6 +188,10 @@ final class SystemController: NSObject, ObservableObject {
     /// Refresh audio readings and output choices without reading unrelated domains.
     func refreshAudio(caller: AudioRefreshCaller = .nativePicker) {
         guard running else { return }
+        withAudioReadEvidence(caller: caller) { read(parts: .audio, emitHUD: true) }
+    }
+
+    private func withAudioReadEvidence(caller: AudioRefreshCaller, operation: () -> Void) {
         // The picker keeps its original entry path. Only an armed acceptance
         // captures this synchronous call; later listener/fallback/HUD work is
         // outside its interval. A reentrant read contributes to the outer call.
@@ -193,13 +211,16 @@ final class SystemController: NSObject, ObservableObject {
                 audioRefreshCapture = nil
             }
         }
-        read(parts: .audio, emitHUD: true)
+        operation()
     }
 
     /// The synchronous event-tap path must not enumerate Bluetooth, query Focus,
     /// or read private content while deciding whether to consume a control key.
     func refreshHardwareControls(volume: Bool) {
-        read(parts: volume ? .audio : .brightness, emitHUD: false)
+        guard running else { return }
+        if volume {
+            withAudioReadEvidence(caller: .hardwareControl) { read(parts: .audioLevels, emitHUD: false) }
+        } else { read(parts: .brightness, emitHUD: false) }
     }
 
     /// Call only from an explicit output choice. Monitoring never changes routes.
@@ -427,7 +448,9 @@ final class SystemController: NSObject, ObservableObject {
         let previous = state
         let previousBluetooth = connectedBluetooth
         var next = state
-        if parts.contains(.audio) { readAudio(into: &next) }
+        if parts.contains(.audio) || parts.contains(.audioLevels) {
+            readAudio(into: &next, refreshOutputs: parts.contains(.audio))
+        }
         if parts.contains(.battery) { readBattery(into: &next) }
         if parts.contains(.brightness), systemAwake, screensAwake { readBrightness(into: &next) }
         if parts.contains(.bluetooth) { readBluetooth(into: &next) }
@@ -668,21 +691,62 @@ final class SystemController: NSObject, ObservableObject {
         }
     }
 
-    private func readAudio(into next: inout SystemState) {
-        let start = beginReadEvidence("audio")
-        defer { finishReadEvidence("audio", since: start) }
-        readOutputDevices(into: &next)
+    private func readDefaultAudioRoute() -> (device: AudioObjectID, valid: Bool, result: OSStatus, alive: Bool, uid: String) {
         var property = address(kAudioHardwarePropertyDefaultOutputDevice)
         var device = AudioObjectID(kAudioObjectUnknown)
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
         let result = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &property, 0, nil, &size, &device)
-        if result != noErr || size != MemoryLayout<AudioObjectID>.size { device = AudioObjectID(kAudioObjectUnknown) }
-        if device != audioDevice || audioListenersNeedRefresh {
-            observations.removeDeviceAudioListeners()
-            audioDevice = device
-            audioListenersNeedRefresh = false
-            if device != kAudioObjectUnknown { installAudioDeviceObservers(device) }
+        let valid = result == noErr && size == MemoryLayout<AudioObjectID>.size
+        if !valid { device = AudioObjectID(kAudioObjectUnknown) }
+        let alive = device != kAudioObjectUnknown && readUInt32(device, address(kAudioDevicePropertyDeviceIsAlive)) == 1
+        let uid = alive ? (readString(device, kAudioDevicePropertyDeviceUID) ?? "") : ""
+        return (device, valid, result, alive, uid)
+    }
+
+    private func readAudio(into next: inout SystemState, refreshOutputs: Bool) {
+        let start = beginReadEvidence("audio")
+        defer { finishReadEvidence("audio", since: start) }
+        let previousDevice = audioDevice
+        let previousUID = next.outputDeviceUID
+        let route = readDefaultAudioRoute()
+        let (device, validDefaultDevice, _, alive, uid) = route
+        let routeUnchanged = device == previousDevice
+        let uidUnchanged = uid == previousUID
+        let cachedRoute = !uid.isEmpty && next.outputDevices.contains { $0.id == device && $0.uid == uid }
+        let pendingFullRefresh = pendingParts.contains(.audio)
+        // Decide from the incoming health flags, before listener repair can
+        // clear them. Every failed skip condition attempts inventory exactly
+        // once in this audio read; no recovery path recursively reads audio.
+        let inventoryNeeded = refreshOutputs || audioSystemNeedsPolling || audioDeviceNeedsPolling
+            || outputDevicesNeedPolling || outputListenersNeedPolling || audioListenersNeedRefresh
+            || pendingFullRefresh || !validDefaultDevice || device == kAudioObjectUnknown
+            || !routeUnchanged || !alive || uid.isEmpty || !uidUnchanged || !cachedRoute
+        if audioRefreshCapture != nil {
+            var reasons: [AudioInventoryDecision.Reason] = []
+            if refreshOutputs { reasons.append(.fullRefresh) }
+            if audioSystemNeedsPolling { reasons.append(.systemPolling) }
+            if audioDeviceNeedsPolling { reasons.append(.devicePolling) }
+            if outputDevicesNeedPolling { reasons.append(.inventoryPolling) }
+            if outputListenersNeedPolling { reasons.append(.inventoryListenerPolling) }
+            if audioListenersNeedRefresh { reasons.append(.listenerInvalidation) }
+            if pendingFullRefresh { reasons.append(.pendingFullRefresh) }
+            if !validDefaultDevice { reasons.append(.invalidDefaultDevice) }
+            if device == kAudioObjectUnknown { reasons.append(.unknownDefaultDevice) }
+            if !routeUnchanged { reasons.append(.routeChanged) }
+            if !alive { reasons.append(.deviceNotAlive) }
+            if uid.isEmpty { reasons.append(.missingUID) }
+            if !uidUnchanged { reasons.append(.uidChanged) }
+            if !cachedRoute { reasons.append(.uncachedRoute) }
+            audioRefreshCapture?.inventoryDecisions.append(AudioInventoryDecision(
+                action: inventoryNeeded ? .scan : .skip, skipEligible: !inventoryNeeded, reasons: reasons))
         }
+        // A new UID behind the same numeric HAL ID invalidates both groups.
+        // Clear the cached ID set before scanning, or inventory registration
+        // would mistake the replacement for an already observed device.
+        if device != kAudioObjectUnknown, routeUnchanged, !uidUnchanged {
+            invalidateAudioDeviceObservers()
+        }
+        if inventoryNeeded { readOutputDevices(into: &next) }
         next.outputDevice = ""
         next.outputDeviceUID = ""
         next.outputDeviceID = nil
@@ -691,15 +755,34 @@ final class SystemController: NSObject, ObservableObject {
         next.canSetVolume = false
         next.muteAvailable = false
         next.canSetMute = false
-        guard result == noErr else {
+        // Full reads retain a fresh route/UID check after enumeration for
+        // setter validation. If HAL changed during the scan, leave controls
+        // unavailable and coalesce a later full read instead of scanning twice.
+        let verifiedRoute = inventoryNeeded ? readDefaultAudioRoute() : route
+        guard verifiedRoute.device == device, verifiedRoute.valid == validDefaultDevice,
+              verifiedRoute.alive == alive, verifiedRoute.uid == uid else {
+            invalidateAudioDeviceObservers()
+            audioDeviceNeedsPolling = true
+            next.capabilityMessages["audio"] = "The audio output changed while refreshing. Try again."
+            setError("audioRead", "CoreAudio changed the default output while reading audio choices.")
+            scheduleRead(.audio)
+            return
+        }
+        if device != audioDevice || audioListenersNeedRefresh || audioDeviceNeedsPolling {
+            observations.removeDeviceAudioListeners()
+            audioDevice = device
+            audioListenersNeedRefresh = false
+            if device != kAudioObjectUnknown { installAudioDeviceObservers(device) }
+        }
+        guard validDefaultDevice else {
             audioDeviceNeedsPolling = true
             next.capabilityMessages["audio"] = "CoreAudio could not read the default output device."
-            setError("audioRead", "CoreAudio could not read the default output device: \(statusDescription(result)).")
+            setError("audioRead", verifiedRoute.result == noErr ? "CoreAudio returned an invalid default output device size." :
+                "CoreAudio could not read the default output device: \(statusDescription(verifiedRoute.result)).")
             return
         }
         if device == kAudioObjectUnknown { audioDeviceNeedsPolling = false }
-        guard device != kAudioObjectUnknown,
-              readUInt32(device, address(kAudioDevicePropertyDeviceIsAlive)) == 1 else {
+        guard alive else {
             audioDeviceNeedsPolling = device != kAudioObjectUnknown
             next.capabilityMessages["audio"] = "No default audio output is connected."
             setError("audioRead", nil)
@@ -707,7 +790,7 @@ final class SystemController: NSObject, ObservableObject {
         }
         next.outputDevice = readString(device, kAudioObjectPropertyName) ?? "Audio output"
         next.outputDeviceID = device
-        next.outputDeviceUID = readString(device, kAudioDevicePropertyDeviceUID) ?? ""
+        next.outputDeviceUID = uid
         let transport = readUInt32(device, address(kAudioDevicePropertyTransportType))
         next.audioOutputIsBluetooth = transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE
         let levels = volumeAddresses(for: device, writableOnly: false).compactMap { readFloat(device, $0) }
@@ -736,18 +819,19 @@ final class SystemController: NSObject, ObservableObject {
 
     private func installAudioDeviceObservers(_ device: AudioObjectID) {
         audioDeviceNeedsPolling = false
-        var properties = [address(kAudioObjectPropertyName), address(kAudioDevicePropertyDeviceIsAlive),
+        let properties = [address(kAudioObjectPropertyName), address(kAudioDevicePropertyDeviceIsAlive),
                           address(kAudioDevicePropertyStreamConfiguration, scope: kAudioDevicePropertyScopeOutput)]
-        properties += volumeAddresses(for: device, writableOnly: false)
-        properties += muteAddresses(for: device, writableOnly: false)
         for property in properties {
             if !addAudioListener(device, property, deviceListener: true) { audioDeviceNeedsPolling = true }
+        }
+        for property in volumeAddresses(for: device, writableOnly: false) + muteAddresses(for: device, writableOnly: false) {
+            if !addAudioListener(device, property, deviceListener: true, levelOnly: true) { audioDeviceNeedsPolling = true }
         }
     }
 
     private func refreshAudioOutputObservers(_ devices: [AudioObjectID]) {
         let identifiers = Set(devices.filter { $0 != kAudioObjectUnknown })
-        guard identifiers != outputObservedDevices else { return }
+        guard identifiers != outputObservedDevices || outputListenersNeedPolling else { return }
         observations.removeOutputAudioListeners()
         outputObservedDevices = identifiers
         outputListenersNeedPolling = false
@@ -765,14 +849,29 @@ final class SystemController: NSObject, ObservableObject {
         }
     }
 
+    private func invalidateAudioDeviceObservers() {
+        observations.removeDeviceAudioListeners()
+        observations.removeOutputAudioListeners()
+        outputObservedDevices.removeAll()
+        audioListenersNeedRefresh = true
+    }
+
     private func addAudioListener(_ object: AudioObjectID, _ valueAddress: AudioObjectPropertyAddress,
-                                  deviceListener: Bool, outputListListener: Bool = false) -> Bool {
+                                  deviceListener: Bool, outputListListener: Bool = false, levelOnly: Bool = false) -> Bool {
         var property = valueAddress
         let currentGeneration = generation
+        let listenerID = UUID()
         let block: AudioObjectPropertyListenerBlock = { [weak self] count, changed in
-            let selectors = (0..<Int(count)).map { changed[$0].mSelector }
+            // HAL may include unrelated properties in the batch. Copy all
+            // addresses before returning; the pointer cannot cross the Task.
+            let addresses = (0..<Int(count)).map { changed[$0] }
+            let selectors = addresses.map(\.mSelector)
+            let matchingLevel = levelOnly && !addresses.isEmpty && addresses.allSatisfy {
+                $0.mSelector == valueAddress.mSelector && $0.mScope == valueAddress.mScope && $0.mElement == valueAddress.mElement
+            }
             Task { @MainActor [weak self] in
-                guard let self, self.running, self.generation == currentGeneration else { return }
+                guard let self, self.running, self.generation == currentGeneration,
+                      self.observations.audio.contains(where: { $0.id == listenerID }) else { return }
                 if selectors.contains(kAudioHardwarePropertyServiceRestarted) {
                     self.observations.audio.forEach { $0.remove() }
                     self.observations.audio.removeAll()
@@ -780,22 +879,20 @@ final class SystemController: NSObject, ObservableObject {
                     self.outputListenersNeedPolling = false
                     self.audioListenersNeedRefresh = true
                     self.installAudioSystemObservers()
-                } else if selectors.contains(kAudioHardwarePropertyDevices) {
+                } else if selectors.contains(kAudioHardwarePropertyDevices) || selectors.contains(kAudioDevicePropertyDeviceUID) {
                     // A replacement device can reuse the same numeric HAL ID.
-                    self.observations.removeOutputAudioListeners()
-                    self.outputObservedDevices.removeAll()
-                    self.audioListenersNeedRefresh = true
+                    self.invalidateAudioDeviceObservers()
                 } else if selectors.contains(kAudioDevicePropertyStreamConfiguration) ||
-                            selectors.contains(kAudioHardwarePropertyDefaultOutputDevice) ||
-                            selectors.contains(kAudioDevicePropertyDeviceUID) {
+                            selectors.contains(kAudioHardwarePropertyDefaultOutputDevice) {
                     self.audioListenersNeedRefresh = true
                 }
-                self.scheduleRead(deviceListener || outputListListener ? .audio : [.audio, .bluetooth])
+                let audioParts: SystemRefreshParts = matchingLevel ? .audioLevels : .audio
+                self.scheduleRead(deviceListener || outputListListener ? audioParts : [.audio, .bluetooth])
             }
         }
         let result = AudioObjectAddPropertyListenerBlock(object, &property, .main, block)
         if result == noErr {
-            observations.audio.append(SystemAudioListener(object: object, address: valueAddress, block: block,
+            observations.audio.append(SystemAudioListener(id: listenerID, object: object, address: valueAddress, block: block,
                                                          isDevice: deviceListener, isOutputList: outputListListener))
         }
         return result == noErr
@@ -1319,6 +1416,7 @@ private struct SystemRefreshParts: OptionSet {
     static let bluetooth = Self(rawValue: 1 << 3)
     static let focus = Self(rawValue: 1 << 4)
     static let lock = Self(rawValue: 1 << 5)
+    static let audioLevels = Self(rawValue: 1 << 6)
     static let all: Self = [.audio, .battery, .brightness, .bluetooth, .focus, .lock]
 }
 
@@ -1369,6 +1467,7 @@ private final class SystemBluetoothAccessRequest: NSObject, CBCentralManagerDele
 }
 
 private struct SystemAudioListener {
+    let id: UUID
     let object: AudioObjectID
     var address: AudioObjectPropertyAddress
     let block: AudioObjectPropertyListenerBlock
