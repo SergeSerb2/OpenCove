@@ -75,6 +75,71 @@ That mode does not launch an app or submit accepted app-state changes. `--render
 
 Data directories use `0700`; control descriptors and instance locks use `0600`. Existing unsafe paths are rejected without silently changing permissions. Use a fresh `mktemp -d` directory rather than repairing a user-data directory for verification. Malformed commands return HTTP 400; unavailable/unsupported actions return 409; persistence and internal failures return 500. Other HTTP framing/authentication failures have their own explicit status codes.
 
+### Local media and Calendar preference controls
+
+The development page has three explicit save groups. Each uses the existing
+authenticated `preferences` command and sends only its listed Boolean fields:
+
+- Save media visibility: `hideWhenMediaAppActive`.
+- Save media swipe controls: `swipeToSkip` and `reverseSkipSwipe`.
+- Save Calendar filters: `showDeclinedCalendarEvents` and
+  `excludeSubscribedCalendars`.
+
+These local choices can be saved while media, private integrations, and Calendar
+are off. The saves do not include or enable any protected source flag. The page
+labels explain this before the save. Reverse direction is disabled while swipe
+is off, but its checkbox value remains intact and is included in the swipe save.
+
+The controls share the page's explicit-edit drafts, serialized authenticated
+commands, error alert, fresh-state readback, and connection-generation guards.
+Polling and unrelated group saves keep unsaved edits. A successful response
+retires only drafts that still match the submitted values. A failed save keeps
+drafts and reads current app state without hiding the error. A disconnected or
+expired-token page disables inputs and saves, clears app-derived values, and
+keeps explicit drafts for reconnection. Group status text reports unsaved edits
+or choices read from the app. Labels, help text, focus outlines, and status
+regions support browser keyboard and accessibility use; live acceptance remains
+required.
+
+This control addition starts from frozen parent
+`e2aca48246e22f8fbd2b81943c9c3f4f0da7c65c`. Its implementation check is limited
+to source review, embedded-JavaScript parsing, and diff checks. Build and runtime
+proof belong to the parent integration run. Before accepting the controls:
+
+- In the real authenticated browser and an owned packaged session, keep all
+  protected readers off. Save each group through off → on → off, inspect each
+  request's exact field set, and require matching response and later poll values.
+  Reload and restart the owned session to check persistence. Require every
+  protected source flag to remain unchanged and off throughout these saves.
+- Make unsaved edits in all groups. Let polling occur, save a different group,
+  and edit a submitted field again while its save is in flight. Require the
+  newer draft and unrelated drafts to survive. Check real save failure and
+  rejected-command paths: the error remains visible, fresh app state is read,
+  drafts remain, and a later successful save clears only matching drafts.
+- Disconnect and reconnect the owned server, including during a pending save.
+  Check disabled inputs and save buttons, retained drafts, retirement of stale
+  responses, and fresh readback after reconnect. Check the real expired-token
+  path and reconnect with the newly issued authenticated URL. No old response
+  may clear or replace a newer connection's drafts or state.
+- With swipe on, choose reverse direction. Turn swipe off before saving and
+  require reverse to become disabled without losing its checked value. Save,
+  poll, reload, reconnect, and restart; the chosen reverse value must remain.
+  Turn swipe on again and require reverse to become editable with that value.
+  Check labels, help text, focus visibility, status/error announcements, and
+  keyboard reachability in the real browser at narrow and wide widths.
+- The parent separately owns real-source off → on → off acceptance. Enabling a
+  source needs its existing explicit authorization; these saves never enable it.
+  Require the strict owned-media C-PID prerequisite before any positive media
+  behavior claim. Its failed gate remains failed; injected media is no
+  substitute. Real Calendar filtering needs separately authorized owned data.
+  Native swipe feel, active-app hiding, Calendar results, and performance remain
+  separate runtime gates. M1 iCloud setup stays deferred.
+
+Keep private run evidence in `0700` directories with `0600` files. Record the
+exact integrated commit, source pointers, bundle identity, real browser steps,
+command results, and failed or unverified gates. Source parsing does not prove
+build success, browser behavior, native input, or design/performance parity.
+
 ### iCloud developer controls
 
 Authenticated `GET /state` and successful command responses include `settingsSync`:
