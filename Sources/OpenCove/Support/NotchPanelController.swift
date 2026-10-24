@@ -317,7 +317,7 @@ final class NotchPanelController: NSObject {
     private func retire(_ surface: CovePanelSurface) {
         surface.layoutRevision &+= 1
         surface.mediaScroll.cancel()
-        surface.scroll.reset()
+        surface.scroll.cancel()
         surface.content.onHover = nil
         surface.panel.onEvent = nil
         if let sheet = surface.panel.attachedSheet {
@@ -467,6 +467,7 @@ final class NotchPanelController: NSObject {
         // the destination. Retarget active motion only when its duration changes.
         guard surface.targetFrame != frame || (wasAnimating && surface.frameAnimationDuration != duration) else { return }
         surface.mediaScroll.cancel()
+        surface.scroll.cancel()
         surface.targetFrame = frame
         surface.hasLayout = true
         surface.layoutRevision &+= 1
@@ -614,7 +615,10 @@ final class NotchPanelController: NSObject {
     }
 
     private func cancelMediaSwipes() {
-        for surface in surfaces.values { surface.mediaScroll.cancel() }
+        for surface in surfaces.values {
+            surface.mediaScroll.cancel()
+            surface.scroll.cancel()
+        }
     }
 
     private func observeMediaSwipeActivityChanges() {
@@ -641,13 +645,8 @@ final class NotchPanelController: NSObject {
             .sink { [weak self] _ in self?.cancelMediaSwipes() }.store(in: &subscriptions)
     }
 
-    /// nil leaves the established activity route in charge; false passes the
-    /// event to its real control. A claimed media gesture never becomes a tab
-    /// gesture after cancellation, completion, a pause, or a metadata refresh.
-    private func handleMediaScroll(_ event: NSEvent, surface: CovePanelSurface) -> Bool? {
+    private func blocksPanelGesture(_ event: NSEvent, surface: CovePanelSurface) -> Bool {
         let point = event.locationInWindow
-        let topEdge = point.y >= surface.panel.frame.height - 6
-        let context = CoveMediaSkipContext.current(in: store)
         let editable = (surface.panel.firstResponder as? NSTextView)?.isEditable == true
         var control = surface.content.hitTest(surface.content.convert(point, from: nil))
         var nativeControl = false
@@ -655,18 +654,28 @@ final class NotchPanelController: NSObject {
             if view is NSControl || view is NSScrollView || view is NSTextView { nativeControl = true; break }
             control = view.superview
         }
-        let blocked = surface.content.hosting.isHidden || surface.frameAnimationInFlight
+        return surface.content.hosting.isHidden || surface.frameAnimationInFlight
             || surface.panel.contentView !== surface.content || surface.panel.attachedSheet != nil
             || menuTrackingDepth > 0 || mediaMenuTrackingDepth > 0 || mediaPopoverDepth > 0
             || editable || nativeControl || NSEvent.pressedMouseButtons != 0
             || event.windowNumber != surface.panel.windowNumber
             || !surface.content.bounds.contains(point)
+    }
+
+    /// nil leaves the established activity route in charge; false passes the
+    /// event to its real control. A claimed media gesture never becomes a tab
+    /// gesture after cancellation, completion, a pause, or a metadata refresh.
+    private func handleMediaScroll(_ event: NSEvent, surface: CovePanelSurface) -> Bool? {
+        let point = event.locationInWindow
+        let topEdge = point.y >= surface.panel.frame.height - 6
+        let context = CoveMediaSkipContext.current(in: store)
+        let blocked = blocksPanelGesture(event, surface: surface)
         let region = !blocked && !topEdge ? context.flatMap {
             CoveMediaRegionView.region(at: point, in: surface.content.hosting, window: surface.panel,
                                        context: $0, layoutRevision: surface.layoutRevision)
         } : nil
         if event.phase.contains(.began), event.momentumPhase.isEmpty {
-            surface.scroll.reset()
+            surface.scroll.cancel()
             let route: CoveMediaSkipScroll.Route
             if !store.preferences.swipeToSkip || topEdge { route = .navigation }
             else if blocked { route = .passthrough }
@@ -697,10 +706,12 @@ final class NotchPanelController: NSObject {
         guard started, surface.panel.isVisible, !screensAsleep,
               sessionActive, currentSessionIsActive(), !store.system.state.isLocked else {
             surface.mediaScroll.cancel()
+            surface.scroll.cancel()
             return false
         }
         if [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .swipe].contains(event.type) {
             surface.mediaScroll.cancel()
+            surface.scroll.cancel()
         }
         if event.type == .keyDown, event.keyCode == 53 {
             cancelHoverWork()
@@ -711,14 +722,24 @@ final class NotchPanelController: NSObject {
         }
         if event.type == .scrollWheel, store.preferences.swipeToSkip || surface.mediaScroll.ownsMediaGesture,
            let handled = handleMediaScroll(event, surface: surface) { return handled }
-        // A legacy unphased swipe cannot skip, nor fall through to horizontal
-        // activity cycling over media. The reserved top edge remains distinct.
-        if event.type == .swipe, store.preferences.swipeToSkip,
-           CoveMediaSkipContext.current(in: store) != nil,
-           event.locationInWindow.y < surface.panel.frame.height - 6,
-           abs(event.deltaX) > abs(event.deltaY) { return false }
+        // Controls keep scrolling even when their bounds overlap the expanded
+        // gesture strip. A rejected sequence cannot resume after leaving them.
+        if store.isExpanded, event.type == .scrollWheel || event.type == .swipe,
+           blocksPanelGesture(event, surface: surface)
+            || CoveMediaRegionView.containsInputExclusion(at: event.locationInWindow,
+                in: surface.content.hosting, window: surface.panel) {
+            surface.mediaScroll.cancel()
+            surface.scroll.cancel()
+            return false
+        }
+        // Legacy media swipes keep their vertical expand/collapse actions;
+        // only the reserved top edge can enter activity cycling.
+        let legacyMediaSwipe = event.type == .swipe && store.preferences.swipeToSkip
+            && CoveMediaSkipContext.current(in: store) != nil
+            && event.locationInWindow.y < surface.panel.frame.height - 6
+        if legacyMediaSwipe, abs(event.deltaX) > abs(event.deltaY) { return false }
         let inGestureStrip = !store.isExpanded || event.locationInWindow.y >= surface.panel.frame.height - surface.gestureStripHeight
-        guard inGestureStrip else { surface.scroll.reset(); return false }
+        guard inGestureStrip else { surface.scroll.cancel(); return false }
         switch event.type {
         case .otherMouseDown:
             guard event.buttonNumber == 2, !surface.content.hosting.isHidden,
@@ -734,12 +755,12 @@ final class NotchPanelController: NSObject {
             return true
         case .swipe:
             if abs(event.deltaX) > abs(event.deltaY) { changeTab(forward: event.deltaX < 0) }
-            else if event.deltaY < 0 { store.expand() }
+            else if event.deltaY < 0 { expandOrCycle(allowCycle: !legacyMediaSwipe) }
             else if event.deltaY > 0 { collapseOrDismiss() }
             return true
         case .scrollWheel:
             guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else {
-                surface.scroll.reset()
+                surface.scroll.cancel()
                 return false
             }
             if let gesture = surface.scroll.consume(event) {
@@ -747,7 +768,7 @@ final class NotchPanelController: NSObject {
                 switch gesture {
                 case .nextTab: changeTab(forward: true)
                 case .previousTab: changeTab(forward: false)
-                case .expand: store.expand()
+                case .expand: expandOrCycle()
                 case .collapse: collapseOrDismiss()
                 }
             }
@@ -758,6 +779,13 @@ final class NotchPanelController: NSObject {
     }
 
     private var enabledTabs: [CoveTab] { store.enabledTabs }
+
+    // Navigation keeps its original delta convention: negative Y is down.
+    // Media-owned vertical actions never call this section-cycle path.
+    private func expandOrCycle(allowCycle: Bool = true) {
+        if store.isExpanded && allowCycle { changeTab(forward: true) }
+        else { store.expand() }
+    }
 
     private func collapseOrDismiss() {
         cancelHoverWork()
@@ -996,8 +1024,15 @@ private struct CovePanelScroll {
     private var y: CGFloat = 0
     private var lastTime: TimeInterval = 0
     private var triggered = false
+    private var phased = false
 
-    mutating func reset() {
+    mutating func cancel() {
+        x = 0
+        y = 0
+        triggered = true
+    }
+
+    private mutating func reset() {
         x = 0
         y = 0
         lastTime = 0
@@ -1006,18 +1041,24 @@ private struct CovePanelScroll {
 
     mutating func consume(_ event: NSEvent) -> Gesture? {
         if event.phase.contains(.cancelled) || event.phase.contains(.ended) {
-            x = 0
-            y = 0
-            triggered = true
+            cancel()
+            phased = true
+            lastTime = event.timestamp
             return nil
         }
         // Momentum must not switch another tab or reopen a just-collapsed panel.
         guard event.momentumPhase.isEmpty else { return nil }
-        if event.phase.contains(.began) || event.phase.contains(.mayBegin) || event.timestamp - lastTime > 0.3 {
-            x = 0
-            y = 0
-            triggered = false
-        }
+        if event.phase.contains(.began) {
+            reset()
+            phased = true
+        } else if !event.phase.isEmpty {
+            guard phased else { return nil }
+        } else if !event.hasPreciseScrollingDeltas {
+            // Keep the existing coarse-wheel navigation and timeout policy.
+            phased = false
+        } else if phased { return nil }
+        // Pauses and mayBegin never rearm a completed/cancelled phased gesture.
+        if !phased && event.timestamp - lastTime > 0.3 { reset() }
         lastTime = event.timestamp
         guard !event.phase.contains(.cancelled), !triggered else { return nil }
         let multiplier: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
