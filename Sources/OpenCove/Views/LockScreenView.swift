@@ -172,7 +172,16 @@ private struct CoveLockSystemSection: View {
     var body: some View {
         HStack(spacing: 12) {
             if showBattery {
-                item(batteryText, symbol: batterySymbol)
+                VStack(alignment: .leading, spacing: 2) {
+                    item(batteryText, symbol: batterySymbol)
+                    if let estimate = batteryTimeEstimate {
+                        Text(estimate.visible)
+                            .font(.system(size: 9))
+                            .lineLimit(2)
+                            .accessibilityLabel(estimate.spoken)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             if showFocus {
                 item(controller.state.focusAvailable ? (controller.state.focusEnabled ? "Focus on" : "Focus off") : "Focus unavailable",
@@ -204,6 +213,25 @@ private struct CoveLockSystemSection: View {
         let percent = min(100, max(0, controller.state.batteryPercent))
         let level = percent <= 10 ? 0 : percent <= 35 ? 25 : percent <= 60 ? 50 : percent <= 85 ? 75 : 100
         return "battery.\(level)percent"
+    }
+
+    private var batteryTimeEstimate: (visible: String, spoken: String)? {
+        let state = controller.state
+        guard state.batteryAvailable, state.hasBattery, !state.isCharging, !state.isOnACPower,
+              let minutes = state.batteryTimeToEmptyMinutes, minutes >= 0, minutes <= Int(Int32.max) else { return nil }
+        // Preserve a reported zero without inventing sub-minute precision.
+        if minutes == 0 {
+            return ("0 min remaining (est.)", "Estimated battery time remaining: zero minutes")
+        }
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.hour, .minute]
+        formatter.zeroFormattingBehavior = .dropAll
+        formatter.unitsStyle = .abbreviated
+        let interval = TimeInterval(minutes) * 60
+        guard let visible = formatter.string(from: interval) else { return nil }
+        formatter.unitsStyle = .full
+        guard let spoken = formatter.string(from: interval) else { return nil }
+        return ("\(visible) remaining (est.)", "Estimated battery time remaining: \(spoken)")
     }
 
     private var connectivityText: String {

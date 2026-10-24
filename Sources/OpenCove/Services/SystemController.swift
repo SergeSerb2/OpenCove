@@ -166,6 +166,7 @@ final class SystemController: NSObject, ObservableObject {
 
     func stop() {
         running = false
+        state.batteryTimeToEmptyMinutes = nil
         generation += 1
         refreshWork?.cancel()
         refreshWork = nil
@@ -981,6 +982,8 @@ final class SystemController: NSObject, ObservableObject {
     private func readBattery(into next: inout SystemState) {
         let start = beginReadEvidence("battery")
         defer { finishReadEvidence("battery", since: start) }
+        // Never retain an estimate across an unknown, unavailable or AC snapshot.
+        next.batteryTimeToEmptyMinutes = nil
         guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let list = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] else {
             next.batteryAvailable = false
@@ -991,7 +994,8 @@ final class SystemController: NSObject, ObservableObject {
         next.batteryAvailable = true
         next.hasBattery = false
         next.isCharging = false
-        next.isOnACPower = IOPSGetProvidingPowerSourceType(snapshot)?.takeUnretainedValue() as String? == kIOPSACPowerValue
+        let providingPowerSource = IOPSGetProvidingPowerSourceType(snapshot)?.takeUnretainedValue() as String?
+        next.isOnACPower = providingPowerSource == kIOPSACPowerValue
         for source in list {
             guard let description = IOPSGetPowerSourceDescription(snapshot, source)?.takeUnretainedValue() as? [String: Any],
                   description[kIOPSTypeKey] as? String == kIOPSInternalBatteryType,
@@ -1004,6 +1008,22 @@ final class SystemController: NSObject, ObservableObject {
                 next.batteryPercent = Int(min(100, max(0, (100 * capacity.doubleValue / maximum.doubleValue).rounded())))
             } else {
                 next.batteryAvailable = false
+            }
+            // IOPSKeys.h: signed integer minutes, -1 while calculating; valid only
+            // on battery power with Is Charging == kCFBooleanFalse. This uses the
+            // same snapshot, never a percentage-derived or separately queried time.
+            if next.batteryAvailable,
+               providingPowerSource == kIOPSBatteryPowerValue,
+               description[kIOPSPowerSourceStateKey] as? String == kIOPSBatteryPowerValue,
+               let present = description[kIOPSIsPresentKey] as? NSNumber,
+               CFGetTypeID(present) == CFBooleanGetTypeID(), present.boolValue,
+               let charging = description[kIOPSIsChargingKey] as? NSNumber,
+               CFGetTypeID(charging) == CFBooleanGetTypeID(), !charging.boolValue,
+               let remaining = description[kIOPSTimeToEmptyKey] as? NSNumber,
+               CFGetTypeID(remaining) == CFNumberGetTypeID(),
+               remaining.doubleValue.isFinite,
+               let minutes = Int32(exactly: remaining.doubleValue), minutes >= 0 {
+                next.batteryTimeToEmptyMinutes = Int(minutes)
             }
             break
         }

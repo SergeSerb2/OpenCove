@@ -23,6 +23,8 @@ struct SystemState: Codable, Equatable {
     var brightness = 0.0
     var isMuted = false
     var batteryPercent = 0
+    // Reported IOPowerSources estimate in minutes; nil means unknown or inapplicable.
+    var batteryTimeToEmptyMinutes: Int? = nil
     var isCharging = false
     var hasBattery = false
     var outputDevice = ""
