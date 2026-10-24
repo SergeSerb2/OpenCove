@@ -25,7 +25,11 @@ struct CoveEventActivity: Equatable {
 @MainActor
 final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSharingServicePickerDelegate, NSSharingServiceDelegate {
     @Published var events: [CoveEvent] = []
-    @Published var calendarAuthorization = "Not requested"
+    @Published var calendarAuthorization = "Not requested" {
+        willSet {
+            if newValue != "Authorized" { retireCalendarCacheAuthority() }
+        }
+    }
     @Published private(set) var calendarSources: [CoveCalendarSource] = []
     @Published private(set) var excludedCalendarIdentifiers: Set<String> = []
     @Published private(set) var selectedCalendarDate = Calendar.current.startOfDay(for: Date())
@@ -67,13 +71,20 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     // Internal route consumers receive filtered source events, independent of UI redaction.
     var onRoutingEvents: (([CoveEvent]) -> Void)?
     var routingEvents: [CoveEvent] {
-        calendarEnabled && calendarSettingsValid && EKEventStore.authorizationStatus(for: .event) == .fullAccess
-            ? upcomingCalendarEvents : []
+        guard calendarEnabled && calendarSettingsValid && EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
+            retireCalendarCacheAuthority()
+            return []
+        }
+        return upcomingCalendarEvents
     }
 
     var hasVisibleCalendarActivity: Bool {
-        calendarEnabled && calendarSettingsValid && !calendarDetailsHidden
-            && EKEventStore.authorizationStatus(for: .event) == .fullAccess && eventActivity != nil
+        guard calendarEnabled && calendarSettingsValid && !calendarDetailsHidden
+            && EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
+            retireCalendarCacheAuthority()
+            return false
+        }
+        return eventActivity != nil
     }
 
     let dataDirectory: URL
@@ -96,6 +107,10 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     private var rawCalendarSources: [CoveCalendarSource] = []
     private var loadedCalendarRange: DateInterval?
     private var loadedCalendarTimeZone: String?
+    private var calendarCacheReadOutcome: CoveCalendarReader.ReadOutcome = .unknown
+    // Separate from query rejection: privacy can retire authority without changing
+    // the existing read, routing, or presentation lifecycle.
+    private var calendarCacheAuthorityRevision = 0
     private var calendarClockTimeZone = TimeZone.current.identifier
     private var calendarAlertReceipts: [String: Date] = [:]
     private var lastCalendarActivityCheck: Date?
@@ -233,6 +248,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     }
 
     func stop() {
+        retireCalendarCacheAuthority()
         started = false
         countdown?.invalidate()
         countdown = nil
@@ -279,6 +295,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
             lastError = "Calendar access needs NSCalendarsFullAccessUsageDescription in the OpenCove app bundle."
             return
         }
+        retireCalendarCacheAuthority()
         calendarAccessTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer { if !Task.isCancelled { self.calendarAccessTask = nil } }
@@ -300,6 +317,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     /// This never requests permission. EventKit's synchronous reads run on a serial worker.
     func refreshCalendar() {
         defer { startCalendarActivityClock() }
+        retireCalendarCacheAuthority()
         loadCalendarSettingsIfNeeded()
         updateCalendarDay()
         calendarReadRevision += 1
@@ -341,10 +359,12 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
         let request = CoveCalendarReader.Request(
             gridRange: gridRange,
             upcomingRange: DateInterval(start: calendar.startOfDay(for: now), end: upcomingEnd),
+            calendar: calendar, revision: revision,
             excludedIdentifiers: excludedCalendarIdentifiers,
             showDeclinedEvents: showDeclinedCalendarEvents,
             excludeSubscribedCalendars: excludeSubscribedCalendars, cancellation: cancellation
         )
+        let authorityRevision = calendarCacheAuthorityRevision
         calendarReadTask = Task { @MainActor [weak self] in
             // Rapid date clicks and batches of EventKit notifications need only one read.
             do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
@@ -363,6 +383,10 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
             self.monthCalendarEvents = snapshot.gridEvents
             self.loadedCalendarRange = gridRange
             self.loadedCalendarTimeZone = calendar.timeZone.identifier
+            if self.started, self.calendarEnabled, self.calendarSettingsValid, !self.calendarDetailsHidden,
+               self.calendarCacheAuthorityRevision == authorityRevision {
+                self.calendarCacheReadOutcome = snapshot.outcome
+            }
             self.publishCalendarPresentation()
             self.updateCalendarActivity()
         }
@@ -376,6 +400,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
         selectedDateFollowsToday = calendar.isDateInToday(date)
         let range = Self.monthGridRange(containing: date, calendar: calendar)
         if isRefreshingCalendar || loadedCalendarRange != range || loadedCalendarTimeZone != calendar.timeZone.identifier {
+            retireCalendarCacheAuthority()
             monthCalendarEvents = []
             refreshCalendar()
         }
@@ -385,11 +410,47 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     /// Call loadSelectedDate first for a date outside the loaded grid; observe this controller
     /// for the asynchronous result. A SwiftUI body can safely call this cache-only API.
     func events(on date: Date) -> [CoveEvent] {
-        guard calendarEnabled, EKEventStore.authorizationStatus(for: .event) == .fullAccess,
-              let day = Calendar.current.dateInterval(of: .day, for: date),
+        guard calendarEnabled, EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
+            retireCalendarCacheAuthority()
+            return []
+        }
+        guard let day = Calendar.current.dateInterval(of: .day, for: date),
               loadedCalendarTimeZone == Calendar.current.timeZone.identifier,
               let range = loadedCalendarRange, day.start >= range.start, day.end <= range.end else { return [] }
         return monthCalendarEvents.filter { Self.overlaps($0, day) }.map(calendarPresentation)
+    }
+
+    enum CachedCalendarDayEligibility {
+        case unavailable
+        case nonempty
+        case completedEmpty
+    }
+
+    /// Only the last accepted local query under the guards observed by this controller.
+    /// This does not certify atomic OS permission, cloud-server completeness, undelivered
+    /// permission/time-zone changes, or independent runtime proof. The caller supplies
+    /// its civil calendar context; this projection never samples OS status or loads a day.
+    /// Empty means no overlapping events under the captured filters, not no personal events.
+    func cachedCalendarDayEligibility(on date: Date, calendar: Calendar) -> CachedCalendarDayEligibility {
+        guard started, calendarEnabled, calendarReaderEnabled, calendarSettingsLoaded, calendarSettingsValid,
+              !calendarDetailsHidden, !isRefreshingCalendar, calendarAccessTask == nil, calendarAuthorization == "Authorized",
+              date.timeIntervalSinceReferenceDate.isFinite,
+              case let .completed(coverage) = calendarCacheReadOutcome,
+              coverage.revision == calendarReadRevision, coverage.includedSourcesAvailable,
+              coverage.calendar == calendar,
+              coverage.calendar.timeZone.identifier == calendar.timeZone.identifier,
+              loadedCalendarTimeZone == calendar.timeZone.identifier,
+              loadedCalendarRange == coverage.gridRange,
+              let day = calendar.dateInterval(of: .day, for: date),
+              day.start >= coverage.gridRange.start, day.end <= coverage.gridRange.end,
+              coverage.queriedRanges.contains(where: { day.start >= $0.start && day.end <= $0.end }),
+              let hasEvents = coverage.dayHasEvents[day] else { return .unavailable }
+        return hasEvents ? .nonempty : .completedEmpty
+    }
+
+    private func retireCalendarCacheAuthority() {
+        calendarCacheAuthorityRevision += 1
+        calendarCacheReadOutcome = .retired
     }
 
     var currentEvent: CoveEvent? {
@@ -419,6 +480,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
             || self.excludeSubscribedCalendars != excludeSubscribedCalendars
         let readerEnabled = enabled || (readerEnabled ?? enabled)
         guard calendarEnabled != enabled || calendarReaderEnabled != readerEnabled || filtersChanged else { return }
+        retireCalendarCacheAuthority()
         calendarEnabled = enabled
         calendarReaderEnabled = readerEnabled
         showDeclinedCalendarEvents = showDeclinedEvents
@@ -435,6 +497,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     }
 
     private func clearCalendarSnapshot() {
+        retireCalendarCacheAuthority()
         isRefreshingCalendar = false
         upcomingCalendarEvents = []
         monthCalendarEvents = []
@@ -454,6 +517,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
 
     func setExcludedCalendarIdentifiers(_ identifiers: Set<String>) {
         loadCalendarSettingsIfNeeded()
+        retireCalendarCacheAuthority()
         calendarSettingsValid = true
         excludedCalendarIdentifiers = Set(identifiers.filter { !$0.isEmpty })
         saveCalendarSettings()
@@ -487,7 +551,9 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     /// Call from the parent's real lock-state callback. This does not infer a lock state.
     /// Published events, activity, date queries, and future HUDs all use the redacted form.
     func setCalendarPrivacy(isLocked: Bool, hideSensitiveDetails: Bool) {
-        calendarDetailsHidden = isLocked && hideSensitiveDetails
+        let hidden = isLocked && hideSensitiveDetails
+        if calendarDetailsHidden != hidden { retireCalendarCacheAuthority() }
+        calendarDetailsHidden = hidden
         publishCalendarPresentation()
         updateCalendarActivity()
     }
@@ -543,7 +609,10 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     }
 
     private func knownCalendarEvent(_ id: String) -> CoveEvent? {
-        guard calendarEnabled, EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return nil }
+        guard calendarEnabled, EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
+            retireCalendarCacheAuthority()
+            return nil
+        }
         return (upcomingCalendarEvents + monthCalendarEvents).first {
             $0.id == id && !excludedCalendarIdentifiers.contains($0.calendarIdentifier)
         }
@@ -617,6 +686,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
                 guard self.calendarEnabled else { return }
                 if self.updateCalendarDay() { self.refreshCalendar() }
                 if EKEventStore.authorizationStatus(for: .event) != .fullAccess {
+                    self.retireCalendarCacheAuthority()
                     if !self.events.isEmpty || !self.calendarSources.isEmpty { self.refreshCalendar() }
                     return
                 }
@@ -633,6 +703,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
         let calendar = Calendar.current
         let day = calendar.startOfDay(for: Date())
         guard day != calendarToday || calendarClockTimeZone != calendar.timeZone.identifier else { return false }
+        retireCalendarCacheAuthority()
         calendarClockTimeZone = calendar.timeZone.identifier
         calendarToday = day
         if selectedDateFollowsToday { selectedCalendarDate = day }
@@ -642,7 +713,10 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
 
     private func updateCalendarActivity() {
         defer { startCalendarActivityClock() }
-        guard calendarEnabled, EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return }
+        guard calendarEnabled, EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
+            retireCalendarCacheAuthority()
+            return
+        }
         let now = Date()
         // Publish only changed values. No one-second month-grid fetch or EventKit work.
         if events.contains(where: { $0.end <= now }) { publishCalendarPresentation() }
@@ -735,6 +809,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
         } else if damagedPersistenceFiles.contains("calendar-settings.json") {
             // A rejected symlink can have a missing target. Only the no-follow
             // loader knows whether this is a first run or unreadable saved policy.
+            retireCalendarCacheAuthority()
             calendarSettingsValid = false
             calendarAlertsEnabled = false
             lastError = "Saved calendar exclusions could not be read. Calendar reads are paused. Choose calendar sources again to replace the damaged settings."
@@ -1143,6 +1218,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
 
     private func handleClockChange() {
         guard started else { return }
+        retireCalendarCacheAuthority()
         timerClockRevision &+= 1
         updateTimer()
         updateCountdown()
@@ -1555,13 +1631,36 @@ private final class CoveCalendarReader: @unchecked Sendable {
     struct Request {
         let gridRange: DateInterval
         let upcomingRange: DateInterval
+        let calendar: Calendar
+        // The existing read revision also changes for filter/source-policy refreshes.
+        let revision: Int
         let excludedIdentifiers: Set<String>
         let showDeclinedEvents: Bool
         let excludeSubscribedCalendars: Bool
         let cancellation: CoveCalendarReadCancellation
     }
 
+    struct Coverage {
+        let gridRange: DateInterval
+        let queriedRanges: [DateInterval]
+        let calendar: Calendar
+        let revision: Int
+        let includedSourcesAvailable: Bool
+        // Derived only on the real query's final path, never from an old empty array.
+        // Whole civil days only; no raw event or source content reaches the projection.
+        let dayHasEvents: [DateInterval: Bool]
+    }
+
+    enum ReadOutcome {
+        case unknown
+        case notRead
+        case retired
+        case completed(Coverage)
+    }
+
     struct Snapshot {
+        // Early exits, including no included calendars, carry no completion coverage.
+        var outcome: ReadOutcome = .notRead
         var sources: [CoveCalendarSource] = []
         var gridEvents: [CoveEvent] = []
         var upcomingEvents: [CoveEvent] = []
@@ -1636,7 +1735,23 @@ private final class CoveCalendarReader: @unchecked Sendable {
             let titleOrder = $0.title.localizedStandardCompare($1.title)
             return titleOrder == .orderedSame ? $0.id < $1.id : titleOrder == .orderedAscending
         }
-        return Snapshot(sources: sources,
+        // Reuse the existing overlap rule and filtered query values. This is derived
+        // cache metadata, with no additional EventKit query, source enumeration, or
+        // permission getter. Missing/partial civil days remain unknown.
+        var dayHasEvents: [DateInterval: Bool] = [:]
+        var cursor = request.gridRange.start
+        while cursor < request.gridRange.end,
+              let day = request.calendar.dateInterval(of: .day, for: cursor),
+              day.start == cursor, day.end > cursor, day.end <= request.gridRange.end {
+            dayHasEvents[day] = values.contains { ActivityController.overlaps($0, day) }
+            cursor = day.end
+        }
+        // Completion describes this nonthrowing local query path under its observed
+        // guards. It is not an atomic permission snapshot or server completeness claim.
+        let coverage = Coverage(gridRange: request.gridRange, queriedRanges: ranges,
+                                calendar: request.calendar, revision: request.revision,
+                                includedSourcesAvailable: !included.isEmpty, dayHasEvents: dayHasEvents)
+        return Snapshot(outcome: .completed(coverage), sources: sources,
                         gridEvents: values.filter { ActivityController.overlaps($0, request.gridRange) },
                         upcomingEvents: values.filter { ActivityController.overlaps($0, request.upcomingRange) })
     }
