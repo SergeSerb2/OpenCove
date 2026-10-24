@@ -42,6 +42,19 @@ final class NotchPanelController: NSObject {
         var duo: Bool
         var activeSourceHidden: Bool
     }
+    private struct MediaSwipeEventInputs: Equatable {
+        let event: CoveEvent
+        let phase: CoveEventActivity.Phase
+
+        init(_ activity: CoveEventActivity) {
+            event = activity.event
+            phase = activity.phase
+        }
+    }
+    private struct MediaSwipeTimerInputs: Equatable {
+        let timer: CoveTimerState
+        let identifier: UUID
+    }
     private var lastLayoutInputs: LayoutInputs?
     private var layoutInputs: LayoutInputs {
         LayoutInputs(preferences: store.preferences, expanded: store.isExpanded, tab: store.selectedTab,
@@ -111,9 +124,8 @@ final class NotchPanelController: NSObject {
         // Invalidate on incoming values, including A -> B -> A before a layout
         // job runs. Elapsed/artwork updates are excluded; any renewed target
         // (including a controller identity change on metadata) still cancels.
-        for publisher in [store.objectWillChange, store.activities.objectWillChange] {
-            publisher.sink { [weak self] _ in self?.cancelMediaSwipes() }.store(in: &subscriptions)
-        }
+        store.objectWillChange.sink { [weak self] _ in self?.cancelMediaSwipes() }.store(in: &subscriptions)
+        observeMediaSwipeActivityChanges()
         store.media.$state.map { CoveMediaSkipItem($0) }.removeDuplicates().dropFirst()
             .sink { [weak self] _ in self?.cancelMediaSwipes() }.store(in: &subscriptions)
         observe(CoveMediaRegionView.didChange) { $0.cancelMediaSwipes() }
@@ -603,6 +615,30 @@ final class NotchPanelController: NSObject {
 
     private func cancelMediaSwipes() {
         for surface in surfaces.values { surface.mediaScroll.cancel() }
+    }
+
+    private func observeMediaSwipeActivityChanges() {
+        let activities = store.activities
+        // @Published sends objectWillChange before committing its value. Use
+        // each incoming value synchronously, not a stale read or a layout job.
+        // Only remainingSeconds is omitted: event content, identity, phase and
+        // nil/non-nil availability still invalidate, including A -> B -> A.
+        activities.$eventActivity.map { $0.map(MediaSwipeEventInputs.init) }.removeDuplicates().dropFirst()
+            .sink { [weak self] _ in self?.cancelMediaSwipes() }.store(in: &subscriptions)
+        // startTimer/cancelTimer replace the identifier before publishing timer.
+        // Compare it with the incoming timer, even when that value is unchanged.
+        activities.$timer.compactMap { [weak activities] timer -> MediaSwipeTimerInputs? in
+            activities.map { MediaSwipeTimerInputs(timer: timer, identifier: $0.timerActivityIdentifier) }
+        }.removeDuplicates().dropFirst()
+            .sink { [weak self] _ in self?.cancelMediaSwipes() }.store(in: &subscriptions)
+        // These inputs can revoke Calendar presentation or automatic Duo before
+        // eventActivity changes. They must not wait for the deferred layout.
+        activities.$calendarEnabled.removeDuplicates().dropFirst()
+            .sink { [weak self] _ in self?.cancelMediaSwipes() }.store(in: &subscriptions)
+        activities.$calendarAuthorization.removeDuplicates().dropFirst()
+            .sink { [weak self] _ in self?.cancelMediaSwipes() }.store(in: &subscriptions)
+        activities.$calendarDetailsHidden.removeDuplicates().dropFirst()
+            .sink { [weak self] _ in self?.cancelMediaSwipes() }.store(in: &subscriptions)
     }
 
     /// nil leaves the established activity route in charge; false passes the
