@@ -5,9 +5,23 @@
 The parent integration also changes today's date foreground from white to
 black on the existing red circle. The prior mounted captures measured an
 unchanged peak of 3.446:1 for that label. The red fill, bold font, selection
-priority, date actions and geometry are preserved. This follow-up needs its
-own rebuilt mounted-view measurements; the earlier results below do not prove
-the new today foreground.
+priority, date actions and geometry are preserved.
+
+This follow-up passed optimized Release and Debug builds at `757cc5f`. Paired
+mounted full/Duo captures through both `live-notch` and
+`live-notch-compositor` measured today's strongest observed stroke contrast
+increasing from 3.440–3.446:1 to 6.094–6.105:1. The source-identified before
+bundle already had the weekday/spillover change, so this comparison isolates
+the today foreground. Each panel changed 74 pixels, all inside the same
+observed red-circle bounds. Native PNG profiles were converted to sRGB without
+resizing or flattening for measurement. Both owned processes stopped and their
+private descriptors were removed. Damaged Calendar settings, empty events and
+absent Calendar activity stayed unchanged.
+
+These are peak pixel observations. They do not establish reliable interior
+coverage, a full-label contrast pass, 2× output, accessibility-setting changes
+or native hit testing. The earlier results below concern the separate
+weekday/spillover change and retain their original limitations.
 
 The implementation started as a source-only handoff from base
 `75fbec47915d0c32dc3d8f5985fdee5d762615db`. Fresh isolated acceptance now covers
