@@ -96,6 +96,36 @@ These fields support source review and later acceptance work. Static parsing
 does not typecheck the implementation or prove live listener delivery, ID
 reuse recovery, physical key delivery, hardware behavior or energy use.
 
+## Recorded packaged comparison
+
+On October 23, 2026, optimized arm64 development bundles exercised the actual
+read-only `hardwareControl` entry with the same real output route. The baseline
+performed 26 inventory reads for 26 requests. The candidate recorded 26 eligible
+skips and zero inventory reads. Adjacent full reads agreed on the current route,
+volume, mute, capabilities and output inventory. Native picker, full refresh,
+CLI, invalid caller, authentication and unavailable output-selection checks also
+passed, with zero instrumented setter attempts. Release and Debug builds passed.
+
+A separate baseline/candidate/candidate/baseline comparison used 256 requests
+per block at a 40 ms cadence, after 16 warm-up requests and one idle second.
+Launch and rendering were outside the measured intervals. Each block checked
+the packaged source, PID, process-start counter and unchanged route/state.
+
+| Block | Inventory entries | App CPU seconds | Interrupt wakeups | Final footprint MiB |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline 1 | 256 | 0.813 | 18 | 53.91 |
+| Candidate 1 | 0 | 0.661 | 21 | 54.80 |
+| Candidate 2 | 0 | 0.675 | 21 | 54.67 |
+| Baseline 2 | 256 | 0.769 | 21 | 53.69 |
+
+Each interval lasted about 10.21 seconds. `proc_pid_rusage` CPU counters were
+converted from Mach ticks using the actual timebase. Footprint values are end
+samples, not peaks. These four app-PID samples support lower CPU cost for this
+explicit steady read workload. Wakeup and footprint savings are not established.
+They exclude `coreaudiod`, drivers and WindowServer work, and do not establish
+physical-key latency, natural callback delivery, recovery, energy savings or an
+Alcove comparison. All measured app owners stopped after their blocks.
+
 Apple's primary documentation defines
 [callback batches](https://developer.apple.com/documentation/coreaudio/audioobjectpropertylistenerblock),
 the [three address fields](https://developer.apple.com/documentation/coreaudio/audioobjectpropertyaddress)
