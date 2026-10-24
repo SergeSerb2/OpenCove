@@ -26,8 +26,19 @@ final class NotchPanelController: NSObject {
     private var mediaPopoverDepth = 0
     private var lifecycleRevision: UInt = 0
     private var acceptingMiddleClick = false
-    // Only the current activation's result is retained. No app identity is saved.
+    // Only the current activation's result is cached. Request identity is private
+    // and transient; it is never persisted or exposed in the public snapshot.
     private var frontmostDeclaresGames = false
+    private struct DeclaredGameCategoryRequest: Sendable {
+        let generation: UUID
+        let processIdentifier: pid_t
+        let bundleIdentifier: String?
+        let bundleURL: URL
+    }
+    private var declaredGameCategoryGeneration = UUID()
+    private var declaredGameCategoryRead: DeclaredGameCategoryRequest?
+    private var pendingDeclaredGameCategoryRead: DeclaredGameCategoryRequest?
+    private let declaredGameCategoryQueue = DispatchQueue(label: "OpenCove.declared-game-category", qos: .utility)
     struct InputAcceptanceError: LocalizedError {
         let message: String
         var errorDescription: String? { message }
@@ -90,26 +101,73 @@ final class NotchPanelController: NSObject {
     }
 
     private func refreshDeclaredGameCategory(enabled: Bool) {
+        revokeDeclaredGameCategoryRead()
+        // Opt-out must return before obtaining any frontmost bundle metadata.
+        // The incoming preference can precede its @Published stored value.
+        guard started, enabled, !screensAsleep, sessionActive, currentSessionIsActive(),
+              !store.system.state.isLocked, let application = NSWorkspace.shared.frontmostApplication,
+              application.isActive, !application.isTerminated,
+              application.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              let bundleURL = application.bundleURL, bundleURL.isFileURL else { return }
+        enqueueDeclaredGameCategoryRead(DeclaredGameCategoryRequest(
+            generation: declaredGameCategoryGeneration, processIdentifier: application.processIdentifier,
+            bundleIdentifier: application.bundleIdentifier, bundleURL: bundleURL))
+    }
+
+    private func revokeDeclaredGameCategoryRead() {
+        declaredGameCategoryGeneration = UUID()
+        pendingDeclaredGameCategoryRead = nil
         frontmostDeclaresGames = false
         // An off/on/off sequence can retire surfaces while ending with the same
         // preferences. Force the pending layout to restore that original state.
         lastLayoutInputs = nil
-        // Opt-out must return before obtaining any frontmost bundle metadata.
-        guard started, enabled, let application = NSWorkspace.shared.frontmostApplication,
-              application.isActive, !application.isTerminated,
-              application.processIdentifier != ProcessInfo.processInfo.processIdentifier,
-              let bundleURL = application.bundleURL, bundleURL.isFileURL else { return }
-        frontmostDeclaresGames = Self.declaresGames(in: bundleURL)
-        if frontmostDeclaresGames, store.hud == nil {
-            // Also retire synchronously for an incoming opt-in, before @Published
-            // commits the preference and the coalesced layout job runs.
-            hideForSessionBoundary()
+        // Do not free the in-flight slot here. Cancellation cannot interrupt
+        // blocking filesystem I/O; even stop/start must wait for its return.
+    }
+
+    private func enqueueDeclaredGameCategoryRead(_ request: DeclaredGameCategoryRequest) {
+        guard declaredGameCategoryRead == nil else {
+            // Keep at most one latest request without scheduling another worker.
+            pendingDeclaredGameCategoryRead = request
+            return
         }
+        declaredGameCategoryRead = request
+        declaredGameCategoryQueue.async { [weak self] in
+            let declaresGames = Self.declaresGames(in: request.bundleURL)
+            Task { @MainActor [weak self] in
+                self?.completeDeclaredGameCategoryRead(request, declaresGames: declaresGames)
+            }
+        }
+    }
+
+    private func completeDeclaredGameCategoryRead(_ request: DeclaredGameCategoryRequest, declaresGames: Bool) {
+        guard declaredGameCategoryRead?.generation == request.generation else { return }
+        declaredGameCategoryRead = nil
+        let pending = pendingDeclaredGameCategoryRead
+        pendingDeclaredGameCategoryRead = nil
+        let current = pending ?? request
+        // Check the actual public frontmost identity again on MainActor, both
+        // before starting deferred I/O and immediately before accepting a result.
+        guard current.generation == declaredGameCategoryGeneration, started,
+              store.preferences.hideForGamesCategory, !screensAsleep, sessionActive,
+              currentSessionIsActive(), !store.system.state.isLocked,
+              let application = NSWorkspace.shared.frontmostApplication,
+              application.isActive, !application.isTerminated,
+              application.processIdentifier == current.processIdentifier,
+              application.bundleIdentifier == current.bundleIdentifier,
+              application.bundleURL == current.bundleURL else { return }
+        if pending != nil {
+            enqueueDeclaredGameCategoryRead(current)
+            return
+        }
+        frontmostDeclaresGames = declaresGames
+        lastLayoutInputs = nil
+        refreshLayout()
     }
 
     /// Exact public LSApplicationCategoryType values from Apple's Launch Services
     /// Keys reference, tables 2 and 3. Unknown declarations never match.
-    private static let declaredGameCategories: Set<String> = [
+    private nonisolated static let declaredGameCategories: Set<String> = [
         "public.app-category.games", "public.app-category.action-games",
         "public.app-category.adventure-games", "public.app-category.arcade-games",
         "public.app-category.board-games", "public.app-category.card-games",
@@ -122,7 +180,7 @@ final class NotchPanelController: NSObject {
         "public.app-category.trivia-games", "public.app-category.word-games"
     ]
 
-    private static func declaresGames(in frontmostBundleURL: URL) -> Bool {
+    private nonisolated static func declaresGames(in frontmostBundleURL: URL) -> Bool {
         // Reject ambiguous paths before any I/O. Bound the path and walk depth;
         // never normalize or resolve symlinks and then reopen an absolute path.
         let path = frontmostBundleURL.path
@@ -240,7 +298,10 @@ final class NotchPanelController: NSObject {
         // commits it or a deferred geometry refresh can run.
         store.system.$state.sink { [weak self] state in
             guard let self, self.started else { return }
-            if state.isLocked { self.hideForSessionBoundary() }
+            if state.isLocked {
+                self.revokeDeclaredGameCategoryRead()
+                self.hideForSessionBoundary()
+            }
         }.store(in: &subscriptions)
 
         observe(NSApplication.didChangeScreenParametersNotification) { $0.refreshLayout() }
@@ -260,11 +321,13 @@ final class NotchPanelController: NSObject {
         for name in [NSWorkspace.screensDidSleepNotification, NSWorkspace.willSleepNotification] {
             observe(name, center: workspace) { controller in
                 controller.screensAsleep = true
+                controller.revokeDeclaredGameCategoryRead()
                 controller.hideForSessionBoundary()
             }
         }
         observe(NSWorkspace.sessionDidResignActiveNotification, center: workspace) { controller in
             controller.sessionActive = false
+            controller.revokeDeclaredGameCategoryRead()
             controller.hideForSessionBoundary()
         }
         observe(NSWorkspace.sessionDidBecomeActiveNotification, center: workspace) { controller in
@@ -284,6 +347,7 @@ final class NotchPanelController: NSObject {
     func stop() {
         guard started else { return }
         started = false
+        revokeDeclaredGameCategoryRead()
         sessionActive = false
         lifecycleRevision &+= 1
         cancelHoverWork()
@@ -297,7 +361,6 @@ final class NotchPanelController: NSObject {
         hoveredDisplays.removeAll()
         lastPreferences = nil
         lastLayoutInputs = nil
-        frontmostDeclaresGames = false
         mediaMenuTrackingDepth = 0
         mediaPopoverDepth = 0
     }
