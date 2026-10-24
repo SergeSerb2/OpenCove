@@ -339,6 +339,16 @@ final class DevelopmentServer {
         func requireCapability(_ available: Bool, _ message: String) throws {
             guard available else { throw ControlError.rejected(message) }
         }
+        func settingsSyncAction(_ available: Bool, _ operation: () -> Void) throws {
+            guard Set(values.keys) == ["action"] else {
+                throw ControlError.invalid("Settings sync actions accept only action, with no arguments.")
+            }
+            // The controller's capabilities require its saved-consent session.
+            // Also refuse an effective opt-out before calling any sync method.
+            try requireCapability(store.preferences.syncSettingsWithiCloud && available,
+                                  "This iCloud settings action is unavailable. Read fresh state.")
+            operation()
+        }
         func activity(_ operation: () -> Void) throws {
             switch store.activities.performSynchronousOperation(operation) {
             case .submitted: return
@@ -354,6 +364,14 @@ final class DevelopmentServer {
             }
         }
         switch action {
+        case "settings.sync.check":
+            try settingsSyncAction(store.settingsSync.canCheck) { store.settingsSync.checkForChanges() }
+        case "settings.sync.useLocal":
+            try settingsSyncAction(store.settingsSync.canChooseLocal) { store.settingsSync.useThisMacSettings() }
+        case "settings.sync.useCloud":
+            try settingsSyncAction(store.settingsSync.canChooseCloud) { store.settingsSync.useCloudSettings() }
+        case "settings.sync.reconnect":
+            try settingsSyncAction(store.settingsSync.canReconnect) { store.settingsSync.reconnect() }
         case "updates.check":
             guard let updater, updater.canCheckForUpdates else {
                 throw ControlError.rejected("The updater is unavailable or already checking. Read fresh state.")
@@ -582,6 +600,27 @@ final class DevelopmentServer {
         return try JSONSerialization.jsonObject(with: encoder.encode(value), options: .fragmentsAllowed)
     }
 
+    private func settingsSyncSnapshot() -> [String: Any] {
+        let sync = store.settingsSync
+        let state: String
+        switch sync.state {
+        case .off: state = "off"
+        case .unavailable: state = "unavailable"
+        case .choosing: state = "choosing"
+        case .active: state = "active"
+        case .conflict: state = "conflict"
+        case .paused: state = "paused"
+        }
+        // Only fixed controller UI copy and capability flags. These property
+        // reads never start sync or obtain a cloud store/account, even when off.
+        let enabled = store.preferences.syncSettingsWithiCloud
+        return ["state": state, "status": sync.status, "detail": sync.detail,
+                "canChooseLocal": enabled && sync.canChooseLocal,
+                "canChooseCloud": enabled && sync.canChooseCloud,
+                "canCheck": enabled && sync.canCheck,
+                "canReconnect": enabled && sync.canReconnect]
+    }
+
     private func snapshot() throws -> [String: Any] {
         let windows = NSApp.windows.filter { $0.isVisible && ($0.title == "OpenCove" || $0.identifier != nil) }.map { window in
             var value: [String: Any] = ["title": window.title, "width": window.frame.width, "height": window.frame.height,
@@ -594,6 +633,7 @@ final class DevelopmentServer {
         }
         var result: [String: Any] = ["app": "OpenCove", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unbundled", "expanded": store.isExpanded, "tab": store.selectedTab.rawValue, "settingsVisible": store.settingsVisible, "dataDirectory": CovePaths.dataDirectory.path, "nativeWindows": windows]
         result["preferences"] = try encoded(store.preferences)
+        result["settingsSync"] = settingsSyncSnapshot()
         let sparkle = updater?.controller?.updater
         result["updates"] = ["available": sparkle != nil,
                              "canCheckForUpdates": sparkle?.canCheckForUpdates ?? false,
