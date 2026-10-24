@@ -2,12 +2,14 @@
 
 ## Scope and status
 
-Source-only handoff from base `75fbec47915d0c32dc3d8f5985fdee5d762615db`.
-Rendered contrast, clipping, and native control behavior remain pending with the
-parent. This work ran no build, app, capture, permission request, Calendar read,
-or EventKit operation.
+The implementation started as a source-only handoff from base
+`75fbec47915d0c32dc3d8f5985fdee5d762615db`. Fresh isolated acceptance now covers
+the optimized development build, real mounted empty-recovery Calendar and Duo,
+authenticated date navigation, remounts, saved layout, and native/compositor PNGs.
+Peak contrast increased for every affected label. Reliable interior contrast at
+the available 1× scale and the other gates listed below remain pending.
 
-Static validation passed: `/usr/bin/swiftc -frontend -parse
+The original static validation passed: `/usr/bin/swiftc -frontend -parse
 Sources/OpenCove/Views/CalendarView.swift` and `git diff --check`. Parsing checks
 syntax only; it does not establish successful type checking or a build.
 
@@ -24,6 +26,159 @@ It preserves the brighter 0.90 in-month dates, selected and today styling, fonts
 frames, layout, hit areas, date actions, accessible labels, and all other text.
 It adds no state, data source, control, timer, or animation. It makes no claim
 about Alcove's colors or exact visual parity.
+
+## Owned acceptance recorded on 2026-10-23
+
+The isolated acceptance worktree cherry-picked
+`a7bda2350691122692ff8373db38ee58e64d27d6` as
+`4b0f0a7`. Its safe Duo procedure and public-document allowlist were corrected
+in `de50f1b58dad03c731fab7edbe21cb628a21276b`. The tested optimized arm64
+development bundle records that exact commit and source tree
+`db1479e5fbba993d1147a165252e6033ca2940f1a512d4dab27ba9b83925443f`.
+Its Calendar source SHA-256 is
+`6e187847522b688b5e5d69402da0ce6811d9623cde572261edf67bf078530f70`.
+Source manifests matched before and after the 42.343-second packaging build.
+The later acceptance report is a documentation-only change; it was not part of
+that bundle.
+
+The baseline was an owned private copy of the existing development bundle from
+`75fbec47915d0c32dc3d8f5985fdee5d762615db`, source tree
+`9e299bb0f85b9a2ed588d7ccbf166d4eff2b055a5e23022ffad2e9e215234016`.
+Its Calendar source SHA-256 is
+`0776b0af7909c802f1dd949a83d932676d377e53413bcae980cf31e6aed0bc1e`.
+Only the owned copy was launched. The parent's app and checkout were not built
+or edited.
+
+Both bundles used the inspected `Runtime` and `SAFE` from
+`script/runtime_e2e.py`, plus the authenticated `ControlClient` from
+`script/verify_control.py`. Their child environments were
+rebuilt from the permitted minimal key set. No ambient token was forwarded.
+The real damaged settings file was written before launch and kept byte-for-byte
+equal to `{"excludedCalendarIdentifiers":"damaged"}`. Its SHA-256 is recorded
+with each flow. Recovery authorization, zero events, and no Calendar activity
+were checked before and after commands and captures. Media stayed unavailable,
+with private APIs and AppleScript off. No player fixture was needed.
+
+Authenticated API checks covered October 15, both spillover months, September 27,
+November 7, return to October, Calendar/Duo tab changes, collapse/expand remounts,
+and process restart. The visible native panels were 440 × 235 pixels for full
+Calendar and 440 × 240 for Duo, at native 1× scale. Full mode required the Calendar
+tab and `expandedDuo == false`; Duo required the media tab and
+`expandedDuo == true`. The selected civil day survived view remounts. The saved
+Duo preference survived process restart. Selected day is controller state and
+starts at today in a new process; the checks selected October 15 again after
+restart. This change adds no persisted date selection.
+
+An owned incognito T3 browser tab exercised the real development controls,
+including Calendar selection, spillover navigation, explicit Duo, collapse, and
+expand. Authenticated requests to `live-notch` returned the mounted panel.
+The page's ordinary `notch` preview was not used as mounted evidence.
+One browser snapshot timed out; the control clicks, authenticated state checks,
+and mounted capture requests succeeded. Browser credentials and authenticated
+state were cleared, and the owned tab was closed.
+
+### Actual pixel results and sampling limit
+
+Both full Calendar and Duo were captured through `live-notch` and through
+`live-notch-compositor`. The first caches the mounted AppKit view; the second
+captures the owned window through ScreenCaptureKit. Compositor capture succeeded
+without a permission request. Neither establishes frame cadence.
+
+The PNGs identify `Rec. ITU-R BT.2020-1; sRGB Gamma`. Measurements use the
+PNG's native CGImage ICC color space and actual unpremultiplied pixel bytes,
+converted with `CGColor.converted(to: sRGB, intent: relativeColorimetric)`.
+All sampled label cells are opaque. No background was assumed or flattened.
+
+A diagnostic decoder used `NSBitmapImageRep.colorAt`, which returned Generic
+RGB despite the embedded profile. Its inflated results are retained only as
+superseded evidence. They are excluded from these results. PNG hashes can also
+differ because of generated ICC metadata while their decoded, converted pixels
+remain identical; both hashes and converted pixel comparisons are retained.
+
+The table gives the strongest observed text pixel against its adjacent rendered
+black background. The same values were measured in both layouts and with both
+capture methods. These are **peak samples, not full-label contrast passes**.
+Each affected label has no 3 × 3 interior plateau at 95% of its own observed
+peak. No reliable interior coverage was established at 1×. All 18 affected
+labels therefore remain pending for the requested reliable-interior contrast
+gate. No foreground was reconstructed from source opacity.
+
+| Label | Baseline peak ratio | Candidate peak ratio |
+| --- | ---: | ---: |
+| Sunday heading | 4.3654 | 5.6148 |
+| Monday heading | 4.4288 | 5.6910 |
+| Tuesday heading | 4.4288 | 5.6910 |
+| Wednesday heading | 4.4288 | 5.6910 |
+| Thursday heading | 4.4288 | 5.6910 |
+| Friday heading | 4.1185 | 5.2446 |
+| Saturday heading | 4.3654 | 5.6148 |
+| September 27 | 2.4843 | 5.6910 |
+| September 28 | 2.4843 | 5.6910 |
+| September 29 | 2.4843 | 5.6910 |
+| September 30 | 2.4843 | 5.6910 |
+| November 1 | 2.4843 | 5.6910 |
+| November 2 | 2.4843 | 5.6910 |
+| November 3 | 2.4843 | 5.6910 |
+| November 4 | 2.3696 | 5.3172 |
+| November 5 | 2.4843 | 5.6910 |
+| November 6 | 2.4843 | 5.6910 |
+| November 7 | 2.3696 | 5.3172 |
+
+Unchanged control peak samples were 16.8260 for an unselected in-month date,
+21.0000 for selected black text on white, and 3.4460 for today's white text on
+red. The today sample is below 4.5:1 in both bundles; this is a pre-existing
+limitation, not a new regression. These small glyph controls also do not establish
+a full-label pass.
+
+### Geometry, clipping, evidence, and remaining gates
+
+All seven headings and 42 dates were inspected in the original PNGs and in
+nearest-neighbor 8× crops. Both outer columns, two-digit spillover dates, and the
+complete sixth row remained visible. There was no observed clipping, overlap,
+truncation, or lost stroke. The brighter in-month text, month title, selected
+circle, and today circle stayed distinct.
+
+Exactly 677 pixels changed per panel, all inside the 18 affected label cells.
+All 31 in-month cells and every pixel outside the affected cells were unchanged.
+All 18 affected glyph patterns had zero best alignment shift when each captured
+pattern was normalized by its own observed peak for shape comparison only.
+This is not a contrast reconstruction. Some low-intensity antialiased fringe
+bounds gained one pixel as the text brightened; no layout shift was observed.
+
+The full grid crop is `(252, 50, 168, 120)`; the Duo crop is
+`(234, 51, 186, 114)`, in physical pixels from the PNG's top-left corner.
+Date-row pitch is 18 pixels in full mode and 17 in Duo. Affected ink had at least
+two pixels of clearance from source-projected cell boundaries. Invisible native
+cell frames and the exact 165-point content frame were not directly measured;
+source-projected boundaries are explicitly labelled in the evidence. Source
+review confirms no font, frame, layout, hit-area, or action changes. Native
+button activation and hit testing remain untested within this scope.
+
+Private evidence is under `.local/calendar-readability-acceptance-20261023/`.
+`bundle-identities.json` and `frozen-source.json` retain source and binary
+hashes. `runtime-observations.json` retains filtered before/after state;
+`compositor-observations.json` records paired captures.
+`pixel-analysis/*/measurements.json` records every label's original PNG/crop
+path, profile, coordinates, sRGB foreground/background values, ratio, bounding
+box, and unresolved sampling status. `pixel-analysis/layout-comparison.json`
+records pixel isolation and pattern alignment. Runtime ownership and cleanup
+records retain the owned paths, PIDs, and available start evidence. Evidence
+directories are private; data files are 0600 and executable artifacts stay
+owner-executable.
+
+The host used Gregorian Calendar, Sunday first, `en_CA`, and
+`America/Vancouver`. Dark appearance was active, Increase Contrast and Reduce
+Transparency were off, and the host's Reduce Motion was off; app Reduce Motion
+was on. Bold Text was unavailable in the read-only inventory. No host setting
+was changed.
+
+Remaining gates are reliable interior contrast, native 2× rendering, changed
+appearance/accessibility settings, native button activation/hit testing, and
+direct measurement of invisible native cell frames. Populated schedules,
+authorized empty schedules, event markers, permissions, Calendar app routes,
+and frame pacing are outside this empty recovery case. The observed runtime
+flows and brighter samples pass their stated checks; overall readability
+acceptance remains pending.
 
 ## Primary guidance and source assessment
 
