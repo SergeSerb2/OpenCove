@@ -9,9 +9,16 @@ import Foundation
 @MainActor
 final class WeatherController: NSObject, ObservableObject {
     @Published private(set) var state = WeatherState()
-    @Published private(set) var lastError: String?
-    @Published private(set) var isLoading = false
-    @Published private(set) var isRequestingLocation = false
+    @Published private(set) var lastError: String? {
+        willSet { if newValue != nil { retireCalendarWeatherReceipt() } }
+        didSet { if oldValue != lastError { invalidateCachedCalendarWeather() } }
+    }
+    @Published private(set) var isLoading = false {
+        didSet { if oldValue != isLoading { invalidateCachedCalendarWeather() } }
+    }
+    @Published private(set) var isRequestingLocation = false {
+        didSet { if oldValue != isRequestingLocation { invalidateCachedCalendarWeather() } }
+    }
     private(set) var requestAttempts: UInt64 = 0
     @Published private var selection: WeatherLocation?
 
@@ -20,15 +27,55 @@ final class WeatherController: NSObject, ObservableObject {
     var longitude: Double? { selection?.longitude }
     var locationName: String { selection?.name ?? "" }
 
-    private var isRunning = false
-    private var requestTask: Task<Void, Never>?
+    private var isRunning = false {
+        didSet {
+            if oldValue != isRunning {
+                calendarWeatherInvalidationLifecycle = UUID()
+                invalidateCachedCalendarWeather()
+            }
+        }
+    }
+    private var requestTask: Task<Void, Never>? {
+        didSet { if (oldValue == nil) != (requestTask == nil) { invalidateCachedCalendarWeather() } }
+    }
     private var refreshTask: Task<Void, Never>?
-    private var locationTimeout: Task<Void, Never>?
-    private var locationManager: CLLocationManager?
+    private var locationTimeout: Task<Void, Never>? {
+        didSet { if (oldValue == nil) != (locationTimeout == nil) { invalidateCachedCalendarWeather() } }
+    }
+    private var locationManager: CLLocationManager? {
+        didSet { if (oldValue == nil) != (locationManager == nil) { invalidateCachedCalendarWeather() } }
+    }
     private var locationFixRequested = false
     private var requestID = UUID()
-    private var persistenceError: String?
+    private var persistenceError: String? {
+        willSet { if newValue != nil { retireCalendarWeatherReceipt() } }
+        didSet { if oldValue != persistenceError { invalidateCachedCalendarWeather() } }
+    }
     private let refreshInterval: TimeInterval = 15 * 60
+
+    // Process-local witnesses only. No forecast is persisted and no disk change
+    // is monitored. Exact selection and request identities never leave here.
+    private struct SavedSelectionWitness {
+        let location: WeatherLocation
+        let revision: UUID
+    }
+
+    private struct CalendarWeatherReceipt {
+        let location: WeatherLocation
+        let requestID: UUID
+        let savedRevision: UUID
+        let mutationRevision: UInt64
+        let revision: CalendarWeatherRevision
+    }
+
+    private var savedSelectionWitness: SavedSelectionWitness?
+    private var savedSelectionRevision = UUID()
+    private var calendarWeatherReceipt: CalendarWeatherReceipt?
+    private var calendarWeatherMutationRevision: UInt64 = 0
+    private let cachedCalendarWeatherInvalidation = PassthroughSubject<Void, Never>()
+    private var calendarWeatherInvalidationSerial: UInt64 = 0
+    private var calendarWeatherInvalidationTicket: UUID?
+    private var calendarWeatherInvalidationLifecycle = UUID()
 
     private var locationFile: URL {
         CovePaths.dataDirectory.appendingPathComponent("weather-location.json")
@@ -56,6 +103,8 @@ final class WeatherController: NSObject, ObservableObject {
             }
             selection = saved
             state.locationName = saved.name
+            savedSelectionWitness = SavedSelectionWitness(location: saved, revision: savedSelectionRevision)
+            invalidateCachedCalendarWeather()
         } catch {
             lastError = "The saved weather location could not be read. Choose a location again."
         }
@@ -70,6 +119,7 @@ final class WeatherController: NSObject, ObservableObject {
     }
 
     func stop() {
+        retireCalendarWeatherReceipt()
         isRunning = false
         refreshTask?.cancel()
         refreshTask = nil
@@ -81,6 +131,7 @@ final class WeatherController: NSObject, ObservableObject {
     /// This is the only entry point that creates or requests Core Location.
     /// Location permission is never requested by `start()`, `refresh()`, or a view.
     func requestLocation() {
+        retireCalendarWeatherReceipt()
         guard isRunning else { lastError = "Enable weather before requesting a location."; return }
         guard !isRequestingLocation else { return }
         let usageKeys = ["NSLocationUsageDescription", "NSLocationWhenInUseUsageDescription"]
@@ -112,6 +163,8 @@ final class WeatherController: NSObject, ObservableObject {
             lastError = "Enter a latitude from −90 to 90 and a longitude from −180 to 180."
             return
         }
+        retireSavedSelectionWitness()
+        let savedRevision = savedSelectionRevision
         cancelLocationRequest()
         cancelRequest()
         // Bound scalars as well as characters: one grapheme can contain a very
@@ -121,7 +174,9 @@ final class WeatherController: NSObject, ObservableObject {
         let displayName = cleanedName.isEmpty
             ? String(format: "%.2f°, %.2f°", latitude, longitude)
             : cleanedName
-        selection = WeatherLocation(latitude: latitude, longitude: longitude, name: displayName, consented: true)
+        let selected = WeatherLocation(latitude: latitude, longitude: longitude, name: displayName, consented: true)
+        selection = selected
+        invalidateCachedCalendarWeather()
         // Never show the previous location's conditions under the new name.
         state = WeatherState(locationName: displayName)
         persistenceError = nil
@@ -138,7 +193,14 @@ final class WeatherController: NSObject, ObservableObject {
             try file.synchronize()
             try file.close()
             guard Darwin.rename(temporary.path, locationFile.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            // A reentrant selection/clear during an earlier publication must not
+            // let this save attest to a newer (even equal-valued) selection.
+            if savedSelectionRevision == savedRevision, selection == selected {
+                savedSelectionWitness = SavedSelectionWitness(location: selected, revision: savedRevision)
+                invalidateCachedCalendarWeather()
+            }
         } catch {
+            retireSavedSelectionWitness()
             persistenceError = "Weather works for this session, but the location could not be saved: \(error.localizedDescription)"
         }
         lastError = persistenceError
@@ -151,12 +213,17 @@ final class WeatherController: NSObject, ObservableObject {
     /// Removes the saved consent and stops all weather and location work.
     @discardableResult
     func clearLocation() -> Bool {
+        retireSavedSelectionWitness()
         let wasRunning = isRunning
         stop()
         selection = nil
+        invalidateCachedCalendarWeather()
         state = WeatherState()
         persistenceError = nil
         lastError = nil
+        // Earlier will-change callbacks may have saved a replacement. The
+        // removal below must retire that witness too, before touching the file.
+        retireSavedSelectionWitness()
         do {
             // unlink removes the entry itself, including a dangling link, and
             // never follows it into another location.
@@ -164,6 +231,7 @@ final class WeatherController: NSObject, ObservableObject {
                 throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
             }
         } catch {
+            retireSavedSelectionWitness()
             lastError = "The saved weather location could not be removed: \(error.localizedDescription)"
         }
         // Keep the feature gate, without any work until a new explicit selection.
@@ -172,6 +240,9 @@ final class WeatherController: NSObject, ObservableObject {
     }
 
     func refresh() {
+        // Even a reentrant refresh rejected by the existing busy guard retires
+        // this presentation's authority. It must not revive the old response.
+        retireCalendarWeatherReceipt()
         guard isRunning else { lastError = "Enable weather before refreshing it."; return }
         guard let selected = selection else {
             lastError = "Choose a location to enable weather."
@@ -200,9 +271,12 @@ final class WeatherController: NSObject, ObservableObject {
         }
         let id = UUID()
         requestID = id
+        let mutationRevision = calendarWeatherMutationRevision
+        let savedRevision = savedSelectionWitness?.revision
         isLoading = true
         lastError = persistenceError
         requestTask = Task { [weak self] in
+            var acceptedResponse = false
             do {
                 try Task.checkCancellation()
                 var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
@@ -219,6 +293,7 @@ final class WeatherController: NSObject, ObservableObject {
                 let condition = Self.condition(for: current.code, isDay: current.isDay == 1)
                 let forecast = Self.forecast(from: result)
                 guard let self, self.isRunning, self.requestID == id, self.selection == selected else { return }
+                acceptedResponse = true
                 self.state = WeatherState(
                     locationName: selected.name,
                     temperature: current.temperature,
@@ -245,6 +320,174 @@ final class WeatherController: NSObject, ObservableObject {
             guard let self, self.requestID == id else { return }
             self.isLoading = false
             self.requestTask = nil
+            // The original publications above are reentrant, including the
+            // final loading publication. Never restore a captured receipt.
+            if acceptedResponse, self.isRunning, self.requestID == id, self.selection == selected,
+               self.calendarWeatherMutationRevision == mutationRevision,
+               let saved = self.savedSelectionWitness, saved.location == selected, saved.revision == savedRevision,
+               !self.isLoading, self.requestTask == nil, !self.isRequestingLocation,
+               self.locationManager == nil, self.locationTimeout == nil,
+               self.lastError == nil, self.persistenceError == nil {
+                self.calendarWeatherReceipt = CalendarWeatherReceipt(
+                    location: selected, requestID: id, savedRevision: saved.revision,
+                    mutationRevision: mutationRevision, revision: CalendarWeatherRevision()
+                )
+                self.invalidateCachedCalendarWeather()
+            }
+        }
+    }
+
+    /// Opaque identity of one accepted presentation, not a request or location ID.
+    struct CalendarWeatherRevision: Equatable {
+        private let value: UUID
+        fileprivate init() { value = UUID() }
+    }
+
+    /// Current model conditions for the exact saved place, not a selected-day
+    /// forecast or a claim about the device's physical location. Not Codable.
+    struct CalendarCurrentConditions: Equatable {
+        let place: String
+        let condition: String
+        let symbol: String
+        let validAt: Date
+        let day: DateInterval
+        let revision: CalendarWeatherRevision
+        let firstInvalidation: Date
+    }
+
+    enum CachedCalendarWeather {
+        case unavailable
+        case currentConditions(CalendarCurrentConditions)
+    }
+
+    /// Subscribe before the initial sample. Events contain no copied data and
+    /// mean resample with the host's actual date, concrete Calendar and real now.
+    var cachedCalendarWeatherInvalidations: AnyPublisher<Void, Never> {
+        cachedCalendarWeatherInvalidation.eraseToAnyPublisher()
+    }
+
+    /// Pure cache projection: no clock sampling, I/O, service/status getter,
+    /// scheduling, preference inspection or selection mutation. The future host
+    /// must also require ordinary enableWeather AND enableCalendar; widget-only
+    /// reader demand is insufficient. It owns labels, attribution and expiry.
+    func cachedCalendarCurrentConditions(on date: Date, calendar: Calendar, now: Date) -> CachedCalendarWeather {
+        guard now.timeIntervalSinceReferenceDate.isFinite, date.timeIntervalSinceReferenceDate.isFinite,
+              isRunning, !isLoading, requestTask == nil, !isRequestingLocation,
+              locationManager == nil, locationTimeout == nil, lastError == nil, persistenceError == nil,
+              let selected = selection, selected.consented,
+              Self.validCoordinates(selected.latitude, selected.longitude),
+              !selected.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              selected.name.count <= 120, selected.name.utf8.count <= 1_024,
+              let saved = savedSelectionWitness, saved.location == selected,
+              saved.revision == savedSelectionRevision,
+              let receipt = calendarWeatherReceipt, receipt.location == selected, receipt.requestID == requestID,
+              receipt.savedRevision == saved.revision, receipt.mutationRevision == calendarWeatherMutationRevision,
+              state.available, state.locationName == selected.name, state.forecastNotice == nil,
+              state.timeZoneIdentifier.utf8.count <= 128,
+              let zone = TimeZone(identifier: state.timeZoneIdentifier),
+              zone.identifier == state.timeZoneIdentifier, calendar.timeZone.identifier == state.timeZoneIdentifier,
+              let selectedDay = calendar.dateInterval(of: .day, for: date),
+              let today = calendar.dateInterval(of: .day, for: now), selectedDay == today,
+              selectedDay.start.timeIntervalSinceReferenceDate.isFinite,
+              selectedDay.end.timeIntervalSinceReferenceDate.isFinite, selectedDay.start < selectedDay.end,
+              selectedDay.start <= date, date < selectedDay.end,
+              selectedDay.start <= now, now < selectedDay.end else { return .unavailable }
+
+        var providerCalendar = Calendar(identifier: .gregorian)
+        providerCalendar.timeZone = zone
+        guard let providerDay = providerCalendar.dateInterval(of: .day, for: now), providerDay == selectedDay,
+              !state.daily.isEmpty, state.daily.count <= 7,
+              let day = state.daily.first(where: {
+                  $0.date.timeIntervalSinceReferenceDate.isFinite && selectedDay.start <= $0.date && $0.date < selectedDay.end
+                    && providerCalendar.dateInterval(of: .day, for: $0.date) == selectedDay
+              }),
+              let minimum = Self.valid(day.minimum, in: -150...100),
+              let maximum = Self.valid(day.maximum, in: -150...100), minimum <= maximum,
+              Self.valid(day.precipitationProbability, in: 0...100) != nil,
+              Self.knownCalendarCondition(day.condition, symbol: day.symbol, allowsNight: false),
+              Self.knownCalendarCondition(state.condition, symbol: state.symbol, allowsNight: true),
+              state.temperature.isFinite, (-150...100).contains(state.temperature),
+              state.apparentTemperature.map({ Self.valid($0, in: -200...150) != nil }) ?? true,
+              state.humidity.map({ Self.valid($0, in: 0...100) != nil }) ?? true,
+              state.windSpeed.map({ Self.valid($0, in: 0...500) != nil }) ?? true,
+              let validAt = state.updatedAt, validAt.timeIntervalSinceReferenceDate.isFinite,
+              validAt.timeIntervalSince1970 > 0, selectedDay.start <= validAt, validAt < selectedDay.end else {
+            return .unavailable
+        }
+        let age = now.timeIntervalSince(validAt)
+        guard age.isFinite, (0...3_600).contains(age) else { return .unavailable }
+        // Use Date's reference timestamp so nextUp is the first representable
+        // Date after the inclusive one-hour ceiling, not an invented grace second.
+        let expiry = validAt.timeIntervalSinceReferenceDate + 3_600
+        let firstExpired = expiry.nextUp
+        guard expiry.isFinite, expiry > validAt.timeIntervalSinceReferenceDate,
+              firstExpired.isFinite, firstExpired > expiry else { return .unavailable }
+        let expiryDate = Date(timeIntervalSinceReferenceDate: firstExpired)
+        guard expiryDate.timeIntervalSinceReferenceDate == firstExpired else { return .unavailable }
+        let boundary = min(selectedDay.end, expiryDate)
+        guard boundary.timeIntervalSinceReferenceDate.isFinite, boundary > now else { return .unavailable }
+        return .currentConditions(CalendarCurrentConditions(
+            place: selected.name, condition: state.condition, symbol: state.symbol,
+            validAt: validAt, day: selectedDay, revision: receipt.revision, firstInvalidation: boundary
+        ))
+    }
+
+    private static func knownCalendarCondition(_ name: String, symbol: String, allowsNight: Bool) -> Bool {
+        // Reuse the accepted mapping, including its valid-time day/night symbol.
+        // No solar fields or missing forecast values are synthesized.
+        [0, 1, 2, 3, 45, 48, 51, 53, 55, 56, 57, 61, 63, 65, 66, 67,
+         71, 73, 75, 77, 80, 81, 82, 85, 86, 95, 96, 97, 99].contains { code in
+            let day = condition(for: code, isDay: true)
+            if name == day.name, symbol == day.symbol { return true }
+            guard allowsNight else { return false }
+            let night = condition(for: code, isDay: false)
+            return name == night.name && symbol == night.symbol
+        }
+    }
+
+    private func retireSavedSelectionWitness() {
+        retireCalendarWeatherReceipt()
+        savedSelectionWitness = nil
+        savedSelectionRevision = UUID()
+        invalidateCachedCalendarWeather()
+    }
+
+    private func retireCalendarWeatherReceipt() {
+        // Advance even when already retired: a reentrant action during response
+        // publication must prevent attachment, including a busy refresh attempt.
+        calendarWeatherMutationRevision &+= 1
+        if calendarWeatherReceipt != nil {
+            calendarWeatherReceipt = nil
+            invalidateCachedCalendarWeather()
+        }
+    }
+
+    private func invalidateCachedCalendarWeather() {
+        calendarWeatherInvalidationSerial &+= 1
+        enqueueCachedCalendarWeatherInvalidation()
+    }
+
+    private func enqueueCachedCalendarWeatherInvalidation() {
+        guard calendarWeatherInvalidationTicket == nil else { return }
+        let ticket = UUID(), lifecycle = calendarWeatherInvalidationLifecycle
+        calendarWeatherInvalidationTicket = ticket
+        // Receipt retirement is immediate and stays unpublished by ordinary
+        // objectWillChange. This content-free event waits for committed state.
+        // Dispatch has no hard real-time or zero-frame delivery guarantee.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.calendarWeatherInvalidationTicket == ticket else { return }
+            guard self.calendarWeatherInvalidationLifecycle == lifecycle else {
+                self.calendarWeatherInvalidationTicket = nil
+                self.enqueueCachedCalendarWeatherInvalidation()
+                return
+            }
+            let serial = self.calendarWeatherInvalidationSerial
+            self.cachedCalendarWeatherInvalidation.send(())
+            guard self.calendarWeatherInvalidationTicket == ticket else { return }
+            self.calendarWeatherInvalidationTicket = nil
+            if self.calendarWeatherInvalidationSerial != serial || self.calendarWeatherInvalidationLifecycle != lifecycle {
+                self.enqueueCachedCalendarWeatherInvalidation()
+            }
         }
     }
 
@@ -260,6 +503,7 @@ final class WeatherController: NSObject, ObservableObject {
     }
 
     private func cancelRequest() {
+        retireCalendarWeatherReceipt()
         requestID = UUID()
         requestTask?.cancel()
         requestTask = nil
@@ -267,6 +511,7 @@ final class WeatherController: NSObject, ObservableObject {
     }
 
     private func cancelLocationRequest() {
+        retireCalendarWeatherReceipt()
         locationTimeout?.cancel()
         locationTimeout = nil
         locationManager?.stopUpdatingLocation()

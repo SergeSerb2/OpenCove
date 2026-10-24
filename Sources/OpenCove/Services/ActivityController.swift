@@ -29,19 +29,30 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
         willSet {
             if newValue != "Authorized" { retireCalendarCacheAuthority() }
         }
+        didSet {
+            if oldValue != calendarAuthorization { invalidateCachedCalendarDayEligibility() }
+        }
     }
     @Published private(set) var calendarSources: [CoveCalendarSource] = []
     @Published private(set) var excludedCalendarIdentifiers: Set<String> = []
     @Published private(set) var selectedCalendarDate = Calendar.current.startOfDay(for: Date())
     @Published private(set) var calendarToday = Calendar.current.startOfDay(for: Date())
-    @Published private(set) var isRefreshingCalendar = false
-    @Published private(set) var calendarDetailsHidden = false
+    @Published private(set) var isRefreshingCalendar = false {
+        didSet { if oldValue != isRefreshingCalendar { invalidateCachedCalendarDayEligibility() } }
+    }
+    @Published private(set) var calendarDetailsHidden = false {
+        didSet { if oldValue != calendarDetailsHidden { invalidateCachedCalendarDayEligibility() } }
+    }
     @Published private(set) var nextUpcomingEvent: CoveEvent?
     @Published private(set) var eventActivity: CoveEventActivity?
     @Published private(set) var calendarPreEventLeadMinutes = 15
     @Published private(set) var calendarAlertsEnabled = true
-    @Published private(set) var calendarEnabled = true
-    private var calendarReaderEnabled = true
+    @Published private(set) var calendarEnabled = true {
+        didSet { if oldValue != calendarEnabled { invalidateCachedCalendarDayEligibility() } }
+    }
+    private var calendarReaderEnabled = true {
+        didSet { if oldValue != calendarReaderEnabled { invalidateCachedCalendarDayEligibility() } }
+    }
     /// The parent owns this preference and its persistence.
     var preferredCalendarApp = "calendar"
     @Published var files: [TrayFile] = []
@@ -96,8 +107,12 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     private var calendarClockActive = false
     private var calendarClockBoundary: Date?
     private var calendarReadRevision = 0
-    private var calendarSettingsLoaded = false
-    private var calendarSettingsValid = true
+    private var calendarSettingsLoaded = false {
+        didSet { if oldValue != calendarSettingsLoaded { invalidateCachedCalendarDayEligibility() } }
+    }
+    private var calendarSettingsValid = true {
+        didSet { if oldValue != calendarSettingsValid { invalidateCachedCalendarDayEligibility() } }
+    }
     // The parent owns these global preferences and their persistence.
     private var showDeclinedCalendarEvents = false
     private var excludeSubscribedCalendars = false
@@ -111,10 +126,21 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     // Separate from query rejection: privacy can retire authority without changing
     // the existing read, routing, or presentation lifecycle.
     private var calendarCacheAuthorityRevision = 0
+    private let cachedCalendarDayInvalidation = PassthroughSubject<Void, Never>()
+    private var calendarDayInvalidationSerial: UInt64 = 0
+    private var calendarDayInvalidationTicket: UUID?
+    private var calendarDayInvalidationLifecycle = UUID()
     private var calendarClockTimeZone = TimeZone.current.identifier
     private var calendarAlertReceipts: [String: Date] = [:]
     private var lastCalendarActivityCheck: Date?
-    private var started = false
+    private var started = false {
+        didSet {
+            if oldValue != started {
+                calendarDayInvalidationLifecycle = UUID()
+                invalidateCachedCalendarDayEligibility()
+            }
+        }
+    }
     private var loaded = false
     private var damagedPersistenceFiles: Set<String> = []
     private var failureRevision: UInt64 = 0
@@ -123,7 +149,11 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     private var workspaceObservers: [NSObjectProtocol] = []
     private var calendarRefreshTimer: Timer?
     private var countdown: Timer?
-    private var calendarAccessTask: Task<Void, Never>?
+    private var calendarAccessTask: Task<Void, Never>? {
+        didSet {
+            if (oldValue == nil) != (calendarAccessTask == nil) { invalidateCachedCalendarDayEligibility() }
+        }
+    }
     private var authorizationTask: Task<Void, Never>?
     private var notificationTasks: [UUID: Task<Void, Never>] = [:]
     private var timerNotificationRevision = 0
@@ -386,6 +416,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
             if self.started, self.calendarEnabled, self.calendarSettingsValid, !self.calendarDetailsHidden,
                self.calendarCacheAuthorityRevision == authorityRevision {
                 self.calendarCacheReadOutcome = snapshot.outcome
+                self.invalidateCachedCalendarDayEligibility()
             }
             self.publishCalendarPresentation()
             self.updateCalendarActivity()
@@ -426,6 +457,12 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
         case completedEmpty
     }
 
+    /// Subscribe before sampling. An event means resample the current projection;
+    /// it carries no eligibility or event content and does not replay an old result.
+    var cachedCalendarDayInvalidations: AnyPublisher<Void, Never> {
+        cachedCalendarDayInvalidation.eraseToAnyPublisher()
+    }
+
     /// Only the last accepted local query under the guards observed by this controller.
     /// This does not certify atomic OS permission, cloud-server completeness, undelivered
     /// permission/time-zone changes, or independent runtime proof. The caller supplies
@@ -450,7 +487,44 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
 
     private func retireCalendarCacheAuthority() {
         calendarCacheAuthorityRevision += 1
+        let wasCompleted: Bool
+        if case .completed = calendarCacheReadOutcome { wasCompleted = true }
+        else { wasCompleted = false }
         calendarCacheReadOutcome = .retired
+        // Failed day getters can run during rendering. Only a real loss of
+        // completed authority queues an event; repeated failures cannot loop.
+        if wasCompleted { invalidateCachedCalendarDayEligibility() }
+    }
+
+    private func invalidateCachedCalendarDayEligibility() {
+        calendarDayInvalidationSerial &+= 1
+        enqueueCachedCalendarDayInvalidation()
+    }
+
+    private func enqueueCachedCalendarDayInvalidation() {
+        guard calendarDayInvalidationTicket == nil else { return }
+        let ticket = UUID(), lifecycle = calendarDayInvalidationLifecycle
+        calendarDayInvalidationTicket = ticket
+        // Authority changes synchronously. Only this narrow notification waits
+        // for the main queue; ordinary objectWillChange does not publish it.
+        // Delivery is eventual, with no hard real-time or zero-frame guarantee.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.calendarDayInvalidationTicket == ticket else { return }
+            guard self.calendarDayInvalidationLifecycle == lifecycle else {
+                self.calendarDayInvalidationTicket = nil
+                self.enqueueCachedCalendarDayInvalidation()
+                return
+            }
+            let serial = self.calendarDayInvalidationSerial
+            // Keep the ticket while sending so a reentrant mutation stays dirty
+            // and gets a later event, rather than a recursive send or lost update.
+            self.cachedCalendarDayInvalidation.send(())
+            guard self.calendarDayInvalidationTicket == ticket else { return }
+            self.calendarDayInvalidationTicket = nil
+            if self.calendarDayInvalidationSerial != serial || self.calendarDayInvalidationLifecycle != lifecycle {
+                self.enqueueCachedCalendarDayInvalidation()
+            }
+        }
     }
 
     var currentEvent: CoveEvent? {
