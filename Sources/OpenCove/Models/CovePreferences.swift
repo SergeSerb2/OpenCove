@@ -142,6 +142,8 @@ struct CovePreferences: Codable, Equatable {
     var showDeclinedCalendarEvents: Bool = false
     var excludeSubscribedCalendars: Bool = false
     var hideInFullscreen = false
+    // Local presentation choice; never starts a media reader.
+    var hideWhenMediaAppActive = false
     var launchAtLogin = false
     // Per-device consent. Never included in CoveSyncedSettings.
     var syncSettingsWithiCloud = false

@@ -40,6 +40,7 @@ final class NotchPanelController: NSObject {
         var timer: Bool
         var event: Bool
         var duo: Bool
+        var activeSourceHidden: Bool
     }
     private var lastLayoutInputs: LayoutInputs?
     private var layoutInputs: LayoutInputs {
@@ -49,7 +50,20 @@ final class NotchPanelController: NSObject {
                      compactActivity: store.compactActivity,
                      mediaPeek: store.showsMediaPeek,
                      timer: store.isCompactActivityVisible(.timer), event: store.isCompactActivityVisible(.calendar),
-                     duo: store.showsExpandedDuo)
+                     duo: store.showsExpandedDuo,
+                     activeSourceHidden: hidesForActiveMediaSource)
+    }
+
+    /// Use only the already accepted media identity and AppKit's public active
+    /// application. Unknown identities never hide a panel. HUDs retain priority.
+    var hidesForActiveMediaSource: Bool {
+        guard started, !screensAsleep, sessionActive, !store.system.state.isLocked,
+              store.preferences.hideWhenMediaAppActive, store.preferences.enableMedia,
+              store.hud == nil, store.media.state.available else { return false }
+        let source = store.media.state.sourceBundleIdentifier
+        guard !source.isEmpty, let application = NSWorkspace.shared.frontmostApplication,
+              !application.isTerminated else { return false }
+        return application.bundleIdentifier == source
     }
 
     init(store: CoveStore) {
@@ -192,6 +206,13 @@ final class NotchPanelController: NSObject {
         store.updateDisplaySelection(selection.state)
 
         guard !screensAsleep, sessionActive, currentSessionIsActive(), !store.system.state.isLocked else {
+            hideForSessionBoundary()
+            return
+        }
+
+        if hidesForActiveMediaSource {
+            // Retire input, hover work and mounted media regions together. Keep
+            // the logical expanded/section state so leaving the source restores it.
             hideForSessionBoundary()
             return
         }

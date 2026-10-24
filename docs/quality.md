@@ -197,9 +197,10 @@ Record the exact source-tree hash, bundle path/variant, architecture, version/bu
 Native offscreen output needs visual inspection for wrapping, clipping, errors, empty states, and accessibility labels. The cache uses AppKit’s compatible bitmap format and waits for native containers to mount. Some system glass/vibrancy content, especially lock-widget text, can be absent from an unordered window capture. A PNG pass checks encoding and process survival; it does not prove every native element is visible. It does not establish menu actions, window resizing, VoiceOver, display geometry, Spaces, sleep/wake, or secure lock-screen visibility and credential clearance.
 
 `opencovectl render --surface settings-calendar` captures the same native Activities
-form at a fixed 760×1600 size. This exposes the Calendar controls below the
-ordinary 760×900 Activities preview. It creates no separate settings component,
-changes no preference, and sends no desktop input. The larger capture does not
+form at a fixed 760×1600 size. `settings-general` uses the same bounded size for
+the native General form, including its lower interaction controls. These expose
+controls below the ordinary previews. They create no separate settings component,
+change no preference, and send no desktop input. The larger captures do not
 prove normal-window scroll reachability, native Toggle input, or compositor
 appearance. Inspect alpha and the embedded color profile before drawing contrast
 conclusions from offscreen pixels; a raw RGB value alone does not describe the
