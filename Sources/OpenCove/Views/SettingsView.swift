@@ -464,6 +464,8 @@ struct SettingsView: View {
 
             Section("Calendar & meetings") {
                 Toggle("Show calendar events", isOn: preference(\.enableCalendar))
+                Toggle("Show selected-day list", isOn: preference(\.showCalendarList))
+                CoveSettingsNote("Keep the month grid when the list is hidden. Your selected day stays selected.")
                 Toggle("Show declined events", isOn: preference(\.showDeclinedCalendarEvents))
                 CoveSettingsNote("Include events you declined. Canceled events and excluded calendars stay hidden.")
                 Toggle("Exclude subscribed calendars", isOn: preference(\.excludeSubscribedCalendars))

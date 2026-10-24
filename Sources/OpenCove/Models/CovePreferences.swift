@@ -181,6 +181,8 @@ struct CovePreferences: Codable, Equatable {
     var musicColorAccent = true
     var preferredMusicApp = "system"
     var preferredCalendarApp = "calendar"
+    // Local layout only; never changes Calendar reader demand or cloud settings.
+    var showCalendarList: Bool = true
     // Calendar filtering stays local, outside CoveSyncedSettings.
     var showDeclinedCalendarEvents: Bool = false
     var excludeSubscribedCalendars: Bool = false
