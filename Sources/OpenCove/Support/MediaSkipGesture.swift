@@ -146,6 +146,12 @@ final class CoveMediaRegionView: NSView {
         return rect
     }
 
+    static func containsInputExclusion(at point: NSPoint, in root: NSView, window: NSWindow) -> Bool {
+        if let marker = root as? CoveMediaRegionView, marker.blocksInput,
+           let rect = marker.rect(in: window), rect.contains(point) { return true }
+        return root.subviews.contains { containsInputExclusion(at: point, in: $0, window: window) }
+    }
+
     static func region(at point: NSPoint, in root: NSView, window: NSWindow,
                        context: CoveMediaSkipContext, layoutRevision: UInt) -> CoveMediaRegionSnapshot? {
         var candidates: [CoveMediaRegionSnapshot] = []
