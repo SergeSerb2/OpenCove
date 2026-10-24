@@ -7,13 +7,15 @@ import SwiftUI
 struct CoveCalendarView: View {
     @ObservedObject private var activities: ActivityController
     let showCalendarList: Bool
+    let showCalendarEventIndicators: Bool
     let condensed: Bool
     @State private var showsCondensedSchedule = false
     @State private var showsCalendarStatus = false
 
-    init(activities: ActivityController, showCalendarList: Bool, condensed: Bool = false) {
+    init(activities: ActivityController, showCalendarList: Bool, showCalendarEventIndicators: Bool, condensed: Bool = false) {
         self.activities = activities
         self.showCalendarList = showCalendarList
+        self.showCalendarEventIndicators = showCalendarEventIndicators
         self.condensed = condensed
     }
 
@@ -165,8 +167,10 @@ struct CoveCalendarView: View {
                     .frame(width: 16, height: 14)
                     .background(today ? Color.red : selected ? .white : .clear, in: Circle())
                 HStack(spacing: 1) {
-                    ForEach(colors.prefix(3), id: \.self) { color in
-                        Circle().fill(calendarColor(color)).frame(width: 2, height: 2)
+                    if showCalendarEventIndicators {
+                        ForEach(colors.prefix(3), id: \.self) { color in
+                            Circle().fill(calendarColor(color)).frame(width: 2, height: 2)
+                        }
                     }
                 }
                 .frame(height: 3)

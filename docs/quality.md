@@ -163,6 +163,66 @@ Parent real acceptance plan, after separate authorization, with no mode change:
 **C-PID remains FAILED. M1 remains USER-DEFERRED. Stage4 remains HOLD.
 Focus default backend remains UNVERIFIED.** This source slice upgrades none of them.
 
+## Local Calendar event-dot policy
+
+From parent `65dc8651a83595740a0e40792b5f74f4ea7ae017`, the parent explicitly
+selects the research's conditional visual-only OpenCove variant. Retained
+`1.7.3 features[2]` event indicators map to month-grid dots; `1.7.5 fixes[5]`
+live toggle maps to the saved choice reaching the observed full/Duo callers.
+Exact reference OFF-state count and surface behavior remain **SPEC_UNKNOWN**.
+This is no broader indicator/privacy switch or exact reference-parity claim.
+
+The native **Show event dots** control uses the existing preference binding and
+store error path, and stays editable while Calendar activity is off. The local
+ordinary Boolean `showCalendarEventIndicators = true` stays outside consent fields
+and the cloud allowlist. Missing means true. Malformed means false under existing
+strict Boolean recovery, with repair notices, backup protection and recovery
+policy unchanged. Save failure keeps the session value and visible error; the
+older saved value can return after restart.
+
+Only existing day-cell dot contents are conditional. Fixed row/cell bounds,
+unique-color grouping/sort/cap/colors, date/Today/selection styling, count help,
+accessibility labels/values and selected trait stay unchanged. List content/opener,
+`showCalendarList`, list/status popovers, status/recovery/privacy/loading, compact
+countdowns, alerts, routing and widget consent keep their existing paths. The
+observed store supplies both callers without a new event result, restart, cache
+flush, identity reset, callback, refresh/date query, timer, animation or reader
+demand. Static source preservation does not establish live behavior.
+
+This slice permits **Swift parse, diff review and static hashes only**. No build,
+typecheck, runtime/app/helper/fixture/probe/test/unit/mock, browser/native input,
+EventKit, power/permission query, network or nested agent ran. No synthetic event
+or permission workaround is permitted. Build and real acceptance are parent-owned
+and **UNVERIFIED**.
+
+Bounded parent plan, only in a separately authorized real-app context:
+
+1. Keep Calendar activity, independent Calendar widget reading and other protected
+   readers OFF throughout no-data validation. Use the real supported preference
+   caller for true/false save/readback, unrelated saves and process restart. Check
+   that only the intended Boolean changes. Confirm missing-key true; reject
+   numbers, strings, null, arrays and objects through the strict command validator.
+   Keep native Settings reachability/input evidence separate from API/CLI proof.
+2. In the owned private profile, exercise malformed-value false repair and
+   whole-document recovery. Retain the exact damaged bytes and private backup;
+   confirm repair notices and existing grant revocations. Exercise a genuine save
+   failure, visible error and session-only value, then restart to inspect actual
+   disk state. Confirm backup failure preserves the damaged file. Restore a writable
+   path, save through the same real caller, read back and restart for recovery.
+   Do not mock storage or enable a reader to obtain this evidence.
+3. Preference/API proof cannot accept live populated dots. Calendar's disabled
+   section gate remains in place; do not bypass it to manufacture grid evidence.
+   Full/Duo layout, selection/month preservation, ON/OFF/ON dot removal/restoration,
+   grouping/cap/colors, complete count/help/accessibility, all four list/dot states,
+   retained popovers and native positives remain **UNVERIFIED**. Disabled/unloaded
+   output is not an authorized-empty result. Positive checks need separately
+   authorized real owned data and permitted reading. Add no synthetic events or
+   grant workaround. Actual media-plus-Calendar Duo also needs the failed C-PID
+   prerequisite resolved under separate authorization.
+
+**C-PID FAILED; M1 USER-DEFERRED; Stage4 HOLD; Focus execution HOLD;
+full parity INCOMPLETE** remain unchanged. This preparation clears none of them.
+
 ## Build an isolated bundle
 
 ```sh

@@ -698,6 +698,7 @@ struct NotchView: View {
                             kind: .duo, mode: .expanded, section: identity))
                     Rectangle().fill(.white.opacity(0.09)).frame(width: 1)
                     CoveCalendarView(activities: activities, showCalendarList: store.preferences.showCalendarList,
+                                     showCalendarEventIndicators: store.preferences.showCalendarEventIndicators,
                                      condensed: true)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -711,7 +712,8 @@ struct NotchView: View {
                         kind: .expanded, mode: .expanded, section: identity))
             }
         case .calendar:
-            CoveCalendarView(activities: activities, showCalendarList: store.preferences.showCalendarList)
+            CoveCalendarView(activities: activities, showCalendarList: store.preferences.showCalendarList,
+                             showCalendarEventIndicators: store.preferences.showCalendarEventIndicators)
         case .files:
             CoveFileSurface(activities: activities)
         case .timer:
