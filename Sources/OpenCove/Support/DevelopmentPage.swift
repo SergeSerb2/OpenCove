@@ -26,7 +26,7 @@ button[data-sync-capability]:disabled,.local-preferences :disabled{opacity:.5;cu
 <script>
 let state=null,lastImage=null,poll=null,serial=Promise.resolve(),epoch=0,controller=new AbortController(),unauthorized=false,closed=false,lastRender=0,transportError=false,displayDraft=null,displaySignature='';
 const appearanceKeys=['hideWhenIdle','expandOnHover','reduceMotion','notchWidth','simulateNotch','showContrastOutline','compactActivity','peekOnSongChange','mediaPeekDuration','playbackIndicator'];
-const localPreferenceGroups={'media-visibility':['hideWhenMediaAppActive'],'media-swipe':['swipeToSkip','reverseSkipSwipe'],'calendar-filters':['showDeclinedCalendarEvents','excludeSubscribedCalendars']},preferenceKeys=[...appearanceKeys,...Object.values(localPreferenceGroups).flat()],drafts=new Map();
+const localPreferenceGroups={'media-visibility':['hideWhenMediaAppActive'],'media-swipe':['swipeToSkip','reverseSkipSwipe'],'calendar-filters':['showDeclinedCalendarEvents','excludeSubscribedCalendars']},preferenceKeys=[...appearanceKeys,...Object.values(localPreferenceGroups).flat()],drafts=new Map(),draftRevisions=new Map();
 const hudDrafts=new Map();let hudRevision=0;
 const readToken=()=>new URLSearchParams(location.hash.slice(1)).get('token')||'';
 let token=readToken();
@@ -119,15 +119,17 @@ async function renderPreview(force=false){
 }
 async function readState(force=false){const generation=epoch,response=await request('/state'),next=await response.json();if(generation!==epoch||closed)return;state=next;if(transportError){errorBox.textContent='';transportError=false}paint();await renderPreview(force)}
 async function command(action,values={}){
- const generation=epoch;
+ // Capture before enqueue, including calls through window.opencove.command.
+ // Keep revisions across draft retirement so a later same-value edit is distinct.
+ const generation=epoch,changes=action==='preferences'?{...(values.values||{})}:null,submittedRevisions=changes?new Map(draftRevisions):null;
+ if(changes)values={...values,values:changes};
  return enqueue(async()=>{
   if(!state||unauthorized||!token)throw Error('Wait for a fresh authenticated app state before sending a command.');
   try{errorBox.textContent='';const response=await request('/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...values,action})});const next=await response.json();if(generation!==epoch||closed)throw connectionChanged();if(action==='preferences'){
-   const changes=values.values||{};
-   for(const [key,value] of drafts)if(Object.hasOwn(changes,key)&&(document.getElementById(key)?.type==='number'?Number(value):value)===changes[key])drafts.delete(key);
+   for(const [key,value] of drafts)if(submittedRevisions.get(key)===draftRevisions.get(key)&&Object.hasOwn(changes,key)&&(document.getElementById(key)?.type==='number'?Number(value):value)===changes[key])drafts.delete(key);
    if(Object.hasOwn(changes,'showPlaybackIndicator')&&Object.hasOwn(changes,'showLiveWaveform')){
     const submittedMode=changes.showPlaybackIndicator===false?'none':changes.showLiveWaveform?'live':'decorative';
-    if(drafts.get('playbackIndicator')===submittedMode)drafts.delete('playbackIndicator');
+    if(submittedRevisions.get('playbackIndicator')===draftRevisions.get('playbackIndicator')&&drafts.get('playbackIndicator')===submittedMode)drafts.delete('playbackIndicator');
    }
   }state=next;paint();await renderPreview(true)}
   catch(error){if(generation===epoch&&!closed&&error.name!=='AbortError'){errorBox.textContent=error.message;if(!unauthorized){try{await readState()}catch(readError){if(generation===epoch&&!closed&&readError.name!=='AbortError')disconnected(readError.message)}}}throw error}
@@ -157,7 +159,7 @@ async function refresh(){
  try{await enqueue(()=>readState())}catch(error){if(generation===epoch&&!closed&&error.name!=='AbortError'){transportError=true;disconnected(error.message)}}finally{schedule()}
 }
 function reconnect(){if(closed)return;token=readToken();unauthorized=false;resetConnection(token?'Connecting':'Disconnected',token?'':'Open the URL from opencovectl url to connect.');if(token)refresh()}
-for(const key of preferenceKeys)document.getElementById(key).addEventListener('input',event=>{drafts.set(key,event.target.type==='checkbox'?event.target.checked:event.target.value);paintLocalPreferenceStatus();if(key==='swipeToSkip')setActionsEnabled(!!state&&!closed&&!unauthorized)});
+for(const key of preferenceKeys)document.getElementById(key).addEventListener('input',event=>{draftRevisions.set(key,(draftRevisions.get(key)||0)+1);drafts.set(key,event.target.type==='checkbox'?event.target.checked:event.target.value);paintLocalPreferenceStatus();if(key==='swipeToSkip')setActionsEnabled(!!state&&!closed&&!unauthorized)});
 window.addEventListener('hashchange',reconnect);
 window.addEventListener('pagehide',()=>{closed=true;token='';resetConnection()});
 window.addEventListener('pageshow',event=>{if(event.persisted){closed=false;reconnect()}});

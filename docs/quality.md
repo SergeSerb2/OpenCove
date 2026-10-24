@@ -92,8 +92,14 @@ is off, but its checkbox value remains intact and is included in the swipe save.
 
 The controls share the page's explicit-edit drafts, serialized authenticated
 commands, error alert, fresh-state readback, and connection-generation guards.
-Polling and unrelated group saves keep unsaved edits. A successful response
-retires only drafts that still match the submitted values. A failed save keeps
+Polling and unrelated group saves keep unsaved edits. Each input edit advances
+that input's revision. The shared command path copies submitted preference
+values and captures edit revisions before enqueueing, including calls through
+`window.opencove.command`. A successful response retires a draft only when its
+revision and value still match that submission. A newer edit survives even if
+it returns to the submitted value. Numeric Appearance fields keep their existing
+number conversion; `playbackIndicator` keeps its mapping to
+`showPlaybackIndicator` and `showLiveWaveform`. A failed save keeps
 drafts and reads current app state without hiding the error. A disconnected or
 expired-token page disables inputs and saves, clears app-derived values, and
 keeps explicit drafts for reconnection. Group status text reports unsaved edits
@@ -102,9 +108,12 @@ regions support browser keyboard and accessibility use; live acceptance remains
 required.
 
 This control addition starts from frozen parent
-`e2aca48246e22f8fbd2b81943c9c3f4f0da7c65c`. Its implementation check is limited
-to source review, embedded-JavaScript parsing, and diff checks. Build and runtime
-proof belong to the parent integration run. Before accepting the controls:
+`e2aca48246e22f8fbd2b81943c9c3f4f0da7c65c`. The edit-revision correction starts
+from frozen implementation parent `1941279a0aabadb615495edd3f869e03f15d6894`.
+Implementation checks are limited to source review, embedded-JavaScript parsing,
+and diff checks. Build and runtime proof belong to the parent integration run.
+Common on/off and restart checks do not establish the queued-save race. The
+corrected integrated revision still needs that coverage. Before accepting the controls:
 
 - In the real authenticated browser and an owned packaged session, keep all
   protected readers off. Save each group through off → on → off, inspect each
@@ -115,7 +124,19 @@ proof belong to the parent integration run. Before accepting the controls:
   and edit a submitted field again while its save is in flight. Require the
   newer draft and unrelated drafts to survive. Check real save failure and
   rejected-command paths: the error remains visible, fresh app state is read,
-  drafts remain, and a later successful save clears only matching drafts.
+  drafts remain, and a later successful save clears only the matching revision
+  and value.
+- Check the queued same-value edit case with real requests: start with a false
+  choice, edit true and submit save A. While A is pending, edit false and submit
+  save B, then edit true without saving again, all before A completes. After A
+  succeeds, the newest true draft must stay unsaved. After B succeeds, app
+  readback must be false while the checkbox stays true and unsaved. A later save
+  of that draft may clear it only if no further edit occurs. Cover each local
+  group, ordinary Appearance fields, the synthetic `playbackIndicator` choice,
+  and generic preference submissions through `window.opencove.command`.
+  Use equivalent A/B/A values for inputs that are not Boolean.
+  Keep unrelated drafts intact. If the required overlap is not observed, leave
+  race acceptance unverified; do not add delays, hooks, or substitute responses.
 - Disconnect and reconnect the owned server, including during a pending save.
   Check disabled inputs and save buttons, retained drafts, retirement of stale
   responses, and fresh readback after reconnect. Check the real expired-token
