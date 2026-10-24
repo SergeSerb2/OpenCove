@@ -109,7 +109,7 @@ struct CoveCalendarView: View {
                 ForEach(0..<7, id: \.self) { index in
                     Text(weekdays[index])
                         .font(.system(size: 8, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.45))
+                        .foregroundStyle(CoveNotchStyle.secondary)
                         .frame(maxWidth: .infinity)
                         .accessibilityHidden(true)
                 }
@@ -131,7 +131,8 @@ struct CoveCalendarView: View {
             VStack(spacing: 0) {
                 Text(date, format: .dateTime.day())
                     .font(.system(size: 9, weight: selected || today ? .bold : .regular, design: .rounded))
-                    .foregroundStyle(today ? Color.white : selected ? Color.black : .white.opacity(inMonth ? 0.9 : 0.3))
+                    .foregroundStyle(today || selected ? Color.black :
+                        inMonth ? Color.white.opacity(0.9) : CoveNotchStyle.secondary)
                     .frame(width: 16, height: 14)
                     .background(today ? Color.red : selected ? .white : .clear, in: Circle())
                 HStack(spacing: 1) {
