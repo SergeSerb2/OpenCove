@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Build or package OpenCove locally. Never publishes, installs, or launches an app."""
 import argparse
+import base64
 import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -91,7 +93,7 @@ def bundle_archive_entries(app, root):
     return entries
 
 
-def signing_configuration(mode, notarize=False, profile=None):
+def signing_configuration(mode, notarize=False, profile=None, provisioning=None):
     identity = os.environ.get("OPENCOVE_SIGN_IDENTITY", "")
     profile = profile or os.environ.get("OPENCOVE_NOTARY_PROFILE", "")
     keychain = check.signing_keychain()
@@ -100,10 +102,30 @@ def signing_configuration(mode, notarize=False, profile=None):
         return None, None
     check.require(re.fullmatch(r"Developer ID Application: [^\r\n]+ \([A-Z0-9]{10}\)", identity) is not None,
                   "Set OPENCOVE_SIGN_IDENTITY to the full Developer ID Application identity. Apple Development is not a distribution identity.")
+    if provisioning is not None:
+        requested_team = re.search(r"\(([A-Z0-9]{10})\)$", identity)[1]
+        check.require(provisioning["metadata"]["teamIdentifier"] == requested_team,
+                      "Profile team differs from the requested signing identity.")
     # security uses a positional keychain operand (not --keychain). This restricts
     # identity discovery without changing the user's global keychain search list.
     identities = check.output(["security", "find-identity", "-v", "-p", "codesigning", *([keychain] if keychain else [])])
     check.require('"' + identity + '"' in identities, "The requested Developer ID Application identity and private key are not available.")
+    if provisioning is not None:
+        # Resolve the usable identity to one certificate, then read its public
+        # DER bytes. A common name or same-team certificate is not authorization.
+        fingerprints = {match.upper() for match in re.findall(
+            r'^\s*\d+\)\s+([A-Fa-f0-9]{40})\s+"' + re.escape(identity) + r'"\s*$', identities, re.MULTILINE)}
+        check.require(len(fingerprints) == 1, "KVS signing requires one unambiguous certificate for the requested identity.")
+        fingerprint = fingerprints.pop()
+        pem = check.output(["security", "find-certificate", "-a", "-p", *([keychain] if keychain else [])])
+        certificates = {base64.b64decode(re.sub(r"\s+", "", value), validate=True)
+                        for value in re.findall(r"-----BEGIN CERTIFICATE-----\s*(.*?)\s*-----END CERTIFICATE-----", pem, re.DOTALL)}
+        selected = [certificate for certificate in certificates if hashlib.sha1(certificate).hexdigest().upper() == fingerprint]
+        check.require(len(selected) == 1, "Could not resolve the selected signing identity to one public certificate.")
+        check.provisioning.require_certificate(provisioning, selected[0])
+        # SHA-1 is codesign's identity selector, not the authorization predicate:
+        # require_certificate uses SHA-256 over the actual certificate DER.
+        identity = fingerprint
     check.require(not profile or notarize, "A notary profile requires --notarize; no implicit Apple upload is allowed.")
     check.require(not notarize or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", profile) is not None,
                   "--notarize requires a local keychain profile (OPENCOVE_NOTARY_PROFILE or --notary-profile).")
@@ -131,12 +153,30 @@ def destination(path, replace=False):
     return path
 
 
-def build(app, arch, configuration, variant, signing, replace=False, scratch=None, manifest=None, tools=None, updater_test=False):
+def notarize_app(app, notary_profile, work):
+    upload = work / "notary-submission.zip"
+    check.run(["ditto", "-c", "-k", "--keepParent", app, upload])
+    notary_keychain = check.signing_keychain()
+    result = json.loads(check.output(["xcrun", "notarytool", "submit", upload,
+                                     "--keychain-profile", notary_profile,
+                                     *(["--keychain", notary_keychain] if notary_keychain else []),
+                                     "--wait", "--output-format", "json"]))
+    check.require(result.get("status") == "Accepted", "Apple did not accept the notarization submission. No release artifacts were retained.")
+    check.run(["xcrun", "stapler", "staple", app])
+
+
+def build(app, arch, configuration, variant, signing, replace=False, scratch=None, manifest=None, tools=None, updater_test=False,
+          provisioning=None, notary_profile=None, expected_identity=None):
     check.version()
     updates = updater_configuration(variant, configuration, updater_test)
     check.require(arch in check.ARCHITECTURES, "Unsupported architecture.")
     check.require(signing != "developer-id" or (variant == "release" and configuration == "release"), "Developer ID mode requires an optimized release bundle.")
-    identity, _ = signing_configuration(signing)
+    if provisioning is not None:
+        check.require(signing == "developer-id" and notary_profile and not updater_test,
+                      "KVS builds are internal to explicit notarized Developer ID packaging.")
+    identity, _ = signing_configuration(signing, provisioning=provisioning)
+    check.require(expected_identity is None or (provisioning is not None and identity == expected_identity),
+                  "Signing certificate changed after the package profile preflight.")
     tools = tools or toolchain()
     manifest = manifest or check.source_manifest(allow_dirty=True)
     app = destination(app, replace)
@@ -220,17 +260,27 @@ def build(app, arch, configuration, variant, signing, replace=False, scratch=Non
         }
         info.update(updates)
         (staged / "Contents/Info.plist").write_bytes(plistlib.dumps(info, sort_keys=True))
+        if provisioning is not None:
+            # Preserve the caller's exact Apple-issued bytes. This must precede
+            # final host signing; neither the profile nor host claims go to helpers.
+            (staged / "Contents/embedded.provisionprofile").write_bytes(provisioning["data"])
         sign_sparkle(staged, identity)
         command = ["codesign", "--force", "--sign", identity or "-"]
         if identity:
             command += check.signing_keychain_arguments()
             entitlements = work / "entitlements.plist"
-            entitlements.write_bytes(plistlib.dumps({"com.apple.security.automation.apple-events": True}))
+            entitlements.write_bytes(plistlib.dumps(provisioning["entitlements"] if provisioning is not None else
+                                                  {"com.apple.security.automation.apple-events": True}))
             command += ["--options", "runtime", "--timestamp", "--entitlements", entitlements]
         else:
             command += ["--timestamp=none"]
         check.run(command + [staged], stdout=sys.stderr)
-        check.bundle(staged, arch, variant, signing, expected_version=value, source_root=source)
+        # A decoded profile is untrusted. Do not return even a local KVS build
+        # until notarization and the system distribution gate pass.
+        if provisioning is not None:
+            notarize_app(staged, notary_profile, work)
+        check.bundle(staged, arch, variant, signing, notarized=provisioning is not None, expected_version=value, source_root=source,
+                     kvs_identifier=provisioning["metadata"]["kvsIdentifier"] if provisioning is not None else None)
         check.require(check.source_manifest(allow_dirty=True) == manifest, "Source changed during the build. Discard this build and retry from a stable checkout.")
         if app.exists():
             # Refuse a running destination again immediately before replacement.
@@ -261,10 +311,21 @@ def zip_files(destination_path, paths, epoch):
 
 
 def package(args):
+    # Reject incomplete/unsupported input before updater setup, identity lookup,
+    # building, signing, or upload. These inputs have no ambient env fallback.
+    check.require((args.provisioning_profile is None) == (args.kvs_identifier is None),
+                  "--provisioning-profile and --kvs-identifier must be supplied together.")
+    provisioning = None
+    if args.provisioning_profile is not None:
+        check.require(args.signing == "developer-id" and args.notarize,
+                      "KVS provisioning requires --signing developer-id --notarize and the final system distribution gate.")
+        check.provisioning.distribution_command()
+        check.provisioning.resolved_kvs(args.kvs_identifier)
+        provisioning = check.provisioning.inspect_profile(check.provisioning.read_profile(args.provisioning_profile), args.kvs_identifier)
     value = check.version()
     updater_configuration("release", "release")
     check.require(not args.notarize or args.signing == "developer-id", "Notarization requires --signing developer-id.")
-    identity, profile = signing_configuration(args.signing, args.notarize, args.notary_profile)
+    identity, notary_profile = signing_configuration(args.signing, args.notarize, args.notary_profile, provisioning=provisioning)
     check.require((ROOT / ".git").exists(), "Release packaging requires a clean Git checkout. An extracted source archive supports local builds only.")
     manifest = check.source_manifest()
     tools = toolchain()
@@ -280,23 +341,17 @@ def package(args):
         artifacts = work / "artifacts"
         artifacts.mkdir()
         app = work / "OpenCove.app"
-        # The profile is only for the explicit upload below, never the build.
+        # This is the notary credential profile, separate from app provisioning.
         saved_profile = os.environ.pop("OPENCOVE_NOTARY_PROFILE", None)
         try:
-            build(app, arch, "release", "release", args.signing, manifest=manifest, tools=tools)
+            build(app, arch, "release", "release", args.signing, manifest=manifest, tools=tools,
+                  provisioning=provisioning, notary_profile=notary_profile if provisioning is not None else None,
+                  expected_identity=identity if provisioning is not None else None)
         finally:
             if saved_profile is not None:
                 os.environ["OPENCOVE_NOTARY_PROFILE"] = saved_profile
-        if args.notarize:
-            upload = work / "notary-submission.zip"
-            check.run(["ditto", "-c", "-k", "--keepParent", app, upload])
-            notary_keychain = check.signing_keychain()
-            result = json.loads(check.output(["xcrun", "notarytool", "submit", upload,
-                                             "--keychain-profile", profile,
-                                             *(["--keychain", notary_keychain] if notary_keychain else []),
-                                             "--wait", "--output-format", "json"]))
-            check.require(result.get("status") == "Accepted", "Apple did not accept the notarization submission. No release artifacts were retained.")
-            check.run(["xcrun", "stapler", "staple", app])
+        if args.notarize and provisioning is None:
+            notarize_app(app, notary_profile, work)
             check.bundle(app, arch, "release", args.signing, notarized=True)
         zip_files(artifacts / (base + ".zip"), bundle_archive_entries(app, work), epoch)
         source_archive(artifacts / (source_base + ".zip"), manifest, epoch)
@@ -304,6 +359,8 @@ def package(args):
                     "identity": identity, "source": manifest, "toolchain": tools,
                     "updater": {k: v for k, v in plistlib.loads((app / "Contents/Info.plist").read_bytes()).items()
                                 if k in {"OpenCoveUpdaterMode", "SUFeedURL", "SUPublicEDKey", "SUVerifyUpdateBeforeExtraction"}}}
+        if provisioning is not None:
+            metadata["provisioning"] = provisioning["metadata"]
         (artifacts / (base + "-release.json")).write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
         (artifacts / "SHA256SUMS").write_text("".join(check.digest(p.read_bytes()) + "  " + p.name + "\n" for p in sorted(artifacts.iterdir())))
         check.require(check.source_manifest() == manifest, "Checkout changed during packaging. Retry from a stable checkout.")
@@ -335,6 +392,8 @@ def main():
     release.add_argument("--output-dir", type=Path)
     release.add_argument("--notarize", action="store_true", help="Explicitly upload the Developer ID app to Apple using a local keychain profile")
     release.add_argument("--notary-profile")
+    release.add_argument("--provisioning-profile", type=Path, help="Caller-supplied Apple-issued Developer ID profile; requires --kvs-identifier and explicit notarization")
+    release.add_argument("--kvs-identifier", help="Authorized full KVS identifier, already resolved; requires --provisioning-profile")
     source = commands.add_parser("source-archive", help="Export allowlisted source; --allow-dirty marks a local preview, not a release")
     source.add_argument("--output", type=Path, required=True)
     source.add_argument("--allow-dirty", action="store_true")
