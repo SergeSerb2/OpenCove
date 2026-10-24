@@ -406,7 +406,9 @@ struct NotchView: View {
                     let outlined = store.preferences.showContrastOutline || contrast == .increased
                     Group {
                         if outlined {
-                            surfaceShape.stroke(Color.white.opacity(contrast == .increased ? 1 : 0.45), lineWidth: 2)
+                            let outlineColor = store.preferences.useAccentOutline && contrast != .increased
+                                ? CoveNotchStyle.accent(store.preferences.accent) : Color.white
+                            surfaceShape.stroke(outlineColor.opacity(contrast == .increased ? 1 : 0.45), lineWidth: 2)
                                 .clipShape(surfaceShape)
                         } else {
                             surfaceShape.stroke(Color.white.opacity(store.isExpanded ? 0.085 : 0.035), lineWidth: 0.6)
