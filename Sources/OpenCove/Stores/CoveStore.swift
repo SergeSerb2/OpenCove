@@ -43,6 +43,7 @@ final class CoveStore: ObservableObject {
     let waveform = AudioWaveformController()
     let travel = TravelController()
     let notificationMirror = NotificationMirror()
+    let settingsSync = CoveSettingsSyncController()
     lazy var hardwareKeys = HardwareKeyController(system: system)
     var onOpenSettings: (() -> Void)?
     var onPreferencesChange: (() -> Void)?
@@ -342,6 +343,12 @@ final class CoveStore: ObservableObject {
         appliedPreferences = loaded
         lastError = loadError
         needsPreferencesBackup = needsBackup
+        settingsSync.currentPreferences = { [weak self] in self?.preferences }
+        settingsSync.applySettings = { [weak self] settings in
+            guard let self else { return false }
+            settings.apply(to: &self.preferences)
+            return self.savePreferences()
+        }
         reconcileActivitySelection(resetToDefault: true)
         media.onHUD = { [weak self] in self?.showHUD($0) }
         media.$state.map { CompactMediaInput($0) }.removeDuplicates()
@@ -407,6 +414,7 @@ final class CoveStore: ObservableObject {
         }.store(in: &subscriptions)
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification).sink { [weak self] _ in
             self?.reconcileLoginItem()
+            self?.settingsSync.checkForChanges()
         }.store(in: &subscriptions)
         reconcileLoginItem()
         refreshSessionActivity()
@@ -434,10 +442,12 @@ final class CoveStore: ObservableObject {
         reconcileMirroring()
         appliedPreferences = preferences
         reconcileCompactMedia()
+        settingsSync.startIfEnabled(preferences)
     }
 
     func stop() {
         started = false
+        settingsSync.stop()
         resetCompactDismissals()
         dismissMediaPeek()
         mediaPeekInput = nil
@@ -712,6 +722,8 @@ final class CoveStore: ObservableObject {
     /// completion marker remains at its prior value when any save step fails.
     @discardableResult func savePreferences() -> Bool {
         preferences.normalize()
+        // Opt-out is immediate even if the local file cannot be saved.
+        if !preferences.syncSettingsWithiCloud { settingsSync.stop() }
         let previous = appliedPreferences
         lastError = nil
         if started {
@@ -781,6 +793,7 @@ final class CoveStore: ObservableObject {
         // Never persist a completed setup after that overall failure; keep all
         // other effective choices, including privacy opt-outs, in the snapshot.
         if !success { preferences.completedOnboarding = previous.completedOnboarding }
+        var preferencesPersisted = false
         do {
             if needsPreferencesBackup {
                 if let backup = try backupDamagedPreferences() {
@@ -789,12 +802,14 @@ final class CoveStore: ObservableObject {
                 }
             }
             try JSONEncoder().encode(preferences).write(to: CovePaths.dataDirectory.appendingPathComponent("preferences.json"), options: .atomic)
+            preferencesPersisted = true
         } catch {
             success = false
             preferences.completedOnboarding = previous.completedOnboarding
             lastError = "Settings apply for this session, but could not be saved: \(error.localizedDescription)"
         }
         appliedPreferences.completedOnboarding = preferences.completedOnboarding
+        if started { settingsSync.preferencesDidSave(preferences, persisted: preferencesPersisted) }
         return success
     }
 

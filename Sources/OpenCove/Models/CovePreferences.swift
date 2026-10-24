@@ -15,7 +15,7 @@ struct CovePreferences: Codable, Equatable {
         // New integrations require an explicit saved choice in a legacy document.
         let consentFields: Set<String> = ["enablePrivateAPIs", "enableCalendar", "allowAppleScript", "mirrorSystemNotifications",
                                           "showLiveWaveform", "replaceSystemHUDs", "showOnLockScreen",
-                                          "showLockScreenPrivateContent", "enableWeather", "launchAtLogin"]
+                                          "showLockScreenPrivateContent", "enableWeather", "launchAtLogin", "syncSettingsWithiCloud"]
         var repairs: [String] = []
         for key in Array(defaults.keys) {
             guard let value = saved[key] else {
@@ -135,6 +135,8 @@ struct CovePreferences: Codable, Equatable {
     var preferredCalendarApp = "calendar"
     var hideInFullscreen = false
     var launchAtLogin = false
+    // Per-device consent. Never included in CoveSyncedSettings.
+    var syncSettingsWithiCloud = false
     var completedOnboarding = false
     var hudDuration = 2.0
     // Zero duration and "global" speed inherit the existing shared choices.
