@@ -438,7 +438,7 @@ final class CoveStore: ObservableObject {
         if preferences.enableCalendar { travel.start() }
         travel.updateEvents(preferences.enableCalendar ? activities.routingEvents : [])
         if preferences.enableWeather { weather.start() }
-        if preferences.usesLiveWaveform { waveform.start() }
+        waveform.setEnabled(preferences.usesLiveWaveform)
         hardwareKeys.volumeEnabled = preferences.enableVolumeHUD
         hardwareKeys.brightnessEnabled = preferences.enableBrightnessHUD
         hardwareKeys.start(enabled: preferences.replaceSystemHUDs && preferences.enablePrivateAPIs)
@@ -460,7 +460,7 @@ final class CoveStore: ObservableObject {
         setCompactMediaVisible(false)
         hudDismiss?.cancel()
         media.stop(); system.stop(); activities.stop(); weather.stop()
-        waveform.stop(); travel.stop(); hardwareKeys.stop()
+        waveform.setEnabled(false); travel.stop(); hardwareKeys.stop()
         reconcileMirroring()
         hud = nil
     }
@@ -751,7 +751,7 @@ final class CoveStore: ObservableObject {
             else { travel.stop(); travel.updateEvents([]) }
             if preferences.enableWeather { weather.start() } else { weather.stop() }
             if preferences.usesLiveWaveform != previous.usesLiveWaveform {
-                if preferences.usesLiveWaveform { waveform.start() } else { waveform.stop() }
+                waveform.setEnabled(preferences.usesLiveWaveform)
             }
             hardwareKeys.volumeEnabled = preferences.enableVolumeHUD
             hardwareKeys.brightnessEnabled = preferences.enableBrightnessHUD

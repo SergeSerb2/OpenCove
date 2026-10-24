@@ -131,3 +131,92 @@ Apple's primary documentation defines
 the [three address fields](https://developer.apple.com/documentation/coreaudio/audioobjectpropertyaddress)
 and the returned byte count for
 [property reads](https://developer.apple.com/documentation/coreaudio/audioobjectgetpropertydata(_:_:_:_:_:_:)).
+
+## Live waveform consumer demand
+
+The live waveform requires both the running store's saved `usesLiveWaveform`
+opt-in and at least one presented `LiveWaveformView`. A Settings status label
+alone is not a waveform consumer. Saving opt-in with no consumer retains the
+choice and reports idle, or the existing access-required/package error. It
+does not create a capture stream or start the 50 ms meter task.
+
+Each waveform has a native background view with its own consumer ID. The view
+must have a visible, nonminiaturized, nonoccluded window, nonzero window and
+native ancestor alpha, no hidden ancestor, positive finite bounds, and a
+nonempty visible rectangle. Local view/window events reconcile demand. Ancestor
+frame/bounds notifications cover clipping and scrolling; no desktop inventory,
+input monitor, new permission poll, or visibility timer is added. As in the
+existing native media-region marker, the bridge enables geometry notifications
+on its native ancestors. It removes its observers when detached or dismantled.
+
+The bridge defers controller publication until after the native/SwiftUI update
+and checks presentation again before acquiring a lease. Dismantle cancels a
+pending acquisition and queues an ID-specific release that survives view
+destruction. A replacement view has a different ID. Native detach, hidden
+ancestry, zero alpha, clipping, window occlusion, and minimization also retire
+demand. A later presentation can acquire the same view's lease again.
+
+Source lifecycle trace (not a runtime observation):
+
+1. Store startup enables the controller from `usesLiveWaveform`. The existing
+   no-prompt permission preflight still provides the missing-access status.
+   With zero consumers, stream creation and the meter remain off.
+2. The first presented native waveform acquires its ID and uses the existing
+   no-prompt start path. Further panel, peek, full Media, or lock-widget
+   consumers add IDs without another start. Title, color, countdown, level,
+   and unchanged layout updates keep the same lease.
+3. A permitted outgoing transition remains a consumer while its native view
+   remains presented. Selection alone does not retire it. After outgoing
+   Media content is dismantled on settled Files, its ID is released. Another
+   presented panel or lock widget can still retain capture.
+4. The final release invalidates the capture generation, cancels and clears
+   the meter/start tasks, invalidates the receiver, clears displayed levels,
+   and uses the existing serialized stream teardown. Missing-access and
+   backend-error status survive retirement; a successful session becomes idle.
+5. A returning first consumer starts a new generation through `start()`, which
+   waits for prior teardown before creating a stream. Rapid retirement and
+   reappearance cannot let an old view release the replacement view's ID or
+   let a cancelled acquisition register after dismantle.
+6. Store stop or opt-out disables capture even if native views remain mounted.
+   It does not change the saved opt-in during ordinary consumer retirement.
+   `Allow System Audio Levels` remains the only permission-request path. With
+   no presented waveform, that explicit action can request access but cannot
+   start capture or the meter. Ordinary view updates do not retry a failure.
+
+Consumer coverage follows the existing view branches, not just `selectedTab`.
+Compact Media and peek require available media and the indicator/live options.
+Full Media mounts the waveform only with available media and an enabled
+indicator. Condensed Duo omits it. Files, Calendar, Timer, empty/unavailable
+Media, disabled indicators, Settings status, and unmounted lock widgets do not
+create a waveform lease. Offscreen rendering without a presented native window
+does not qualify. The bridge does not treat disabled hit testing as hidden:
+outgoing content can remain visible while it no longer accepts input.
+
+Parent-owned real acceptance remains **UNVERIFIED**:
+
+- First integrate and build the exact candidate. Parsing alone does not
+  typecheck AppKit/SwiftUI APIs or prove native event/KVO delivery, clipping,
+  or actual representable retirement during SwiftUI transitions.
+- With an already authorized, isolated, owned audio workload and permitted
+  observation path, compare Media → settled Files → Media with equal dwell
+  periods. Confirm final-consumer retirement stops capture and meter work,
+  and return resumes actual measured levels once without overlap or a prompt.
+- Repeat with two presented panels, one panel retiring, the final panel
+  retiring, a permitted presented lock widget, hidden/ordered-out/minimized
+  windows, clipped lock content, outgoing transitions, Reduce Motion, and rapid
+  retirement/reappearance including a return during an in-flight start/stop.
+- Check opt-out with mounted views, opt-in without a waveform, missing access
+  without granting it, empty/unavailable Media, condensed Duo, disabled
+  indicators, and ordinary title/countdown/layout updates. Confirm these
+  updates do not restart a stream or turn a Settings status label into demand.
+  Exercise explicit access only when separately authorized; without a
+  presented consumer it must not start capture after access succeeds.
+- Use the real permitted visual/caller path and parent-owned process traces.
+  Do not use injected levels/media, a new fixture, a prohibited native/private
+  diagnostic getter, a permission workaround, or desktop input to establish
+  acceptance. The strict media C-PID prerequisite remains **FAILED**; native
+  owned-media acceptance remains blocked. M1 iCloud remains **DEFERRED**.
+
+This change has source parsing and diff checks only. No build, app, helper,
+fixture, capture, runtime or performance sample was run. It establishes no
+CPU, wakeup, GPU, FPS, energy, hardware, permission, or cloud acceptance claim.
