@@ -61,8 +61,13 @@ client descriptor, tokens, environment, or full app snapshot.
 1. Use a fresh private data directory for each bundle. Follow the disabled
    integrations in `SAFE` in `script/runtime_e2e.py`, with Calendar enabled,
    `expandedLayout: "calendar"`, `hideWhenIdle: false`, `expandOnHover: false`,
-   `hideInFullscreen: false`, and `reduceMotion: true`. Keep media and all its
-   integrations disabled. Do not run the existing activities flow just for these
+   `hideInFullscreen: false`, and `reduceMotion: true`. Set `enableMedia: true`
+   for the empty Duo pane, with `enablePrivateAPIs: false` and
+   `allowAppleScript: false`. `MediaController.start(privateAPIs:appleScript:)`
+   leaves its remote backend absent; `readAdapterFallback` then skips adapter
+   startup, and `readScriptFallback` clears state without running scripts. This
+   enables the feature without reading or controlling a personal player. No
+   fixture player is needed. Do not run the existing activities flow just for these
    captures; that flow also starts a timer and adds a tray file.
 2. Before launch, write exactly
    `{"excludedCalendarIdentifiers":"damaged"}` to the isolated
@@ -100,9 +105,12 @@ If the recovery gate is absent, stop this case before any calendar operation.
    proof. Keep the method in each result; AppKit caching does not prove
    WindowServer composition or a desktop backdrop. If capture is unavailable,
    record the exact failure and leave the gate pending.
-4. Repeat with `expandedLayout: "duo"` while keeping media disabled. Require
-   `expandedDuo == true` and a visibly mounted condensed Calendar before accepting
-   its PNG. Return to Calendar, collapse, and expand once; repeat the captures to
+4. Repeat with `expandedLayout: "duo"`, `enableMedia: true`,
+   `enablePrivateAPIs: false`, and `allowAppleScript: false`. Select the `media`
+   tab explicitly: Duo is attached to that tab, not the Calendar tab. Require
+   `visibleTab == "media"`, `expandedDuo == true`, and a visibly mounted
+   condensed Calendar before accepting its PNG. Return to Calendar, collapse,
+   and expand once; repeat the captures to
    check the same text after remount. Recheck the empty recovery gate each time.
 
 ### Measure contrast from the saved pixels
