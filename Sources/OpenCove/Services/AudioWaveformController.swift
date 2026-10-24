@@ -15,7 +15,8 @@ import ScreenCaptureKit
 /// No NSMicrophoneUsageDescription or microphone capture is used here.
 ///
 /// Wire requestAccessAndStart() only to an explicit user action. Restoring an
-/// enabled preference must call start(), which never requests permission.
+/// enabled preference must call setEnabled(_:), which never requests permission.
+/// Capture also requires a presented LiveWaveformView consumer.
 /// Apple ABI: ScreenCaptureKit/SCStream.h, CoreGraphics/CGWindow.h, and
 /// CoreMedia/CMSampleBuffer.h in the public macOS SDK. References:
 /// https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos
@@ -33,6 +34,9 @@ final class AudioWaveformController: ObservableObject {
     private var cleanupTask: Task<Void, Never>?
     private var generation = UUID()
     private var lastPermissionCheck = 0.0
+    private var enabled = false
+    private var presentedConsumers = Set<UUID>()
+    private var accessRequired = false
 
     // On-demand development diagnostics only; no publication or polling.
     private(set) var startAttempts: UInt64 = 0
@@ -54,21 +58,55 @@ final class AudioWaveformController: ObservableObject {
         }
     }
 
-    /// Safe for startup and preference restoration: preflight does not prompt.
-    func start() {
-        startAttempts &+= 1
+    /// The store supplies the running app's saved opt-in, independently of views.
+    func setEnabled(_ enabled: Bool) {
+        guard self.enabled != enabled else { return }
+        self.enabled = enabled
+        if enabled {
+            start()
+        } else {
+            stopCapture()
+            accessRequired = false
+            lastError = nil
+            status = "Live waveform is off."
+        }
+    }
+
+    /// Each native view owns one ID. Repeated layout/configuration is a no-op.
+    func setConsumerPresented(_ id: UUID, presented: Bool) {
+        if presented {
+            guard presentedConsumers.insert(id).inserted else { return }
+            if presentedConsumers.count == 1 { start() }
+        } else {
+            guard presentedConsumers.remove(id) != nil, presentedConsumers.isEmpty else { return }
+            stopCapture()
+            // Keep permission and backend failures useful in Settings while idle.
+            if enabled, !accessRequired, lastError == nil { showIdle() }
+        }
+    }
+
+    /// Safe for restoration and returning consumers: preflight does not prompt.
+    private func start() {
+        guard enabled else { return }
         guard session == nil, startTask == nil else { return }
         guard CGPreflightScreenCaptureAccess() else {
             showAccessRequired()
             return
         }
+        accessRequired = false
         guard hasUsageDescription else { return }
+        guard !presentedConsumers.isEmpty else {
+            lastError = nil
+            showIdle()
+            return
+        }
+        startAttempts &+= 1
         beginCapture()
     }
 
     /// The only path that can request new permission. Call from a user button.
     func requestAccessAndStart() {
-        guard session == nil, startTask == nil else { return }
+        guard enabled, session == nil, startTask == nil else { return }
         guard hasUsageDescription else { return }
         if !CGPreflightScreenCaptureAccess() {
             guard CGRequestScreenCaptureAccess() else {
@@ -80,7 +118,7 @@ final class AudioWaveformController: ObservableObject {
         start()
     }
 
-    func stop() {
+    private func stopCapture() {
         if startTask != nil || session != nil || meterTask != nil { generation = UUID() }
         meterTask?.cancel()
         meterTask = nil
@@ -101,8 +139,6 @@ final class AudioWaveformController: ObservableObject {
             }
         }
         clearLevels()
-        if lastError != nil { lastError = nil }
-        if status != "Live waveform is off." { status = "Live waveform is off." }
     }
 
     private var hasUsageDescription: Bool {
@@ -179,13 +215,13 @@ final class AudioWaveformController: ObservableObject {
         if now - lastPermissionCheck >= 1 {
             lastPermissionCheck = now
             guard CGPreflightScreenCaptureAccess() else {
-                stop()
+                stopCapture()
                 showAccessRequired()
                 return
             }
         }
         if let error = snapshot.error {
-            stop()
+            stopCapture()
             status = "System audio levels stopped."
             lastError = "\(error) Check capture access, then try enabling the live waveform again."
             return
@@ -212,9 +248,15 @@ final class AudioWaveformController: ObservableObject {
     }
 
     private func showAccessRequired() {
+        accessRequired = true
         clearLevels()
         lastError = nil
         status = "Enable live waveform access to continue. In System Settings → Privacy & Security → Screen & System Audio Recording, allow OpenCove, then relaunch if needed."
+    }
+
+    private func showIdle() {
+        let idle = "Live waveform is idle. It resumes when a waveform is shown."
+        if status != idle { status = idle }
     }
 }
 
