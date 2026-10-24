@@ -364,6 +364,9 @@ struct SettingsView: View {
                 }
                 Toggle("Volume", isOn: preference(\.enableVolumeHUD))
                 Toggle("Display brightness", isOn: preference(\.enableBrightnessHUD))
+                Toggle("Brightness symbol glow", isOn: preference(\.brightnessHUDGlow))
+                    .disabled(!store.preferences.enableBrightnessHUD)
+                    .help("Add a soft glow to the sun symbol on display brightness overlays.")
                 Toggle("Battery & charging", isOn: preference(\.enableBattery))
                 Toggle("Bluetooth & audio devices", isOn: preference(\.enableBluetooth))
                 Toggle("Focus status", isOn: preference(\.enableFocus))

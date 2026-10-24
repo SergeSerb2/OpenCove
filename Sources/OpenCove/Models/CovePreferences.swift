@@ -129,6 +129,7 @@ struct CovePreferences: Codable, Equatable {
     var hudSpeed = "smooth"
     var showHUDLabels = true
     var showHUDPercentage = true
+    var brightnessHUDGlow = false
     var showPlaybackIndicator = true
     var showLiveWaveform = false
     var musicColorAccent = true
