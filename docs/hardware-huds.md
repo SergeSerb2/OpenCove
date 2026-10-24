@@ -70,7 +70,9 @@ Build the real app with the checked-in [bundle workflow](building.md). The [inte
 
 ### Recorded visibility-option acceptance
 
-An optimized arm64 development bundle of `7da217d` passed 22 recorded checks.
+An optimized arm64 development bundle of `7da217d` produced 22 check records,
+including a pending accessibility record. The covered presentation and
+persistence branches passed.
 Mounted captures covered all four visual choices for real finite volume and
 battery readings, unavailable brightness and nonnumeric notification previews.
 Continuous and supported simulated-notch center-gap layouts both ran. Across
@@ -87,7 +89,7 @@ same authenticated preference path. All nine owned launches stopped and their
 credentials were cleared.
 
 This establishes the recorded presentation and persistence subset. Physical
-notch behavior, a finite brightness reading, native accessibility/VoiceOver and
-compositor output remain unverified. Source preserves the accessible compact
+notch behavior, a finite brightness reading, native Settings input, native
+accessibility/VoiceOver and compositor output remain unverified. Source preserves the accessible compact
 label; that is separate from runtime accessibility proof. No hardware write,
 key interception, personal player control or new permission was exercised.
