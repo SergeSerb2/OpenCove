@@ -123,10 +123,36 @@ final class NotchPanelController: NSObject {
     ]
 
     private static func declaresGames(in frontmostBundleURL: URL) -> Bool {
-        // Read only the supplied app's standard macOS plist. Do not use Bundle's
-        // metadata loader, enumerate files, or follow an Info.plist symlink.
-        let url = frontmostBundleURL.appendingPathComponent("Contents/Info.plist")
-        let descriptor = open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        // Reject ambiguous paths before any I/O. Bound the path and walk depth;
+        // never normalize or resolve symlinks and then reopen an absolute path.
+        let path = frontmostBundleURL.path
+        guard frontmostBundleURL.isFileURL, frontmostBundleURL.baseURL == nil,
+              frontmostBundleURL.host == nil || frontmostBundleURL.host == "" || frontmostBundleURL.host == "localhost",
+              frontmostBundleURL.user == nil, frontmostBundleURL.password == nil, frontmostBundleURL.port == nil,
+              frontmostBundleURL.query == nil, frontmostBundleURL.fragment == nil,
+              path.hasPrefix("/"), path.utf8.count < Int(PATH_MAX), !path.utf8.contains(0) else { return false }
+        var components = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        components.removeFirst()
+        if components.last == "" { components.removeLast() }
+        guard !components.isEmpty, components.count <= 128,
+              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && $0.utf8.count <= Int(NAME_MAX) })
+        else { return false }
+
+        // Pin each directory from the trusted filesystem root. A single-component
+        // openat rejects symlinks in every ancestor, the app, and Contents itself.
+        let directoryFlags = O_RDONLY | O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC
+        var directoryDescriptor = open("/", directoryFlags)
+        guard directoryDescriptor >= 0 else { return false }
+        defer { _ = close(directoryDescriptor) }
+        for component in components + ["Contents"] {
+            let nextDescriptor = openat(directoryDescriptor, component, directoryFlags)
+            guard nextDescriptor >= 0 else { return false }
+            _ = close(directoryDescriptor)
+            directoryDescriptor = nextDescriptor
+        }
+        // Read only the pinned app's standard plist, with no leaf symlink or
+        // Bundle metadata loader. All failures leave the category unknown.
+        let descriptor = openat(directoryDescriptor, "Info.plist", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
         guard descriptor >= 0 else { return false }
         let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? handle.close() }
