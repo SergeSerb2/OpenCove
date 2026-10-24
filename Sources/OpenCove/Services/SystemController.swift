@@ -49,7 +49,7 @@ final class SystemController: NSObject, ObservableObject {
     private var audioRefreshAcceptance: AudioRefreshAcceptance?
     private var audioRefreshCapture: AudioRefreshEvidence?
 
-    enum AudioRefreshCaller: String, Encodable { case nativePicker, developmentAPI }
+    enum AudioRefreshCaller: String, Encodable { case nativePicker, developmentAPI, hardwareControl }
 
     struct ReadEvidence: Encodable {
         var count = 0
@@ -174,6 +174,10 @@ final class SystemController: NSObject, ObservableObject {
     /// Refresh audio readings and output choices without reading unrelated domains.
     func refreshAudio(caller: AudioRefreshCaller = .nativePicker) {
         guard running else { return }
+        withAudioReadEvidence(caller: caller) { read(parts: .audio, emitHUD: true) }
+    }
+
+    private func withAudioReadEvidence(caller: AudioRefreshCaller, operation: () -> Void) {
         // The picker keeps its original entry path. Only an armed acceptance
         // captures this synchronous call; later listener/fallback/HUD work is
         // outside its interval. A reentrant read contributes to the outer call.
@@ -193,13 +197,16 @@ final class SystemController: NSObject, ObservableObject {
                 audioRefreshCapture = nil
             }
         }
-        read(parts: .audio, emitHUD: true)
+        operation()
     }
 
     /// The synchronous event-tap path must not enumerate Bluetooth, query Focus,
     /// or read private content while deciding whether to consume a control key.
     func refreshHardwareControls(volume: Bool) {
-        read(parts: volume ? .audio : .brightness, emitHUD: false)
+        guard running else { return }
+        if volume {
+            withAudioReadEvidence(caller: .hardwareControl) { read(parts: .audio, emitHUD: false) }
+        } else { read(parts: .brightness, emitHUD: false) }
     }
 
     /// Call only from an explicit output choice. Monitoring never changes routes.
