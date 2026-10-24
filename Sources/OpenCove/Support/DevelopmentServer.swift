@@ -777,6 +777,11 @@ final class DevelopmentServer {
         case "settings-activities":
             size = CGSize(width: 760, height: 900)
             content = AnyView(SettingsView(store: store, initialPage: .activities))
+        case "settings-calendar":
+            // The same real Activities form at a taller bounded size exposes
+            // its Calendar section without desktop input or a test-only view.
+            size = CGSize(width: 760, height: 1600)
+            content = AnyView(SettingsView(store: store, initialPage: .activities))
         case "settings-updates":
             size = CGSize(width: 760, height: 760)
             content = AnyView(SettingsView(store: store, initialPage: .about, updater: updater))

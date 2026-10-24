@@ -16,7 +16,11 @@ The full view places the selected-day schedule on the left and a month grid on t
 The store sets the calendar switch and app preference at startup and after saved preference changes:
 
 ```swift
-activities.setCalendarEnabled(preferences.enableCalendar)
+activities.setCalendarConfiguration(
+    enabled: preferences.enableCalendar,
+    showDeclinedEvents: preferences.showDeclinedCalendarEvents,
+    excludeSubscribedCalendars: preferences.excludeSubscribedCalendars
+)
 activities.preferredCalendarApp = preferences.preferredCalendarApp
 ```
 
@@ -46,7 +50,7 @@ let events = activities.events(on: date)
 
 `refreshCalendar()` and its alias `refreshSchedule()` refresh the selected 42-day grid and the existing seven-day upcoming feed. A dedicated serial worker owns its own EventKit store and converts results to value models before returning to the main actor. Reads wait 120 ms to combine rapid selections/store-change bursts; revision checks discard stale results. Distant months use separate bounded grid/upcoming queries rather than reading every intervening month. No EventKit objects leave the worker. No event data is saved to disk.
 
-Canceled events and events declined by the current user are omitted. Other overlapping events remain separate. A recurring occurrence ID includes its calendar, EventKit identifier, and start instant. Source color, source title, location, supported meeting URL, all-day state, and original time-zone identifier come from EventKit. Displayed times use the current system time zone; the row help includes the event's source time zone.
+Canceled events are always omitted. By default, events declined by the current user are also omitted. Enabling **Show declined events** includes otherwise valid events even when an attendee marked as the current user has declined. Another attendee's decline does not hide an event. Other overlapping events remain separate. A recurring occurrence ID includes its calendar, EventKit identifier, and start instant. Source color, source title, location, supported meeting URL, all-day state, and original time-zone identifier come from EventKit. Displayed times use the current system time zone; the row help includes the event's source time zone.
 
 The service refreshes on EventKit changes, app activation, system clock/time-zone changes, wake, and every minute while started. A separate one-second activity clock updates a visible event countdown without querying EventKit. Future events schedule an absolute phase boundary; empty, disabled, or unauthorized calendars have no second ticker. At midnight the selected day follows today only if the user had selected today. Other selections remain selected. Civil-day/month arithmetic handles daylight-saving transitions; it does not assume each day lasts 86,400 seconds.
 
@@ -61,9 +65,20 @@ activities.setCalendarPreEventLeadMinutes(15) // 0…1440; 0 disables pre-event 
 activities.setCalendarAlertsEnabled(true)
 ```
 
-Filters apply to selected-day schedules, grid markers, the upcoming feed, live activity, and alerts. Excluding every source returns no events; an empty source array never becomes an unfiltered EventKit query. A disconnected/deleted calendar disappears after refresh. Its exclusion ID is kept so it stays excluded if the same source returns. Replacing the filter with an empty set includes all current sources.
+Filters apply to selected-day schedules, grid markers, the upcoming feed, live activity, alerts, and travel routing. Excluding every source returns no events; an empty source array never becomes an unfiltered EventKit query. A disconnected/deleted calendar disappears after refresh. Its exclusion ID is kept so it stays excluded if the same source returns. Replacing the ID filter with an empty set includes all current sources allowed by the subscribed-calendar choice.
 
-Options are stored separately in `calendar-settings.json`. Alert deduplication IDs and expiry instants use `calendar-alert-receipts.json`. Both live in the controller's `dataDirectory`: an explicit initializer URL, then `OPENCOVE_DATA_DIR`, then Application Support/OpenCove. They use the existing atomic private-file persistence. Existing timer, tray, notification settings, and notification token files are unchanged. Alert receipts contain opaque source/event IDs and times, but no titles, locations, notes, or meeting URLs.
+Two global, typed Boolean preferences live in the local `preferences.json` document:
+
+- `showDeclinedCalendarEvents = false`: omit current-user declined events unless enabled.
+- `excludeSubscribedCalendars = false`: include subscribed calendars unless excluded by ID. When enabled, omit calendars whose public EventKit `isSubscribed` property is true, before creating either event predicate.
+
+Both defaults preserve the prior filtering behavior. Missing legacy keys and invalid Boolean values recover to false through `CovePreferences.recover`; invalid values use the existing repaired-field notice and backup path. Saves use CoveStore's existing atomic persistence and session-only save-error behavior. Neither key belongs to the iCloud settings allowlist. These flags do not move or replace saved ID exclusions, alert choices, or alert receipts.
+
+The native **Show declined events** and **Exclude subscribed calendars** controls use those global preferences. Source toggles still represent manual ID exclusions; a checked subscribed source remains omitted while **Exclude subscribed calendars** is enabled. Turning that option off restores only sources not manually excluded. EventKit's public [isSubscribed property](https://developer.apple.com/documentation/eventkit/ekcalendar/issubscribed) identifies subscriptions. The public [type documentation](https://developer.apple.com/documentation/eventkit/ekcalendar/type) also states that a CalDAV subscription has type `.calDAV` with `isSubscribed == true`, so testing only `.subscription` would miss that case. The installed SDK's `EKCalendar.h` declares the read-only `subscribed` property with getter `isSubscribed`.
+
+CoveStore applies enablement and both flags together through `setCalendarConfiguration`. Each worker request captures immutable flag values, ID exclusions, and date ranges. A flag change clears the old event/grid/activity/routing snapshot, cancels queued work, and advances the existing read revision through `refreshCalendar`. A prior generation cannot publish after the change. Refresh still requires enabled Calendar, valid saved Calendar source settings, and existing full access; changing a flag never repairs damaged source settings or requests permission. Filtering adds no extra source enumeration or event query within a refresh. The existing 42-day grid/seven-day feed bounds, ordering, occurrence IDs, alert receipts, privacy redaction, and Duo state ownership remain in place.
+
+Manual ID exclusions, alert enablement, and alert lead time are stored separately in `calendar-settings.json`. Alert deduplication IDs and expiry instants use `calendar-alert-receipts.json`. Both live in the controller's `dataDirectory`: an explicit initializer URL, then `OPENCOVE_DATA_DIR`, then Application Support/OpenCove. They use the existing atomic private-file persistence. Existing timer, tray, notification settings, and notification token files are unchanged. Alert receipts contain opaque source/event IDs and times, but no titles, locations, notes, or meeting URLs.
 
 ## Live activity and alerts
 
@@ -76,7 +91,7 @@ All-day events remain in the calendar UI and upcoming feed, but do not become me
 
 The independent default lead is 15 minutes. While the controller is started and calendar alerts are enabled, a real timed event can emit one pre-event HUD and one start HUD through `onHUD` (`.notification`, `origin: "calendar"`, with a calendar symbol). No system notification permission is requested. These HUDs do not enter the existing notification history or schedule native notifications. The store gates delivery through the calendar origin and its feature preference. The existing `enqueueNotification` also sets the calendar origin when its source is `Calendar`.
 
-Pre-event alerts fire when a future event enters the chosen window, including the first authorized refresh inside that window. Start alerts fire at the start crossing or within a 60-second catch-up period. The clock does not replay meetings from hours ago after a long sleep. Receipts prevent duplicates across repeated refreshes, backward clock changes, filter toggles, and app restarts. Moving an event's start instant creates a new occurrence ID and can alert again at its new time. A pending refresh suspends alerts from the old snapshot; removed, declined, canceled, excluded, or permission-revoked events leave the activity after refresh. Receipts expire two days after the occurrence end, so removing and restoring the same near-term event does not replay its HUD. Event changes must first arrive through EventKit or the next refresh; the service cannot know about changes that macOS has not delivered yet.
+Pre-event alerts fire when a future event enters the chosen window, including the first authorized refresh inside that window. Start alerts fire at the start crossing or within a 60-second catch-up period. The clock does not replay meetings from hours ago after a long sleep. Receipts prevent duplicates across repeated refreshes, backward clock changes, filter toggles, and app restarts. Moving an event's start instant creates a new occurrence ID and can alert again at its new time. A pending refresh suspends alerts from the old snapshot; removed, canceled, excluded, permission-revoked, or current-user declined events hidden by the saved choice leave the activity after refresh. Receipts expire two days after the occurrence end, so removing and restoring the same near-term event does not replay its HUD. Event changes must first arrive through EventKit or the next refresh; the service cannot know about changes that macOS has not delivered yet.
 
 ## Calendar app routes
 
@@ -93,6 +108,10 @@ Fantastical and Notion Calendar routing needs verification with each installed a
 Use the checked-in bundle and CLI workflow in [building](building.md) and [quality](quality.md). `opencovectl state` reports the real EventKit status; selecting the Calendar tab through the API does not grant access. The isolated default smoke run disables calendar reads and does not request permission. It therefore cannot prove populated schedules, source filters, alerts, or third-party app routing.
 
 With existing calendar access and explicit authorization, compare a distant month/day with Calendar. Cover source exclusion/restoration, a six-week month, overlapping/all-day/multi-day events, countdowns, pre-event/start alerts, calendar removal, a moved start, midnight/time-zone changes, and each installed app route. Observe real privacy transitions manually. Keep private event data out of public evidence. Empty or denied access does not establish populated-data behavior.
+
+The 2026-10-23 filter preparation is source only. Swift parsing and diff inspection cannot prove EventKit filtering, Boolean persistence/restart behavior, or runtime gate behavior. The retained Calendar/Duo handoff reports `.notDetermined` with no existing `.fullAccess`; this preparation does not recheck permission or execute EventKit. No real positive acceptance is claimed.
+
+A later owner can verify local Boolean saves, legacy/invalid-false recovery, save failures, disabled-empty state, damaged-source recovery, and rapid flag changes through the real app under the existing authorization limits. Positive declined-event proof requires an otherwise valid real event whose current-user attendee has declined, plus the opposite flag state and unchanged handling of canceled events and other attendees. Positive subscribed-source proof requires an actual authorized subscribed calendar, including the interaction with manual ID exclusions; a mock or synthetic EventKit record cannot establish it. Run future positive checks through the real app with explicitly authorized, owned fixture data, without querying existing events. If that isolation cannot be established, keep the positive gate open. This preparation adds no fixtures, calendar selection contract, or source allowlist.
 
 Time-to-leave is a separate optional [travel service](travel-alerts.md). It needs a consented origin, physical destination, and real route. No duration or departure alert is fabricated.
 

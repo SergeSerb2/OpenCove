@@ -428,6 +428,10 @@ struct SettingsView: View {
 
             Section("Calendar & meetings") {
                 Toggle("Show calendar events", isOn: preference(\.enableCalendar))
+                Toggle("Show declined events", isOn: preference(\.showDeclinedCalendarEvents))
+                CoveSettingsNote("Include events you declined. Canceled events and excluded calendars stay hidden.")
+                Toggle("Exclude subscribed calendars", isOn: preference(\.excludeSubscribedCalendars))
+                CoveSettingsNote("Hide events from subscribed calendars, including CalDAV subscriptions. Your individual calendar selections stay saved.")
                 Picker("Calendar app", selection: preference(\.preferredCalendarApp)) {
                     Text("Calendar").tag("calendar")
                     Text("Fantastical").tag("fantastical")

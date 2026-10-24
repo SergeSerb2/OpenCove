@@ -427,7 +427,9 @@ final class CoveStore: ObservableObject {
         refreshSessionActivity()
         media.preferredSource = preferences.preferredMusicApp
         activities.preferredCalendarApp = preferences.preferredCalendarApp
-        activities.setCalendarEnabled(preferences.enableCalendar)
+        activities.setCalendarConfiguration(enabled: preferences.enableCalendar,
+                                            showDeclinedEvents: preferences.showDeclinedCalendarEvents,
+                                            excludeSubscribedCalendars: preferences.excludeSubscribedCalendars)
         if preferences.enableMedia { media.start(privateAPIs: preferences.enablePrivateAPIs, appleScript: preferences.allowAppleScript) }
         system.start(privateAPIs: preferences.enablePrivateAPIs,
                      enableBluetooth: preferences.enableBluetooth, enableFocus: preferences.enableFocus)
@@ -740,7 +742,9 @@ final class CoveStore: ObservableObject {
             }
             media.preferredSource = preferences.preferredMusicApp
             activities.preferredCalendarApp = preferences.preferredCalendarApp
-            activities.setCalendarEnabled(preferences.enableCalendar)
+            activities.setCalendarConfiguration(enabled: preferences.enableCalendar,
+                                                showDeclinedEvents: preferences.showDeclinedCalendarEvents,
+                                                excludeSubscribedCalendars: preferences.excludeSubscribedCalendars)
             refreshSessionActivity()
             reconcileCalendarPrivacy()
             if preferences.enableCalendar { travel.start(); travel.updateEvents(activities.routingEvents) }
