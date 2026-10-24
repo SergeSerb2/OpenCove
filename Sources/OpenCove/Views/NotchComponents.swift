@@ -336,17 +336,28 @@ struct CoveCompactHUD: View {
     var centerGap: Double = 0
     var showLabels = true
     var showPercentage = true
+    var brightnessHUDGlow = false
 
     private var percentage: String? {
         guard showPercentage, let value = hud.value, value.isFinite else { return nil }
         return "\(Int((CoveNotchStyle.fraction(value) * 100).rounded()))%"
     }
 
+    @ViewBuilder private var hudSymbol: some View {
+        if hud.kind == .brightness && brightnessHUDGlow {
+            // OpenCove's static symbol glow stays inside the existing surface clip.
+            Image(systemName: hud.symbol)
+                .shadow(color: accent.opacity(0.65), radius: 2, x: 0, y: 0)
+        } else {
+            Image(systemName: hud.symbol)
+        }
+    }
+
     var body: some View {
         if centerGap > 0 {
             HStack(spacing: 8) {
                 HStack(spacing: 8) {
-                    Image(systemName: hud.symbol).foregroundStyle(accent)
+                    hudSymbol.foregroundStyle(accent)
                     if showLabels {
                         Text(hud.title).font(.system(size: 10, weight: .semibold)).lineLimit(1)
                     }
@@ -375,7 +386,7 @@ struct CoveCompactHUD: View {
 
     private var continuousHUD: some View {
         HStack(spacing: 11) {
-            Image(systemName: hud.symbol)
+            hudSymbol
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(hud.kind == .battery ? .green : accent)
                 .frame(width: 20)

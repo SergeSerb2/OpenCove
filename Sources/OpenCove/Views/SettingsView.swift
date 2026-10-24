@@ -230,7 +230,10 @@ struct SettingsView: View {
 
             Section("Panel shape") {
                 Toggle("Show contrast outline", isOn: preference(\.showContrastOutline))
-                CoveSettingsNote("Add a thin outline around the panel. Increase Contrast uses an opaque outline automatically.")
+                if store.preferences.showContrastOutline {
+                    Toggle("Use accent color for outline", isOn: preference(\.useAccentOutline))
+                }
+                CoveSettingsNote("Add a thin outline around the panel. Increase Contrast always uses opaque white.")
                 Toggle("Simulate a notch", isOn: preference(\.simulateNotch))
                 CoveSettingsNote("Use an attached notch with center space from Width and Height. A real camera housing always sets the minimum. Hide when idle still applies.")
             }
@@ -361,6 +364,9 @@ struct SettingsView: View {
                 }
                 Toggle("Volume", isOn: preference(\.enableVolumeHUD))
                 Toggle("Display brightness", isOn: preference(\.enableBrightnessHUD))
+                Toggle("Brightness symbol glow", isOn: preference(\.brightnessHUDGlow))
+                    .disabled(!store.preferences.enableBrightnessHUD)
+                    .help("Add a soft glow to the sun symbol on display brightness overlays.")
                 Toggle("Battery & charging", isOn: preference(\.enableBattery))
                 Toggle("Bluetooth & audio devices", isOn: preference(\.enableBluetooth))
                 Toggle("Focus status", isOn: preference(\.enableFocus))

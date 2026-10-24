@@ -406,7 +406,9 @@ struct NotchView: View {
                     let outlined = store.preferences.showContrastOutline || contrast == .increased
                     Group {
                         if outlined {
-                            surfaceShape.stroke(Color.white.opacity(contrast == .increased ? 1 : 0.45), lineWidth: 2)
+                            let outlineColor = store.preferences.useAccentOutline && contrast != .increased
+                                ? CoveNotchStyle.accent(store.preferences.accent) : Color.white
+                            surfaceShape.stroke(outlineColor.opacity(contrast == .increased ? 1 : 0.45), lineWidth: 2)
                                 .clipShape(surfaceShape)
                         } else {
                             surfaceShape.stroke(Color.white.opacity(store.isExpanded ? 0.085 : 0.035), lineWidth: 0.6)
@@ -480,7 +482,8 @@ struct NotchView: View {
             Color.clear
         } else if case .hud(let kind) = mode, let hud = store.hud, hud.kind == kind {
             CoveCompactHUD(hud: hud, accent: CoveNotchStyle.accent(store.preferences.accent), centerGap: compactGap,
-                           showLabels: store.preferences.showHUDLabels, showPercentage: store.preferences.showHUDPercentage)
+                           showLabels: store.preferences.showHUDLabels, showPercentage: store.preferences.showHUDPercentage,
+                           brightnessHUDGlow: store.preferences.brightnessHUDGlow)
                 .padding(.horizontal, 18)
         } else if mode == .peek && store.preferences.enableMedia && media.state.available {
             mediaPeek(artwork: artwork)
