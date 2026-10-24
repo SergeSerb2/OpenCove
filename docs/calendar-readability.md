@@ -2,6 +2,13 @@
 
 ## Scope and status
 
+The parent integration also changes today's date foreground from white to
+black on the existing red circle. The prior mounted captures measured an
+unchanged peak of 3.446:1 for that label. The red fill, bold font, selection
+priority, date actions and geometry are preserved. This follow-up needs its
+own rebuilt mounted-view measurements; the earlier results below do not prove
+the new today foreground.
+
 The implementation started as a source-only handoff from base
 `75fbec47915d0c32dc3d8f5985fdee5d762615db`. Fresh isolated acceptance now covers
 the optimized development build, real mounted empty-recovery Calendar and Duo,

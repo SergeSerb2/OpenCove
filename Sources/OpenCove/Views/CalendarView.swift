@@ -131,7 +131,7 @@ struct CoveCalendarView: View {
             VStack(spacing: 0) {
                 Text(date, format: .dateTime.day())
                     .font(.system(size: 9, weight: selected || today ? .bold : .regular, design: .rounded))
-                    .foregroundStyle(today ? Color.white : selected ? Color.black :
+                    .foregroundStyle(today || selected ? Color.black :
                         inMonth ? Color.white.opacity(0.9) : CoveNotchStyle.secondary)
                     .frame(width: 16, height: 14)
                     .background(today ? Color.red : selected ? .white : .clear, in: Circle())
