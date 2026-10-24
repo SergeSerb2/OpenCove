@@ -36,6 +36,25 @@ On a tap timeout, press ownership is cleared. The tap is enabled again only if r
 
 There is no global key log, input persistence, notification content access, launch-agent change, system preference write, OSDUIHelper change, or Apple binary/signature modification. Stock HUD suppression depends on consuming a submitted hardware event. Other sources of macOS HUDs remain under macOS control.
 
+## Compact HUD presentation
+
+Activities settings expose two saved choices shared by all compact HUD categories: `showHUDLabels` (Show overlay labels) and `showHUDPercentage` (Show overlay percentage). Both default to `true`, including when an older preferences document has neither field, to preserve the existing display. These are independently chosen OpenCove defaults. The official Alcove changelog declares an option to hide HUD labels in 1.0.1 and a percentage option in 1.0.3, but does not establish defaults or exact label, subtitle, layout, or accessibility semantics.
+
+Labels control the visible title and subtitle only. Percentage visibility is independent of labels and requires an existing finite numeric `hud.value`; a missing or nonfinite value never produces percentage text. Neither choice removes the icon or the existing progress display. Both choices apply to the physical-center-gap and continuous compact layouts. Hiding both leaves the icon and any existing progress within the same bounded panel dimensions and center clearance. The compact button keeps its existing accessible title and subtitle even when visual labels are hidden.
+
+These choices only change compact HUD presentation. They do not enable a HUD category, alter its capability or failure handling, or change hardware interception, readings, timing, animation, preview, or scheduling. No timer, observer, or system read is added. They use the existing preference save and recovery paths and the existing settings error display.
+
+### Parent acceptance gates
+
+This implementation has source inspection and static parse/diff checks only. Builds, app/helper launches, tests, runtime calls, renders, desktop input, hardware actions, permission changes, credentials, cloud, signing, and publication were outside this implementation task. Source checks do not prove the mounted UI, persistence, failure handling, or complete visual parity. The parent must run the following real-interface gates when authorized:
+
+1. Use an isolated real bundle and private data directory. Keep protected integrations, key interception, haptics, weather, and notification mirroring off. Do not issue volume, brightness, output-selection, media, or permission commands, or load personal calendar data.
+2. Save each choice through the real authenticated preferences interface. Verify both controls in the actual Activities settings at `/render?surface=settings-activities`; API readback alone does not prove the settings UI. Check all four visibility combinations through the existing read-only `hud.preview` path and actual fully mounted HUD at `/render?surface=live-notch`. Preserve the icon, progress, accessible status, panel bounds, and center clearance. Record which geometry ran and cover both supported physical-center-gap and continuous layouts. A forced-gap offscreen render alone does not prove physical display behavior.
+3. Require a naturally available finite reading on the real preview HUD for the positive percentage case. If none is available, leave that case blocked; do not fabricate a value. Use the existing notification preview for a no-numeric-value case and confirm that it never gains a percentage. Verify that disabled categories still reject preview and that unavailable or failed readings keep their existing failure behavior.
+4. Save both `false` and mixed choices, restart the isolated app, and verify persistence. Load a real legacy document without the new fields and confirm the prior display and unrelated preferences remain intact. Exercise a real failed save and confirm that the existing error remains visible and no successful persistence is claimed. Verify the useful accessible status with labels hidden.
+
+Keep these gates pending until their evidence exists. They do not establish physical key interception, stock HUD suppression, timing parity, or external-display support.
+
 ## Validation boundary
 
 Build the real app with the checked-in [bundle workflow](building.md). The [integration workflow](quality.md) checks the real control API without enabling hardware interception by default. Preference-off and denied-access cases do not prove an active tap. Do not enable an authorized tap, generate key events, or drive desktop input for automated verification. Actual stock-HUD suppression and held-key behavior require an explicitly authorized manual session; compilation and permission preflight alone do not prove them.
@@ -47,3 +66,30 @@ Build the real app with the checked-in [bundle workflow](building.md). The [inte
 - [AXIsProcessTrustedWithOptions](https://developer.apple.com/documentation/applicationservices/1459186-axisprocesstrustedwithoptions): explicit, asynchronous Accessibility prompt.
 - [CGPreflightListenEventAccess](https://developer.apple.com/documentation/coregraphics/cgpreflightlisteneventaccess()): nonprompting event access check.
 - Installed macOS SDK: `IOKit.framework/Headers/hidsystem/ev_keymap.h` (media codes), `IOLLEvent.h` (system-defined type, subtype, down/up codes), `AppKit.framework/Headers/NSEvent.h`, and `CoreGraphics.framework/Headers/CGEvent.h` (tap lifetime and permission declarations).
+
+
+### Recorded visibility-option acceptance
+
+An optimized arm64 development bundle of `7da217d` produced 22 check records,
+including a pending accessibility record. The covered presentation and
+persistence branches passed.
+Mounted captures covered all four visual choices for real finite volume and
+battery readings, unavailable brightness and nonnumeric notification previews.
+Continuous and supported simulated-notch center-gap layouts both ran. Across
+live preference edits, the model and original dismissal deadline stayed fixed;
+no second preview was submitted within each matrix. Icon/progress regions and
+center clearance were checked separately from label and percentage pixels.
+
+The actual Activities settings views showed the controls and save/repair/error
+states. Both-false and mixed choices survived process restart. Legacy omissions
+kept both choices on; malformed fields followed the existing repair path. A real
+unwritable destination returned a save error, kept the session choice and did not
+claim persistence. The browser used the actual Preview overlay button and the
+same authenticated preference path. All nine owned launches stopped and their
+credentials were cleared.
+
+This establishes the recorded presentation and persistence subset. Physical
+notch behavior, a finite brightness reading, native Settings input, native
+accessibility/VoiceOver and compositor output remain unverified. Source preserves the accessible compact
+label; that is separate from runtime accessibility proof. No hardware write,
+key interception, personal player control or new permission was exercised.

@@ -334,24 +334,35 @@ struct CoveCompactHUD: View {
     let hud: CoveHUD
     let accent: Color
     var centerGap: Double = 0
+    var showLabels = true
+    var showPercentage = true
+
+    private var percentage: String? {
+        guard showPercentage, let value = hud.value, value.isFinite else { return nil }
+        return "\(Int((CoveNotchStyle.fraction(value) * 100).rounded()))%"
+    }
 
     var body: some View {
         if centerGap > 0 {
             HStack(spacing: 8) {
                 HStack(spacing: 8) {
                     Image(systemName: hud.symbol).foregroundStyle(accent)
-                    Text(hud.title).font(.system(size: 10, weight: .semibold)).lineLimit(1)
+                    if showLabels {
+                        Text(hud.title).font(.system(size: 10, weight: .semibold)).lineLimit(1)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Color.clear.frame(width: centerGap)
                 VStack(alignment: .trailing, spacing: 4) {
                     if let value = hud.value {
-                        Text("\(Int((CoveNotchStyle.fraction(value) * 100).rounded()))%")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit()
+                        if let percentage {
+                            Text(percentage)
+                                .font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit()
+                        }
                         ProgressView(value: CoveNotchStyle.fraction(value)).tint(accent)
                             .progressViewStyle(.linear).frame(width: 70)
                             .accessibilityHidden(true)
-                    } else {
+                    } else if showLabels {
                         Text(hud.subtitle.isEmpty ? hud.title : hud.subtitle)
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(CoveNotchStyle.secondary).lineLimit(1)
@@ -369,16 +380,20 @@ struct CoveCompactHUD: View {
                 .foregroundStyle(hud.kind == .battery ? .green : accent)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(hud.title)
-                        .font(.system(size: 11, weight: .semibold))
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    if let value = hud.value {
-                        Text("\(Int((CoveNotchStyle.fraction(value) * 100).rounded()))%")
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(CoveNotchStyle.secondary)
+                if showLabels || percentage != nil {
+                    HStack(spacing: 8) {
+                        if showLabels {
+                            Text(hud.title)
+                                .font(.system(size: 11, weight: .semibold))
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 4)
+                        if let percentage {
+                            Text(percentage)
+                                .font(.system(size: 10, weight: .medium, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundStyle(CoveNotchStyle.secondary)
+                        }
                     }
                 }
                 if let value = hud.value {
@@ -391,13 +406,14 @@ struct CoveCompactHUD: View {
                     }
                     .frame(height: 3)
                     .accessibilityHidden(true)
-                } else if !hud.subtitle.isEmpty {
+                } else if showLabels && !hud.subtitle.isEmpty {
                     Text(hud.subtitle)
                         .font(.system(size: 10))
                         .foregroundStyle(CoveNotchStyle.secondary)
                         .lineLimit(1)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
