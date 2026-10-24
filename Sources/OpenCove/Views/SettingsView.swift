@@ -134,6 +134,8 @@ struct SettingsView: View {
                 Toggle("Hide in Mission Control", isOn: preference(\.hideInMissionControl))
                 Toggle("Hide while the Now Playing app is active", isOn: preference(\.hideWhenMediaAppActive))
                 CoveSettingsNote("Hides the panel while the app providing Now Playing is frontmost. Temporary alerts still appear. This choice applies to this Mac.")
+                Toggle("Hide for apps in the Games category", isOn: preference(\.hideForGamesCategory))
+                CoveSettingsNote("Uses only the frontmost app’s declared Games category or an Apple-documented game subcategory. Apps without a supported declaration do not hide the panel. This does not detect Game Mode or actual play. Temporary alerts still appear. Off by default and local to this Mac.")
             }
 
             Section("Lock-screen widgets") {

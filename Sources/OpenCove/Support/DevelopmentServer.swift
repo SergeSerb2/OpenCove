@@ -660,6 +660,7 @@ final class DevelopmentServer {
         var result: [String: Any] = ["app": "OpenCove", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unbundled", "expanded": store.isExpanded, "tab": store.selectedTab.rawValue, "settingsVisible": store.settingsVisible, "dataDirectory": CovePaths.dataDirectory.path, "nativeWindows": windows]
         result["preferences"] = try encoded(store.preferences)
         result["mediaSourceAppHiding"] = notch?.hidesForActiveMediaSource ?? false
+        result["declaredGameCategoryHiding"] = notch?.hidesForDeclaredGameCategory ?? false
         result["settingsSync"] = settingsSyncSnapshot()
         result["lockWidgets"] = [
             "followsActivities": store.preferences.lockWidgetsFollowActivities,
