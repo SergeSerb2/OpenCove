@@ -75,6 +75,51 @@ That mode does not launch an app or submit accepted app-state changes. `--render
 
 Data directories use `0700`; control descriptors and instance locks use `0600`. Existing unsafe paths are rejected without silently changing permissions. Use a fresh `mktemp -d` directory rather than repairing a user-data directory for verification. Malformed commands return HTTP 400; unavailable/unsupported actions return 409; persistence and internal failures return 500. Other HTTP framing/authentication failures have their own explicit status codes.
 
+### iCloud developer controls
+
+Authenticated `GET /state` and successful command responses include `settingsSync`:
+`state` (`off`, `unavailable`, `choosing`, `active`, `conflict`, or `paused`),
+the controller's fixed UI `status` and `detail`, and `canChooseLocal`,
+`canChooseCloud`, `canCheck`, and `canReconnect`. This projection only reads the
+existing controller's UI properties. It never starts sync or obtains a cloud
+store or account identity, including while sync is off. It exposes no account
+token, identity, envelope, cloud payload, revision, secret, or path.
+
+The development page's iCloud card uses these flags to enable four explicit
+developer control commands. Each calls the existing `CoveSettingsSyncController`
+method used by native Settings:
+
+```sh
+./script/opencovectl --data-dir "$OPENCOVE_DATA_DIR" command '{"action":"settings.sync.check"}'
+./script/opencovectl --data-dir "$OPENCOVE_DATA_DIR" command '{"action":"settings.sync.useLocal"}'
+./script/opencovectl --data-dir "$OPENCOVE_DATA_DIR" command '{"action":"settings.sync.useCloud"}'
+./script/opencovectl --data-dir "$OPENCOVE_DATA_DIR" command '{"action":"settings.sync.reconnect"}'
+```
+
+These use the existing authenticated `POST /command` path and accept exactly
+one `action` key, with no arguments. Extra keys, including `values: {}`, return
+400. Each action requires its corresponding controller capability and the
+effective opt-in preference; the controller capabilities require its saved
+consent session. Off, failed-save, or otherwise unavailable actions return 409.
+The commands do not enable or save the opt-in preference. `useLocal` is the
+explicit action that can replace the shared snapshot, including one still in
+transit. `useCloud` replaces only the shared appearance and behavior settings
+on this Mac. Checks and reconnects keep the controller's existing incoming-update
+policy and do not invoke the explicit shared-snapshot replacement action.
+
+The existing loopback bind, `X-OpenCove-Token`, Host/Origin and cross-site checks,
+HTTP framing, 16,384-byte header limit, 65,536-byte body limit, connection
+deadline and no-store response rules apply unchanged. A 200 response means
+submission and includes fresh controller status; it does not confirm delivery.
+
+Real-service proof remains pending until the parent runs the checked-in packaged
+build and exercises both real Macs through the authenticated browser/API.
+Check off-state rejection, invalid shapes, unavailable reconnect/choices, saved
+opt-in, initial choice, shared replacement, incoming changes, opt-out and
+restart. Keep real account data and private control descriptors out of reports.
+Native toggle input is a separate gate: browser preference commands and these
+controller actions do not prove native toggle interaction.
+
 ## Restart and recovery checks
 
 ```sh
