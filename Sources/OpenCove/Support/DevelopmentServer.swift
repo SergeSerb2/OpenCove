@@ -633,6 +633,7 @@ final class DevelopmentServer {
         }
         var result: [String: Any] = ["app": "OpenCove", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unbundled", "expanded": store.isExpanded, "tab": store.selectedTab.rawValue, "settingsVisible": store.settingsVisible, "dataDirectory": CovePaths.dataDirectory.path, "nativeWindows": windows]
         result["preferences"] = try encoded(store.preferences)
+        result["mediaSourceAppHiding"] = notch?.hidesForActiveMediaSource ?? false
         result["settingsSync"] = settingsSyncSnapshot()
         let sparkle = updater?.controller?.updater
         result["updates"] = ["available": sparkle != nil,
@@ -777,6 +778,9 @@ final class DevelopmentServer {
         case "settings-activities":
             size = CGSize(width: 760, height: 900)
             content = AnyView(SettingsView(store: store, initialPage: .activities))
+        case "settings-general":
+            size = CGSize(width: 760, height: 1600)
+            content = AnyView(SettingsView(store: store, initialPage: .general))
         case "settings-calendar":
             // The same real Activities form at a taller bounded size exposes
             // its Calendar section without desktop input or a test-only view.

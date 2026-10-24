@@ -60,6 +60,26 @@ only; the parent must verify real native gestures and owned-player behavior.
 
 ## State and service ownership
 
+The local `hideWhenMediaAppActive` preference defaults to false. When enabled,
+ordinary panels retire while the already accepted Now Playing source exactly
+matches the frontmost application's bundle identifier. Unknown identities do
+not hide them. This applies to browser sources when their accepted source is
+the browser's actual bundle identifier; no process-family or website guess is
+made. The existing AppKit application-activation notification and coalesced
+media/layout updates refresh the decision. No media reader, timer, global input
+monitor, player command, or new application observer is added.
+
+Retirement cancels hover work, input and mounted gesture regions while keeping
+the selected section and expanded state. Leaving the source app restores the
+normal layout. Temporary HUDs retain priority and can display before the panel
+hides again. Session, lock, display and full-screen rules still apply. Lock
+widgets have their separate owner. The choice uses normal Boolean recovery and
+atomic saving, stays outside the iCloud allowlist, and never enables media.
+The authenticated development state exposes only the resulting Boolean as
+`mediaSourceAppHiding`; it adds no frontmost application identity to the response.
+Real source/browser activation, restoration and HUD-interruption acceptance
+remain pending until the owned-media identity prerequisite is available.
+
 Overlay timing uses the existing single cancellable dismissal task. Each category can inherit the default duration/appearance animation or override them. A zero category duration and `global` category speed select the defaults. A nonzero duration is 0.5–10 seconds; appearance choices are `smooth`, `fast`, and `instant`. The animation-speed multiplier and Reduce Motion still apply. Opening expanded controls and restoring the underlying activity use normal panel motion. Timing edits apply to the next presentation; repeated events replace the monotonic deadline. No countdown publication, polling schedule, helper, or per-frame task is added.
 
 Activities settings include a labelled overlay preview. The preview reads cached available system values, reports unavailable readings, and uses the same presentation path. It does not write hardware, request access, perform haptics, or post a system notification. Disabled categories and expanded controls reject preview. Development clients can call `hud.preview` with a known `kind`; unknown kinds return 400 and unavailable previews return 409. `hudRemaining` reads the current monotonic deadline on request. Neither category timing nor preview enables an integration.
