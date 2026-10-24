@@ -86,6 +86,9 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     private var calendarReadRevision = 0
     private var calendarSettingsLoaded = false
     private var calendarSettingsValid = true
+    // The parent owns these global preferences and their persistence.
+    private var showDeclinedCalendarEvents = false
+    private var excludeSubscribedCalendars = false
     private var selectedDateFollowsToday = true
     private var upcomingCalendarEvents: [CoveEvent] = []
     private var monthCalendarEvents: [CoveEvent] = []
@@ -337,7 +340,9 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
         let request = CoveCalendarReader.Request(
             gridRange: gridRange,
             upcomingRange: DateInterval(start: calendar.startOfDay(for: now), end: upcomingEnd),
-            excludedIdentifiers: excludedCalendarIdentifiers, cancellation: cancellation
+            excludedIdentifiers: excludedCalendarIdentifiers,
+            showDeclinedEvents: showDeclinedCalendarEvents,
+            excludeSubscribedCalendars: excludeSubscribedCalendars, cancellation: cancellation
         )
         calendarReadTask = Task { @MainActor [weak self] in
             // Rapid date clicks and batches of EventKit notifications need only one read.
@@ -401,13 +406,26 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     /// The parent owns the global feature preference. Other activity services keep running.
     /// The independent alert opt-in and excluded sources remain saved and unchanged.
     func setCalendarEnabled(_ enabled: Bool) {
-        guard calendarEnabled != enabled else { return }
+        setCalendarConfiguration(enabled: enabled, showDeclinedEvents: showDeclinedCalendarEvents,
+                                 excludeSubscribedCalendars: excludeSubscribedCalendars)
+    }
+
+    /// Apply enablement and filters together before queuing a read. A filter change
+    /// clears old activity/routing data; refresh retains permission and recovery gates.
+    func setCalendarConfiguration(enabled: Bool, showDeclinedEvents: Bool, excludeSubscribedCalendars: Bool) {
+        let filtersChanged = showDeclinedCalendarEvents != showDeclinedEvents
+            || self.excludeSubscribedCalendars != excludeSubscribedCalendars
+        guard calendarEnabled != enabled || filtersChanged else { return }
         calendarEnabled = enabled
+        showDeclinedCalendarEvents = showDeclinedEvents
+        self.excludeSubscribedCalendars = excludeSubscribedCalendars
         lastCalendarActivityCheck = nil
         if !enabled {
             calendarAccessTask?.cancel()
             calendarAccessTask = nil
         }
+        if filtersChanged { clearCalendarSnapshot() }
+        // Increments the read revision and cancels prior work even when a read is gated off.
         refreshCalendar()
     }
 
@@ -1529,10 +1547,12 @@ private final class CoveCalendarReadCancellation: @unchecked Sendable {
 
 private final class CoveCalendarReader: @unchecked Sendable {
     struct Request {
-        var gridRange: DateInterval
-        var upcomingRange: DateInterval
-        var excludedIdentifiers: Set<String>
-        var cancellation: CoveCalendarReadCancellation
+        let gridRange: DateInterval
+        let upcomingRange: DateInterval
+        let excludedIdentifiers: Set<String>
+        let showDeclinedEvents: Bool
+        let excludeSubscribedCalendars: Bool
+        let cancellation: CoveCalendarReadCancellation
     }
 
     struct Snapshot {
@@ -1567,7 +1587,11 @@ private final class CoveCalendarReader: @unchecked Sendable {
             if $0.title != $1.title { return $0.title.localizedStandardCompare($1.title) == .orderedAscending }
             return $0.id < $1.id
         }
-        let included = calendars.filter { !request.excludedIdentifiers.contains($0.calendarIdentifier) }
+        let included = calendars.filter {
+            !request.excludedIdentifiers.contains($0.calendarIdentifier)
+                // isSubscribed also covers CalDAV subscriptions, whose type is .calDAV.
+                && (!request.excludeSubscribedCalendars || !$0.isSubscribed)
+        }
         // EventKit treats nil as all calendars; do not use nil/empty as an exclusion filter.
         guard !included.isEmpty else { return Snapshot(sources: sources) }
         let ranges: [DateInterval]
@@ -1586,7 +1610,8 @@ private final class CoveCalendarReader: @unchecked Sendable {
                 guard event.status != .canceled, let start = event.startDate, let end = event.endDate,
                       start.timeIntervalSinceReferenceDate.isFinite, end.timeIntervalSinceReferenceDate.isFinite,
                       end >= start, let source = event.calendar,
-                      !(event.attendees?.contains { $0.isCurrentUser && $0.participantStatus == .declined } ?? false) else { continue }
+                      request.showDeclinedEvents
+                        || !(event.attendees?.contains { $0.isCurrentUser && $0.participantStatus == .declined } ?? false) else { continue }
                 // Include source and occurrence start: recurring instances remain separate,
                 // while overlapping queries cannot duplicate them. A moved start gets a new ID.
                 let id = "\(source.calendarIdentifier):\(event.eventIdentifier ?? event.calendarItemIdentifier):\(start.timeIntervalSinceReferenceDate)"

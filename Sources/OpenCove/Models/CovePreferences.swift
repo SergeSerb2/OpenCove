@@ -135,6 +135,9 @@ struct CovePreferences: Codable, Equatable {
     var musicColorAccent = true
     var preferredMusicApp = "system"
     var preferredCalendarApp = "calendar"
+    // Calendar filtering stays local, outside CoveSyncedSettings.
+    var showDeclinedCalendarEvents: Bool = false
+    var excludeSubscribedCalendars: Bool = false
     var hideInFullscreen = false
     var launchAtLogin = false
     // Per-device consent. Never included in CoveSyncedSettings.
