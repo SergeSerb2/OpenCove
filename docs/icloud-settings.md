@@ -1,9 +1,11 @@
 # iCloud settings synchronization
 
-This source implements opt-in synchronization through the public
-`NSUbiquitousKeyValueStore`. It has not been built or run against iCloud. The
-current package does not provision the required capability, so its opt-in must
-report unavailable. Cross-device delivery is an outstanding acceptance gate.
+This draft implements opt-in synchronization through the public
+`NSUbiquitousKeyValueStore`. The unprovisioned build has local persistence and
+unavailable/off evidence. It has not been run against iCloud. Default packages
+have no KVS capability and report unavailable when opted in. Optional provisioned
+packaging is also a draft; see [Developer ID KVS packaging](developer-id-kvs.md).
+Real profile acceptance and cross-device delivery remain outstanding gates.
 
 ## Apple contract reviewed on 2026-10-23
 
@@ -130,12 +132,15 @@ cloud delete action, custom cloud endpoint, or local export/import substitute.
 ## Concrete signing prerequisite
 
 The source package uses `org.opencove.OpenCove` for release and a separate `.dev`
-identifier for development. `script/package_release.py` currently supplies only
-the automation entitlement to Developer ID app signing. Its validator and
-`script/signing_info.swift` intentionally enforce that exact main-app entitlement
-set. Neither the package manifest nor packaging supplies an Apple-provisioned
-KVS entitlement or embeds a profile for it. This work changes none of those
-files, the Sparkle dependency/provenance, release metadata, or delivery infra.
+identifier for development. Default Developer ID packages retain only the
+automation entitlement. The optional packaging draft accepts an explicit,
+caller-supplied profile and resolved KVS identifier together. It checks the
+profile team and actual signing certificate before build or signing, embeds the
+profile before final signing, and retains per-architecture validation and system
+distribution checks. No real profile, restricted entitlement, signing operation,
+or cloud service acceptance has been validated for that path. The exact CMS/DER
+authentication guarantee remains open. Sparkle trust and default packaging
+behavior remain separate from KVS provisioning.
 
 The gate requires a real app bundle, its signed
 `com.apple.developer.ubiquity-kvstore-identifier`, its signed
