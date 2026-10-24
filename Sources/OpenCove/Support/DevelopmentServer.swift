@@ -625,7 +625,13 @@ final class DevelopmentServer {
         let windows = NSApp.windows.filter { $0.isVisible && ($0.title == "OpenCove" || $0.identifier != nil) }.map { window in
             var value: [String: Any] = ["title": window.title, "width": window.frame.width, "height": window.frame.height,
                                        "x": window.frame.origin.x, "y": window.frame.origin.y]
-            if let hidden = NotchPanelController.contentIsHidden(in: window) { value["contentHidden"] = hidden }
+            if let hidden = NotchPanelController.contentIsHidden(in: window) {
+                value["contentHidden"] = hidden
+                value["missionControlPolicy"] = [
+                    "transient": window.collectionBehavior.contains(.transient),
+                    "stationary": window.collectionBehavior.contains(.stationary)
+                ]
+            }
             if let id = window.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
                 value["displayID"] = id.uint32Value
             }

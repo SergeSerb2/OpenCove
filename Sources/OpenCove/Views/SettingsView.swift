@@ -140,6 +140,7 @@ struct SettingsView: View {
                 }
                 Toggle("Hide when idle", isOn: preference(\.hideWhenIdle))
                 Toggle("Hide in full-screen apps", isOn: preference(\.hideInFullscreen))
+                Toggle("Hide in Mission Control", isOn: preference(\.hideInMissionControl))
                 Toggle("Hide while the Now Playing app is active", isOn: preference(\.hideWhenMediaAppActive))
                 CoveSettingsNote("Hides the panel while the app providing Now Playing is frontmost. Temporary alerts still appear. This choice applies to this Mac.")
             }

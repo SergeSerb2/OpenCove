@@ -257,6 +257,7 @@ final class NotchPanelController: NSObject {
             }
             let surface = surfaces[id] ?? makeSurface(id: id)
             surfaces[id] = surface
+            applyMissionControlPolicy(to: surface.panel)
             let cutout = CGSize(width: geometry.physicalNotchWidth, height: geometry.physicalNotchHeight)
             let clearance = CoveNotchCutout.resolve(physical: cutout, preferences: preferences)
             surface.content.updateCutout(cutout, store: store)
@@ -363,7 +364,7 @@ final class NotchPanelController: NSObject {
         panel.becomesKeyOnlyIfNeeded = true
         panel.hidesOnDeactivate = false
         panel.level = .statusBar
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .stationary]
+        applyMissionControlPolicy(to: panel)
         // NotchView draws the black surface; leave its shaped corners transparent.
         panel.backgroundColor = .clear
         panel.isOpaque = false
@@ -383,6 +384,14 @@ final class NotchPanelController: NSObject {
             return self.handle(event, surface: surface)
         }
         return surface
+    }
+
+    private func applyMissionControlPolicy(to panel: NSWindow) {
+        // AppKit makes transient windows disappear in Mission Control. These
+        // policies are mutually exclusive; preserve the other panel behaviors.
+        let behavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle,
+            store.preferences.hideInMissionControl ? .transient : .stationary]
+        if panel.collectionBehavior != behavior { panel.collectionBehavior = behavior }
     }
 
     static func contentIsHidden(in window: NSWindow) -> Bool? {
