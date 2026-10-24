@@ -18,6 +18,11 @@ struct CoveAccessoryBattery: Codable, Equatable, Identifiable {
     var casePercentage: Int? = nil
 }
 
+/// Cached API reporting, not a hardware-support or permission determination.
+enum LowPowerModeStatus: String, Codable {
+    case disabled, paused, awaitingBaseline, reported, apiUnavailable
+}
+
 struct SystemState: Codable, Equatable {
     var volume = 0.0
     var brightness = 0.0
@@ -27,6 +32,10 @@ struct SystemState: Codable, Equatable {
     var batteryTimeToEmptyMinutes: Int? = nil
     var isCharging = false
     var hasBattery = false
+    // False also covers unknown/unsupported hardware in the public API.
+    // Only .reported carries a value. This state is never a charge estimate.
+    var lowPowerModeEnabled: Bool? = nil
+    var lowPowerModeStatus: LowPowerModeStatus = .disabled
     var outputDevice = ""
     var bluetoothDevices: [String] = []
     var focusEnabled = false

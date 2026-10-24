@@ -30,6 +30,41 @@ Choosing an individual display saves its system display UUID in preferences. Nam
 
 Disable the related feature and remove its saved origin/location in Settings when available. To remove all local app data, quit OpenCove and remove its own data folder. This also removes saved timers and file references. It does not delete source files, revoke OS permissions, or cancel all OS-managed records. Turn off native notifications and login-item registration in the app before uninstalling if those options were enabled.
 
+## Optional Low Power Mode overlays
+
+**Low Power Mode changes** is off by default. Its separate native Settings choice
+is local to this Mac and outside the fixed iCloud allowlist. The central preference
+save must succeed before a new grant installs an observer or reads a baseline.
+Generic preference edits, reset, cloud updates, unrelated saves and widget consent
+cannot add this grant. Missing or malformed consent, repaired documents and damaged
+documents leave it off. A valid saved grant can resume on a later launch.
+
+**Battery & charging** is the parent category. Turning either choice off immediately
+retires this mode domain and its overlay before saving. Turning the category back
+on does not restore mode consent. If revocation cannot be saved, it stays off for
+the session; the settings error warns that an older saved grant may return after
+restart. This does not change the existing IOPowerSources charge monitor, its
+defaults or its battery-widget behavior. Category opt-out does not stop that older
+public charge monitor. Battery-widget consent never grants mode reading or alerts.
+
+While admitted in the active, awake session, this feature reads only the public
+`ProcessInfo.isLowPowerModeEnabled` Boolean and listens to its default-center
+power-state notification. It has no polling, permission request, power-mode setter,
+helper, network request or native Notification Center alert. It does not depend on
+notification permission or private integrations. Reported false cannot distinguish
+off from unknown or unsupported hardware. Charge, charging and AC state do not
+determine Low Power Mode. The reported value and comparison baseline stay in memory.
+
+Registration precedes a silent baseline. Only a later observed Boolean difference
+can show “Low Power Mode on” or “Low Power Mode off”, without a percentage. These
+use the existing battery overlay duration, motion, labels and optional haptics.
+Same-value notifications do nothing. Stop, processed session resignation, sleep,
+screen sleep, known lock and shutdown retire mode state and its overlay. Return
+starts a new silent baseline with no replay. Existing unknown-lock limitations
+remain; this is not a secure-session guarantee. Delayed notifications can collapse
+intermediate changes. There is no event history or every-transition guarantee.
+See the bounded [acceptance plan](quality.md#public-low-power-mode-overlays).
+
 ## Optional BetterDisplay feedback
 
 **Show BetterDisplay brightness feedback** is off by default. This explicit native

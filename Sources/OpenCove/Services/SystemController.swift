@@ -14,7 +14,12 @@ import Intents
 /// audio output writes have explicit user-action entry points only.
 @MainActor
 final class SystemController: NSObject, ObservableObject {
-    @Published private(set) var state = SystemState()
+    @Published private(set) var state = SystemState() {
+        // An unrelated domain can publish a pre-revocation state copy after a
+        // synchronous subscriber revokes mode consent. Restore only these cached
+        // fields; this never configures an observer or calls the mode getter.
+        didSet { publishLowPowerModeState() }
+    }
     @Published private(set) var lastError: String?
     @Published private(set) var outputDevices: [CoveAudioOutput] = []
     @Published private(set) var accessoryBatteries: [CoveAccessoryBattery] = []
@@ -22,6 +27,7 @@ final class SystemController: NSObject, ObservableObject {
     @Published private(set) var isRequestingFocusAccess = false
     var onHUD: ((CoveHUD) -> Void)?
     var onLockChange: ((Bool) -> Void)?
+    var onLowPowerModeInvalidation: (() -> Void)?
 
     private var running = false
     private var privateAPIs = false
@@ -32,6 +38,10 @@ final class SystemController: NSObject, ObservableObject {
     private var bluetoothGeneration = 0
     private var focusGeneration = 0
     private var generation = 0
+    private var lowPowerModeConsent = false
+    private var lowPowerModeDemand = false
+    private var lowPowerModeGeneration = 0
+    private var lowPowerModeBaseline: Bool?
     private var observations = SystemObservations()
     private var displayServices: SystemDisplayServices?
     private var audioDevice = AudioObjectID(kAudioObjectUnknown)
@@ -166,8 +176,9 @@ final class SystemController: NSObject, ObservableObject {
 
     func stop() {
         running = false
-        state.batteryTimeToEmptyMinutes = nil
         generation += 1
+        configureLowPowerModeAlerts(enabled: false, admitted: false)
+        state.batteryTimeToEmptyMinutes = nil
         refreshWork?.cancel()
         refreshWork = nil
         pendingParts = []
@@ -188,6 +199,74 @@ final class SystemController: NSObject, ObservableObject {
         outputObservedDevices.removeAll()
         bluetoothNeedsPolling = false
         configureProtectedReaders(enableBluetooth: false, enableFocus: false)
+    }
+
+    /// Separate public receive-only domain. Store supplies saved consent and
+    /// cached session/awake admission after system startup; widgets never enter here.
+    /// Neither general refresh nor the existing battery timers configure/read it.
+    func configureLowPowerModeAlerts(enabled: Bool, admitted: Bool) {
+        let demand = enabled && admitted && running
+        guard lowPowerModeConsent != enabled || lowPowerModeDemand != demand
+                || (demand && observations.lowPowerMode == nil) else { return }
+        lowPowerModeConsent = enabled
+        lowPowerModeDemand = demand
+        // Invalidate queued deliveries before removal or observable publication.
+        lowPowerModeGeneration += 1
+        let revision = lowPowerModeGeneration
+        let lifecycle = generation
+        observations.removeLowPowerMode()
+        lowPowerModeBaseline = nil
+        if lastHUD?.origin == CoveHUD.lowPowerModeOrigin { lastHUD = nil }
+        onLowPowerModeInvalidation?()
+        publishLowPowerModeState()
+        guard running, lowPowerModeDemand, generation == lifecycle,
+              lowPowerModeGeneration == revision else { return }
+
+        let ownership = UUID()
+        observations.lowPowerModeOwnership = ownership
+        observations.lowPowerMode = NotificationCenter.default.addObserver(
+            forName: .NSProcessInfoPowerStateDidChange, object: ProcessInfo.processInfo, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.readLowPowerMode(lifecycle: lifecycle, revision: revision, ownership: ownership, emitHUD: true)
+            }
+        }
+        // Register first, then establish a silent real baseline, including true.
+        readLowPowerMode(lifecycle: lifecycle, revision: revision, ownership: ownership, emitHUD: false)
+    }
+
+    private func ownsLowPowerModeObservation(lifecycle: Int, revision: Int, ownership: UUID) -> Bool {
+        running && lowPowerModeConsent && lowPowerModeDemand && !state.isLocked
+            && generation == lifecycle && lowPowerModeGeneration == revision
+            && observations.lowPowerMode != nil && observations.lowPowerModeOwnership == ownership
+    }
+
+    private func readLowPowerMode(lifecycle: Int, revision: Int, ownership: UUID, emitHUD: Bool) {
+        guard ownsLowPowerModeObservation(lifecycle: lifecycle, revision: revision, ownership: ownership) else { return }
+        let reported = ProcessInfo.processInfo.isLowPowerModeEnabled
+        let previous = lowPowerModeBaseline
+        guard previous != reported else { return }
+        lowPowerModeBaseline = reported
+        publishLowPowerModeState()
+        // Publication can synchronously revoke consent or replace the domain.
+        guard ownsLowPowerModeObservation(lifecycle: lifecycle, revision: revision, ownership: ownership),
+              emitHUD, let previous, previous != reported else { return }
+        emit(CoveHUD(kind: .battery, title: reported ? "Low Power Mode on" : "Low Power Mode off",
+                     symbol: "leaf", origin: CoveHUD.lowPowerModeOrigin))
+    }
+
+    private func publishLowPowerModeState() {
+        let revision = lowPowerModeGeneration
+        let lifecycle = generation
+        var next = state
+        next.lowPowerModeEnabled = lowPowerModeBaseline
+        next.lowPowerModeStatus = !lowPowerModeConsent ? .disabled
+            : !lowPowerModeDemand ? .paused
+            : lowPowerModeBaseline == nil ? .awaitingBaseline : .reported
+        if next != state { state = next }
+        // @Published delivers before its setter completes. Repair an outer
+        // publication if a synchronous subscriber retired/replaced this domain.
+        if revision != lowPowerModeGeneration || lifecycle != generation { publishLowPowerModeState() }
     }
 
     /// Apply app opt-outs before any read, including the first startup baseline.
@@ -1564,6 +1643,8 @@ private struct SystemAudioListener {
 
 /// Owns all registrations so a released controller does not leave callbacks behind.
 private final class SystemObservations {
+    var lowPowerMode: NSObjectProtocol?
+    var lowPowerModeOwnership: UUID?
     var audio: [SystemAudioListener] = []
     var powerSource: CFRunLoopSource?
     var keyTap: CFMachPort?
@@ -1595,7 +1676,14 @@ private final class SystemObservations {
         bluetoothConnectedDevices.removeAll()
     }
 
+    func removeLowPowerMode() {
+        lowPowerModeOwnership = nil
+        if let lowPowerMode { NotificationCenter.default.removeObserver(lowPowerMode) }
+        lowPowerMode = nil
+    }
+
     func cancel() {
+        removeLowPowerMode()
         timers.values.forEach { $0.invalidate() }
         timers.removeAll()
         audio.forEach { $0.remove() }

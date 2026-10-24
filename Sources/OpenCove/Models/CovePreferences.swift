@@ -16,7 +16,7 @@ struct CovePreferences: Codable, Equatable {
         let consentFields: Set<String> = ["enablePrivateAPIs", "enableCalendar", "allowAppleScript", "mirrorSystemNotifications",
                                           "showLiveWaveform", "replaceSystemHUDs", "enableBetterDisplayFeedback", "showOnLockScreen",
                                           "showLockScreenPrivateContent", "enableWeather", "launchAtLogin", "syncSettingsWithiCloud",
-                                          "hideForGamesCategory"]
+                                          "hideForGamesCategory", "enableLowPowerModeAlerts"]
         var repairs: [String] = []
         for key in Array(defaults.keys) {
             guard let value = saved[key] else {
@@ -53,6 +53,7 @@ struct CovePreferences: Codable, Equatable {
         // File recovery and the central store transaction own revocation. Keep
         // normalize() compatible with the generic API's existing range check.
         if !result.enableBrightnessHUD { result.enableBetterDisplayFeedback = false }
+        if !result.enableBattery { result.enableLowPowerModeAlerts = false }
         result.normalize()
         if let normalized = try JSONSerialization.jsonObject(with: JSONEncoder().encode(result)) as? [String: Any] {
             repairs += defaults.keys.filter { key in
@@ -62,6 +63,10 @@ struct CovePreferences: Codable, Equatable {
         }
         // Recovered documents cannot activate extra readers from surviving grants.
         if !repairs.isEmpty {
+            if result.enableLowPowerModeAlerts {
+                result.enableLowPowerModeAlerts = false
+                repairs.append("enableLowPowerModeAlerts")
+            }
             if result.enableBetterDisplayFeedback {
                 result.enableBetterDisplayFeedback = false
                 repairs.append("enableBetterDisplayFeedback")
@@ -80,6 +85,7 @@ struct CovePreferences: Codable, Equatable {
         result.enablePrivateAPIs = false
         result.enableCalendar = false
         result.enableMedia = false
+        result.enableLowPowerModeAlerts = false
         return result
     }
 
@@ -157,6 +163,8 @@ struct CovePreferences: Codable, Equatable {
     // Explicit native Settings consent on this Mac; outside CoveSyncedSettings.
     var enableBetterDisplayFeedback = false
     var enableBattery = true
+    // Separate native, save-first consent on this Mac. Never synced or granted by widgets.
+    var enableLowPowerModeAlerts = false
     var enableBluetooth = true
     var enableCalendar = true
     var enableNotifications = true
@@ -312,6 +320,8 @@ enum HUDKind: String, Codable, CaseIterable, Identifiable {
 }
 
 struct CoveHUD: Codable, Equatable {
+    static let lowPowerModeOrigin = "systemLowPowerMode"
+
     var kind: HUDKind
     var title: String
     var subtitle: String = ""
