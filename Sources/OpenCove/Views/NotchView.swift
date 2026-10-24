@@ -697,7 +697,8 @@ struct NotchView: View {
                         .modifier(CoveMediaSkipRegionGate(context: CoveMediaSkipContext.current(in: store),
                             kind: .duo, mode: .expanded, section: identity))
                     Rectangle().fill(.white.opacity(0.09)).frame(width: 1)
-                    CoveCalendarView(activities: activities, condensed: true)
+                    CoveCalendarView(activities: activities, showCalendarList: store.preferences.showCalendarList,
+                                     condensed: true)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
@@ -710,7 +711,7 @@ struct NotchView: View {
                         kind: .expanded, mode: .expanded, section: identity))
             }
         case .calendar:
-            CoveCalendarView(activities: activities)
+            CoveCalendarView(activities: activities, showCalendarList: store.preferences.showCalendarList)
         case .files:
             CoveFileSurface(activities: activities)
         case .timer:

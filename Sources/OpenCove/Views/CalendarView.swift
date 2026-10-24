@@ -6,11 +6,14 @@ import SwiftUI
 @MainActor
 struct CoveCalendarView: View {
     @ObservedObject private var activities: ActivityController
+    let showCalendarList: Bool
     let condensed: Bool
     @State private var showsCondensedSchedule = false
+    @State private var showsCalendarStatus = false
 
-    init(activities: ActivityController, condensed: Bool = false) {
+    init(activities: ActivityController, showCalendarList: Bool, condensed: Bool = false) {
         self.activities = activities
+        self.showCalendarList = showCalendarList
         self.condensed = condensed
     }
 
@@ -31,6 +34,11 @@ struct CoveCalendarView: View {
         let symbols = calendar.veryShortStandaloneWeekdaySymbols
         return (0..<7).map { symbols[(calendar.firstWeekday - 1 + $0) % 7] }
     }
+    private var needsCalendarStatus: Bool {
+        !activities.calendarEnabled || activities.calendarDetailsHidden ||
+        activities.calendarAuthorization != "Authorized" ||
+        (activities.isRefreshingCalendar && dayEvents.isEmpty)
+    }
 
     var body: some View {
         Group {
@@ -38,16 +46,30 @@ struct CoveCalendarView: View {
                 VStack(spacing: 3) {
                     monthHeader
                     monthGrid
-                    condensedSchedule
+                    if showCalendarList {
+                        condensedSchedule
+                    } else if needsCalendarStatus {
+                        condensedCalendarStatus
+                    } else {
+                        Spacer(minLength: 0)
+                    }
                 }
             } else {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
-                        dayHeader
-                        schedule
+                        if showCalendarList {
+                            dayHeader
+                            schedule
+                        } else if needsCalendarStatus {
+                            calendarStatus
+                        } else {
+                            Spacer(minLength: 0)
+                        }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    Rectangle().fill(.white.opacity(0.1)).frame(width: 1)
+                    if showCalendarList {
+                        Rectangle().fill(.white.opacity(0.1)).frame(width: 1)
+                    }
                     VStack(spacing: 4) {
                         monthHeader
                         monthGrid
@@ -70,6 +92,13 @@ struct CoveCalendarView: View {
         .frame(maxWidth: .infinity)
         .frame(height: 165)
         .onAppear { activities.loadSelectedDate(selectedDate) }
+        .onChange(of: showCalendarList) { _, _ in
+            showsCondensedSchedule = false
+            showsCalendarStatus = false
+        }
+        .onChange(of: needsCalendarStatus) { _, needsStatus in
+            if !needsStatus { showsCalendarStatus = false }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Calendar")
     }
@@ -155,6 +184,23 @@ struct CoveCalendarView: View {
 
     @ViewBuilder
     private var schedule: some View {
+        if needsCalendarStatus {
+            calendarStatus
+        } else if dayEvents.isEmpty {
+            emptySchedule("No events", symbol: "calendar", detail: activities.calendarSources.isEmpty ? "No calendars are available." : "Nothing scheduled for this day.")
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 5) {
+                    ForEach(dayEvents) { event in eventRow(event) }
+                }
+            }
+            .scrollIndicators(.hidden)
+        }
+    }
+
+    /// Non-content states stay reachable even when the selected-day list is hidden.
+    @ViewBuilder
+    private var calendarStatus: some View {
         if !activities.calendarEnabled {
             emptySchedule("Calendar is off", symbol: "calendar", detail: "Enable Calendar in OpenCove Settings.")
         } else if activities.calendarDetailsHidden {
@@ -171,15 +217,6 @@ struct CoveCalendarView: View {
                 Text("Loading events…").font(.system(size: 10)).foregroundStyle(.white.opacity(0.55))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        } else if dayEvents.isEmpty {
-            emptySchedule("No events", symbol: "calendar", detail: activities.calendarSources.isEmpty ? "No calendars are available." : "Nothing scheduled for this day.")
-        } else {
-            ScrollView {
-                LazyVStack(spacing: 5) {
-                    ForEach(dayEvents) { event in eventRow(event) }
-                }
-            }
-            .scrollIndicators(.hidden)
         }
     }
 
@@ -235,8 +272,31 @@ struct CoveCalendarView: View {
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, minHeight: 26, maxHeight: .infinity)
         .accessibilityLabel("Show selected day schedule, \(condensedTitle)")
-        .popover(isPresented: $showsCondensedSchedule) {
+        .popover(isPresented: Binding(
+            get: { showCalendarList && showsCondensedSchedule },
+            set: { showsCondensedSchedule = $0 }
+        )) {
             VStack(alignment: .leading, spacing: 8) { dayHeader; schedule }
+                .padding(12).frame(width: 280, height: 230)
+                .background(Color.black).foregroundStyle(.white)
+        }
+    }
+
+    private var condensedCalendarStatus: some View {
+        Button { showsCalendarStatus = true } label: {
+            Label(condensedTitle, systemImage: "info.circle")
+                .font(.system(size: 9, weight: .medium)).lineLimit(1)
+                .frame(maxWidth: .infinity, minHeight: 26, maxHeight: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Calendar status, \(condensedTitle)")
+        .help("Calendar status")
+        .popover(isPresented: Binding(
+            get: { !showCalendarList && needsCalendarStatus && showsCalendarStatus },
+            set: { showsCalendarStatus = $0 }
+        )) {
+            calendarStatus
                 .padding(12).frame(width: 280, height: 230)
                 .background(Color.black).foregroundStyle(.white)
         }
