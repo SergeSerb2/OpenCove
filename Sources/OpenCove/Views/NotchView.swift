@@ -691,6 +691,7 @@ struct NotchView: View {
             if section.duo {
                 HStack(alignment: .top, spacing: 13) {
                     CoveMediaSurface(media: media, system: system, waveform: waveform,
+                                     showMediaTotalDuration: store.preferences.showMediaTotalDuration,
                                      showPlaybackIndicator: store.preferences.showPlaybackIndicator,
                                      showLiveWaveform: store.preferences.showLiveWaveform, condensed: true,
                                      musicColorAccent: store.preferences.musicColorAccent,
@@ -707,6 +708,7 @@ struct NotchView: View {
                 }
             } else {
                 CoveMediaSurface(media: media, system: system, waveform: waveform,
+                                 showMediaTotalDuration: store.preferences.showMediaTotalDuration,
                                  showPlaybackIndicator: store.preferences.showPlaybackIndicator,
                                  showLiveWaveform: store.preferences.showLiveWaveform,
                                  musicColorAccent: store.preferences.musicColorAccent,
