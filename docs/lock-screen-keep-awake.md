@@ -173,6 +173,8 @@ Evicted, consumed or invalidated tokens return `INTENT_USED`; an extant expired
 token returns `INTENT_EXPIRED`. A retained context that fails current authority
 returns the appropriate policy error or `STALE_CONTEXT`.
 
+Successful command responses carry `app`, `pid`, and `dataDirectory` for the existing
+CLI owner-identity check.
 Every effect response includes `resultCode` and a bounded immutable
 `keepAwakeOutcome`, cached before response encoding. The last request ID and
 exact typed payload replay the same cached outcome. A different payload under

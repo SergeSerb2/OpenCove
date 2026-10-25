@@ -279,7 +279,9 @@ final class DevelopmentServer {
                     let result = lockWidgets.keepAwakeCommand(object)
                     // The bounded immutable receipt is already cached, even if
                     // encoding or response delivery fails. No submitted fiction.
-                    var response: [String: Any] = ["keepAwakeOutcome": try encoded(result.outcome)]
+                    var response: [String: Any] = ["app": "OpenCove", "pid": ProcessInfo.processInfo.processIdentifier,
+                                                   "dataDirectory": CovePaths.dataDirectory.path,
+                                                   "keepAwakeOutcome": try encoded(result.outcome)]
                     response["resultCode"] = result.outcome.resultCode
                     if let token = result.intentToken { response["intentToken"] = token }
                     if let seconds = result.validForSeconds { response["validForSeconds"] = seconds }
