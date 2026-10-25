@@ -69,6 +69,185 @@ final class NotchPanelController: NSObject {
         let timer: CoveTimerState
         let identifier: UUID
     }
+
+    // I05 is a local mouse sequence, not a persisted or item-bound command lease.
+    private struct CompactMediaPressTuple: Equatable {
+        let sourceBundleIdentifier: String
+        let metadataBackend: String
+        let contentItemIdentifier: String?
+        let seekTarget: String?
+        let available: Bool
+        let supportsPlayPause: Bool
+        let isPlaying: Bool
+
+        init?(_ state: MediaState) {
+            // Inspect at most limit + 1 UTF8 bytes before retaining any strings.
+            guard !state.sourceBundleIdentifier.isEmpty,
+                  state.sourceBundleIdentifier.utf8.prefix(1025).count <= 1024,
+                  state.metadataBackend.utf8.prefix(65).count <= 64,
+                  state.contentItemIdentifier.map({ $0.utf8.prefix(4097).count <= 4096 }) ?? true,
+                  state.seekTarget.map({ $0.utf8.prefix(129).count <= 128 }) ?? true else { return nil }
+            sourceBundleIdentifier = state.sourceBundleIdentifier
+            metadataBackend = state.metadataBackend
+            contentItemIdentifier = state.contentItemIdentifier
+            seekTarget = state.seekTarget
+            available = state.available
+            supportsPlayPause = state.supportsPlayPause
+            isPlaying = state.isPlaying
+        }
+    }
+
+    private struct CompactMediaPress {
+        let id: UUID
+        let surface: ObjectIdentifier
+        let windowNumber: Int
+        let lifecycleRevision: UInt
+        let layoutRevision: UInt
+        let invalidationRevision: UInt
+        let timestamp: TimeInterval
+        var payload: CompactMediaPressTuple?
+    }
+    private var compactMediaPress: CompactMediaPress?
+    private var compactMediaPressRevision: UInt = 0
+
+    private func invalidateCompactMediaPress() {
+        compactMediaPress?.payload = nil
+        // Saturation is permanent for this owner. Never alias old authority.
+        if compactMediaPressRevision < UInt.max { compactMediaPressRevision += 1 }
+    }
+
+    private func retireCompactMediaPress(id: UUID) {
+        if compactMediaPress?.id == id { compactMediaPress = nil }
+    }
+
+    private func hasCompactMediaPressModifiers(_ event: NSEvent) -> Bool {
+        event.modifierFlags.intersection([.shift, .control, .option, .command]) == [.option]
+    }
+
+    // Native getters must finish before the caller's LAST local/model checks.
+    // Do not use blocksPanelGesture: its pressed-button/control exclusions also
+    // reject the real left-down on the ordinary SwiftUI media Button.
+    private func compactMediaPressNativeAdmission(_ event: NSEvent, surface: CovePanelSurface,
+                                                  windowNumber: Int) -> Bool {
+        let panel = surface.panel
+        guard windowNumber > 0, panel.windowNumber == windowNumber,
+              event.windowNumber == windowNumber, event.window === panel,
+              panel.isVisible, panel.contentView === surface.content,
+              surface.content.window === panel,
+              surface.content.hosting.superview === surface.content,
+              surface.content.hosting.window === panel,
+              !surface.content.isHiddenOrHasHiddenAncestor,
+              !surface.content.hosting.isHiddenOrHasHiddenAncestor,
+              panel.attachedSheet == nil, NSApp.modalWindow == nil,
+              (panel.firstResponder as? NSTextView)?.isEditable != true else { return false }
+        let point = surface.content.convert(event.locationInWindow, from: nil)
+        return surface.content.containsCompactMediaAction(at: point, store: store)
+    }
+
+    private func compactMediaPressLocalAdmission(surface: CovePanelSurface) -> Bool {
+        started && sessionActive && !screensAsleep && !store.system.state.isLocked
+            && surfaces.values.contains(where: { $0 === surface })
+            && surface.hasLayout && !surface.frameAnimationInFlight
+            && menuTrackingDepth == 0 && mediaMenuTrackingDepth == 0 && mediaPopoverDepth == 0
+            && !store.isExpanded && store.hud == nil && !store.showsMediaPeek
+            && !store.hidesCompactWhenIdle && store.preferences.enableMedia
+            && store.compactActivity == .media && store.media.state.available
+    }
+
+    private func compactMediaPressIsCurrent(_ press: CompactMediaPress, surface: CovePanelSurface) -> Bool {
+        compactMediaPress?.id == press.id && press.surface == ObjectIdentifier(surface)
+            && press.lifecycleRevision == lifecycleRevision && press.layoutRevision == surface.layoutRevision
+            && press.invalidationRevision == compactMediaPressRevision && compactMediaPressRevision < UInt.max
+    }
+
+    private func finishCompactMediaPress(_ press: CompactMediaPress, event: NSEvent, surface: CovePanelSurface) {
+        // Keep the published UUID through every getter. Cleanup cannot retire a
+        // replacement installed by a reentrant event, publication or retirement.
+        defer { retireCompactMediaPress(id: press.id) }
+        guard let payload = press.payload, event.buttonNumber == 0, event.clickCount == 1,
+              hasCompactMediaPressModifiers(event), event.timestamp.isFinite else { return }
+        let delta = event.timestamp - press.timestamp
+        guard delta.isFinite, delta >= 0, delta <= 1.0,
+              compactMediaPressNativeAdmission(event, surface: surface, windowNumber: press.windowNumber),
+              compactMediaPressIsCurrent(press, surface: surface),
+              compactMediaPressLocalAdmission(surface: surface),
+              compactMediaPress?.payload == payload,
+              let current = CompactMediaPressTuple(store.media.state), current == payload,
+              current.available, current.supportsPlayPause else { return }
+        // Capability, tuple and local rejection precede this one new session read.
+        guard currentSessionIsActive() else { return }
+        guard compactMediaPressNativeAdmission(event, surface: surface, windowNumber: press.windowNumber),
+              compactMediaPressIsCurrent(press, surface: surface),
+              compactMediaPressLocalAdmission(surface: surface),
+              compactMediaPress?.payload == payload,
+              let current = CompactMediaPressTuple(store.media.state), current == payload,
+              current.available, current.supportsPlayPause else { return }
+        compactMediaPress = nil
+        store.media.playPause()
+    }
+
+    /// true consumes only this route's down/owned drag/up; false keeps the old
+    /// route. An ineligible claimed sequence never falls back to expansion.
+    private func handleCompactMediaPress(_ event: NSEvent, surface: CovePanelSurface) -> Bool {
+        if event.type == .leftMouseDown, event.buttonNumber == 0 {
+            // Every new left down supersedes the orphan before considering its
+            // current route. Advance even without a slot to detect reentry while
+            // initial native target facts are being read.
+            invalidateCompactMediaPress()
+            compactMediaPress = nil
+            guard hasCompactMediaPressModifiers(event) else { return false }
+            let revision = compactMediaPressRevision
+            let lifecycle = lifecycleRevision
+            let layout = surface.layoutRevision
+            let windowNumber = event.windowNumber
+            guard compactMediaPressNativeAdmission(event, surface: surface, windowNumber: windowNumber),
+                  compactMediaPressRevision == revision, lifecycleRevision == lifecycle,
+                  surface.layoutRevision == layout, compactMediaPress == nil,
+                  compactMediaPressLocalAdmission(surface: surface) else { return false }
+            let timestamp = event.timestamp
+            let press = CompactMediaPress(id: UUID(), surface: ObjectIdentifier(surface),
+                windowNumber: windowNumber, lifecycleRevision: lifecycle, layoutRevision: layout,
+                invalidationRevision: revision, timestamp: timestamp.isFinite ? timestamp : 0, payload: nil)
+            compactMediaPress = press
+            cancelHoverWork()
+            // The route is claimed, including multi-click and unsupported input.
+            // Keep a suppression-only record if any subsequent admission fails.
+            guard event.clickCount == 1, timestamp.isFinite,
+                  compactMediaPressIsCurrent(press, surface: surface),
+                  compactMediaPressLocalAdmission(surface: surface),
+                  let payload = CompactMediaPressTuple(store.media.state),
+                  payload.available, payload.supportsPlayPause else { return true }
+            guard currentSessionIsActive() else { return true }
+            guard compactMediaPressNativeAdmission(event, surface: surface, windowNumber: windowNumber),
+                  compactMediaPressIsCurrent(press, surface: surface),
+                  compactMediaPressLocalAdmission(surface: surface),
+                  let current = CompactMediaPressTuple(store.media.state), current == payload,
+                  current.available, current.supportsPlayPause else { return true }
+            compactMediaPress?.payload = current
+            return true
+        }
+
+        guard let press = compactMediaPress else { return false }
+        let owned = press.surface == ObjectIdentifier(surface) && press.windowNumber == event.windowNumber
+        if event.type == .leftMouseDragged {
+            invalidateCompactMediaPress()
+            return owned && event.buttonNumber == 0
+        }
+        if event.type == .leftMouseUp {
+            guard owned else { invalidateCompactMediaPress(); return false }
+            finishCompactMediaPress(press, event: event, surface: surface)
+            return true
+        }
+        if !hasCompactMediaPressModifiers(event) { invalidateCompactMediaPress() }
+        switch event.type {
+        case .leftMouseDown, .rightMouseDown, .rightMouseUp, .rightMouseDragged,
+             .otherMouseDown, .otherMouseUp, .otherMouseDragged,
+             .keyDown, .keyUp, .scrollWheel, .swipe:
+            invalidateCompactMediaPress()
+        default: break
+        }
+        return false
+    }
     private var lastLayoutInputs: LayoutInputs?
     private var layoutInputs: LayoutInputs {
         LayoutInputs(preferences: store.preferences, expanded: store.isExpanded, tab: store.selectedTab,
@@ -265,6 +444,7 @@ final class NotchPanelController: NSObject {
         for publisher in [store.objectWillChange, store.media.objectWillChange,
                           store.system.objectWillChange, store.activities.objectWillChange] {
             publisher.sink { [weak self] _ in
+                self?.invalidateCompactMediaPress()
                 self?.scheduleLayout()
             }.store(in: &subscriptions)
         }
@@ -476,6 +656,7 @@ final class NotchPanelController: NSObject {
     }
 
     private func retire(_ surface: CovePanelSurface) {
+        if compactMediaPress?.surface == ObjectIdentifier(surface) { compactMediaPress = nil }
         surface.layoutRevision &+= 1
         surface.mediaScroll.cancel()
         surface.scroll.cancel()
@@ -826,6 +1007,7 @@ final class NotchPanelController: NSObject {
     }
 
     private func cancelMediaSwipes() {
+        invalidateCompactMediaPress()
         for surface in surfaces.values {
             surface.mediaScroll.cancel()
             surface.scroll.cancel()
@@ -914,6 +1096,7 @@ final class NotchPanelController: NSObject {
     }
 
     private func handle(_ event: NSEvent, surface: CovePanelSurface) -> Bool {
+        if handleCompactMediaPress(event, surface: surface) { return true }
         guard started, surface.panel.isVisible, !screensAsleep,
               sessionActive, currentSessionIsActive(), !store.system.state.isLocked else {
             surface.mediaScroll.cancel()
@@ -1176,6 +1359,25 @@ private final class CovePanelTrackingView: NSView {
     }
 
     required init?(coder: NSCoder) { nil }
+    // Logical ordinary Button rectangle only; no rendered-phase/pixel claim.
+    // Auxiliary Timer/Calendar labels belong to this same compact media Button.
+    func containsCompactMediaAction(at point: NSPoint, store: CoveStore) -> Bool {
+        let bounds = self.bounds
+        let size = NotchView.desiredSize(store: store, cutout: cutout, expanded: false)
+        guard point.x.isFinite, point.y.isFinite,
+              bounds.minX.isFinite, bounds.minY.isFinite, bounds.width.isFinite, bounds.height.isFinite,
+              size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
+              bounds.width > 0, bounds.height > 0 else { return false }
+        let target = NSRect(x: bounds.midX - size.width / 2, y: bounds.maxY - size.height,
+                            width: size.width, height: size.height).intersection(bounds)
+        guard target.contains(point) else { return false }
+        let physical = cutout ?? CGSize(width: store.physicalNotchWidth, height: store.physicalNotchHeight)
+        let clearance = CoveNotchCutout.resolve(physical: physical, preferences: store.preferences)
+        let strip = NSRect(x: bounds.midX - clearance.width / 2, y: bounds.minY,
+                           width: clearance.width, height: bounds.height)
+        return clearance.width == 0 || !strip.contains(point)
+    }
+
     override var needsPanelToBecomeKey: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
