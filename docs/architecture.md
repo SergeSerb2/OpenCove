@@ -386,3 +386,60 @@ success; failure freezes the full record in process-life quarantine. No saved
 power state, extra reader or automatic renewal is added. Existing Store/save and
 M12 behavior remain separate. See [the complete L06 contract](lock-screen-keep-awake.md)
 for the strict authenticated prepare/commit/Stop route and source/runtime limits.
+
+## I08 status-menu playback policy
+
+The ordinary `NSStatusItem` menu adds one separated group after the updater and
+before Refresh Activities: **Previous Track**, **Play/Pause**, **Next Track**.
+These fixed labels have no new key equivalents, symbols, artwork, metadata,
+submenu, progress or animation. Existing items, targets and shortcuts retain
+their order. The group is independent of the selected activity, expanded/HUD
+state, paused compact hiding and panel visibility. It does not mount or activate
+a panel. This is adopted OpenCove policy; exact Alcove commands, labels, defaults,
+surface and timing remain SPEC_UNKNOWN.
+
+The MainActor `OpenCoveDelegate` implements `NSMenuItemValidation` for the three
+dedicated selectors, using each item's action rather than its label or tag.
+Automatic menu enabling remains in place. Only those selectors reject
+`startupFailed` or a missing notch owner and consult
+`NotchPanelController.canPerformStatusMediaAction(_:)`. Unrelated delegate
+actions return true; the updater retains its own target. The enabled bit is
+advisory and never grants execution authority.
+
+The panel owner has a closed three-case `StatusMediaAction` and no new stored
+state. Admission first rejects Media OFF, unavailable media or the action's own
+`supportsPrevious`, `supportsPlayPause` or `supportsNext` flag. It then requires
+the exact existing `mayHandleMenuAction`: started, cached active session, fresh
+public console/login check, awake screens and `isLocked == false`. After that
+getter it re-reads current preference, availability, the same capability and
+cached lifecycle/awake/lock flags. A key path selects the capability without
+capturing a media-state value. OFF/empty/unsupported paths skip the session
+query; admitted validation can use the existing public CGSession getter. This
+is not a zero-OS-work or secure-unlocked guarantee. Unknown lock with false
+`isLocked` retains the ordinary gate; L06 and private-integration authority are
+separate.
+
+Each selector checks delegate lifetime and calls
+`performStatusMediaAction(_:)`. That method recomputes full admission and then
+directly calls exactly one matching existing `previous()`, `playPause()` or
+`next()` method. It adds no suspension, task, queue, publication, refresh, event
+post or OS getter between the final check and dispatch. Validation is read-only
+and repeatable. Before start, during shutdown, or after a current disable,
+unavailable/support loss, lock, session loss, sleep or stop, selection is inert.
+Media OFF rejects even when separate lock-widget demand keeps media populated.
+
+Selection targets the currently accepted source, without a menu-open snapshot,
+item/seek token or forced play direction. Play/Pause expresses toggle intent.
+Existing backend source/capability/permission checks, generations, queues,
+callbacks and errors remain unchanged. Generic adapter or AppleScript work can
+finish after a later item/session change; this adds no atomic compare-and-send,
+post-dispatch cancellation, rollback, source-authenticity or player-acknowledgement
+promise. Submission is not acknowledgement. No optimistic state, retry, toast or
+menu-specific error history is added; existing media errors remain on existing
+surfaces available through Open OpenCove.
+
+Only three menu items join the existing retained menu; their public SDK target
+is weak. No reader, process, observer, subscription, timer, power handle or
+cleanup path is added. Existing menu-tracking swipe cancellation, shutdown,
+Store, recovery and persistence remain exact. The source candidate still needs
+independent exact review and separately authorized build/native acceptance.

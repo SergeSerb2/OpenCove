@@ -840,3 +840,72 @@ M12 exact-26cf saved evidence and R7 CLEAR do not transfer to this candidate.
 C-PID remains FAILED, M1 USER-DEFERRED, C03 and Stage4/Focus HOLD, blur FAILED,
 and sound blocked. Native/positive power/secure/AX/performance remain UNVERIFIED;
 reference behavior is SPEC_UNKNOWN and full parity remains INCOMPLETE.
+
+## I08 status-menu playback candidate gates
+
+The source slice adds three fixed actions in the real ordinary status menu,
+after the updater and before Refresh Activities: Previous Track, Play/Pause,
+Next Track. It adopts current-source-at-selection semantics and the existing
+backend queue limits. This section is separate from historical prospective
+M17/M12/L06 text and does not transfer any prior acceptance to this candidate.
+
+This commission permits only owned source/docs edits, one local candidate
+commit, static Git/diff/hash/mode/full-file inverse/protected-range checks and
+syntax-only Swift parsing of the two changed Swift paths. Syntax parsing cannot
+establish type correctness, `NSMenuItemValidation` conformance or compilation.
+Independent exact implementation review remains required. Require precisely
+five existing paths, no new tracked file, exact modes/blobs for the 96 other
+base leaves, insertion-only original controller text, the one App conformance
+replacement plus additions, and exact original doc prefixes. Review all three
+selectors through lifetime admission, their own capability and the unchanged
+ordinary session gate into exactly one matching existing transport method.
+Check the eligible positive branches as well as every rejection branch.
+
+Validation must stay read-only and repeatable. Media OFF, empty/unavailable and
+unsupported commands must return before the public session getter. After that
+getter, re-read current preference, availability, own support and cached
+started/session/awake/unlocked flags. Activation must repeat full admission,
+with no new getter, suspension or publication before direct dispatch. Preserve
+unrelated default validation, updater target, all old keys/order/targets, menu
+tracking, lifecycle, geometry, gestures, reader consent, recovery and backend
+source/callback/generation/error/no-prompt behavior. Do not use L06 admission,
+require known lock/private integrations, or turn eligible sources into deny-all.
+
+Build/typecheck/package/API/native/failure flows are NOT RUN under this
+commission. A parent must separately authorize the exact-source build and any
+later real-interface context. No app, caller, helper, preflight, control, CLI,
+media/provider/status/process/power/permission operation, unit test, mock,
+fixture, injected state/event/clock/bounds/API result or computer-use test is
+authorized here. No direct selector or API substitute can accept native menu
+input. The user-led native empty/revoked flow must check fixed disabled items,
+unchanged old actions, and naturally reachable disable, support loss, source
+loss, lock, session loss, sleep and stop while the menu is open. Missing variants
+stay UNVERIFIED. No new pending status-menu command may replay on return.
+
+Authentic positive media remains blocked by C-PID FAILED. A separately cleared
+real source and new user-led native context must cover all three commands,
+mixed capabilities, pause/resume, natural source/item replacement while open,
+unsupported directions and backend rejection, with independent player
+acknowledgement. The fixed toggle label promises no captured item or direction.
+Existing generic adapter/AppleScript queues can finish after later item/session
+changes. No atomic compare-and-send, rollback, cancellation lease, optimistic
+toggle, synthetic receipt, automatic retry/error refresh or source/PID/browser
+workaround is added. Existing backend errors use existing media surfaces.
+
+AX, keyboard/focus, disabled-state rendering, OS/display behavior, animation and
+performance remain UNVERIFIED. Future performance work needs comparable real
+flows and retained adverse measurements; no source-only responsiveness, CPU,
+wake or memory claim follows. The retained changelog digest
+`6af101e0a82a409826858b72309be81058d6abef2390b4b3dcbb6bca13c8a26d`
+is the retained 1.7.9 record, not a latest-release claim. I08's 1.2.2 declaration
+at `$.entries[5].minors[6].features[3]`, “Added menu bar items (controls)”, does
+not define exact commands, defaults, surface or timing. Those remain
+SPEC_UNKNOWN; the implementation policy is OpenCove's.
+
+C-PID FAILED; M1 USER-DEFERRED; C03 HOLD with the tiny Store fix unintegrated and
+phase endpoints unproved; Stage4/Focus HOLD and default backend UNVERIFIED;
+blur FAILED; sound blocked; D10 capture exclusion blocked; C02 lunar convention
+unknown. Native positive providers, power, hardware, secure visibility/input,
+AX, animation and performance remain UNVERIFIED. Reference is SPEC_UNKNOWN and
+full parity remains INCOMPLETE. Independent review, exact build, future native
+acceptance and PR decisions remain with the parent.

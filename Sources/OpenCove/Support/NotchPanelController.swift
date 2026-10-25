@@ -1003,6 +1003,36 @@ final class NotchPanelController: NSObject {
         NSMenu.popUpContextMenu(menu, with: event, for: view)
     }
 
+    enum StatusMediaAction {
+        case previous, playPause, next
+    }
+
+    func canPerformStatusMediaAction(_ action: StatusMediaAction) -> Bool {
+        let capability: KeyPath<MediaState, Bool>
+        switch action {
+        case .previous: capability = \.supportsPrevious
+        case .playPause: capability = \.supportsPlayPause
+        case .next: capability = \.supportsNext
+        }
+        // OFF, empty and unsupported actions return before the session getter.
+        guard store.preferences.enableMedia, store.media.state.available,
+              store.media.state[keyPath: capability], mayHandleMenuAction else { return false }
+        // Re-read current model and lifecycle values after the public getter.
+        // The key path selects a flag; it never captures an earlier model value.
+        return started && sessionActive && !screensAsleep && !store.system.state.isLocked
+            && store.preferences.enableMedia && store.media.state.available
+            && store.media.state[keyPath: capability]
+    }
+
+    func performStatusMediaAction(_ action: StatusMediaAction) {
+        guard canPerformStatusMediaAction(action) else { return }
+        switch action {
+        case .previous: store.media.previous()
+        case .playPause: store.media.playPause()
+        case .next: store.media.next()
+        }
+    }
+
     private var mayHandleMenuAction: Bool {
         started && sessionActive && currentSessionIsActive() && !screensAsleep && !store.system.state.isLocked
     }
