@@ -162,6 +162,7 @@ struct CovePreferences: Codable, Equatable {
     var lockWidgetBluetooth = false
     var hideWhenIdle = true
     var expandOnHover = true
+    var disableIdleHoverExpansion: Bool = false
     // Per-device gesture choices. Deliberately outside CoveSyncedSettings.
     var swipeToSkip = false
     var reverseSkipSwipe = false

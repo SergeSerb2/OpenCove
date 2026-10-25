@@ -443,3 +443,19 @@ is weak. No reader, process, observer, subscription, timer, power handle or
 cleanup path is added. Existing menu-tracking swipe cancellation, shutdown,
 Store, recovery and persistence remain exact. The source candidate still needs
 independent exact review and separately authorized build/native acceptance.
+
+## I06: Local idle-only hover expansion policy
+
+`disableIdleHoverExpansion` is an ordinary local Boolean, default `false`. When it is `true`, automatic hover cannot open the idle clock. Idle means current `hud == nil && !showsMediaPeek && compactActivity == .clock`; it does not depend on `hideWhenIdle`. A current Timer with remaining time, including a paused Timer, media under the existing paused-media grace policy, Calendar, HUD or eligible QuickPeek remains eligible under ordinary hover admission. Dismissed or unavailable activities use the existing fallback; files alone do not make a compact activity.
+
+Only existing first-entry and preferences-driven scheduling can arm the one hover task. A denied entry retains no intent. Activity arrival and repeated `mouseMoved` for an already recorded hovered display do not arm a task. A new existing qualifying trigger, such as leave/re-entry, is needed. The existing finite hover delay and lifecycle revision are captured as local scalars; the task holds only weak self across sleep.
+
+Entry requires a current tracked hovered visible owned surface, a free task slot, started/active-session/awake/unlocked local state, collapsed controls, the master hover choice and current activity eligibility. Native surface reads precede final local checks, including a second free-slot check. Allocation adds no public session query.
+
+Completion retains its handle through one existing public console/login session getter. Before that getter, and again after it, admission checks current tracked/hovered surface ownership and visibility, cancellation, lifecycle revision, started/session/awake/lock state, collapsed controls, master hover and current activity eligibility. Native visibility/content-view reads precede the final local checks. The successful path then immediately calls existing `openCompactActivity()` once. That method selects the current enabled section and expands; this path sends no Timer or media command and captures no entry-time activity identity.
+
+All existing superseding owners still cancel before clearing. A current noncancelled same-lifecycle task releases its own slot on rejection, success or noncancellation sleep error. A canceled or obsolete closure cannot clear a replacement slot or dispatch. There is no new observer, stored ticket, pointer query, retry or recurring task. The held task handle blocks duplicate allocation during reentrant getter work; cancellation and final current checks reject superseded work.
+
+Explicit visible compact Button/accessibility actions, status/context menus, middle click, swipes, API opening, section selection, collapse, lock widgets and phase priority retain their existing paths. Editing the flag while expanded does not collapse or hide controls. When idle hiding retires hosting content, there is no hidden clock-click promise: use the existing **Open OpenCove** menu action. All-reader-OFF expansion may contain no enabled section.
+
+These are latest processed local facts and cooperative cancellation, not atomic physical pointer/session or secure-lock proof. Ordinary unknown-lock `false` remains the existing gate. Once opening starts, existing section/phase publications govern later state; later opt-out does not undo that opening. This is adopted OpenCove policy. The retained Alcove I06 declaration leaves exact meaning, defaults, scope and timing `SPEC_UNKNOWN`.

@@ -187,3 +187,13 @@ whole-document recovery's Media OFF is sufficient; missing-file factory policy
 is unchanged. Failed admission does not start a reader, refresh, save, open
 Settings or queue a command for later. Existing media error surfaces remain
 available through Open OpenCove. Native/privacy acceptance remains separate.
+
+## I06: Local hover choice and persistence
+
+**Don't expand on hover when idle** stores `disableIdleHoverExpansion`, default `false`, through the existing ordinary Settings binding. The control is disabled when **Expand on hover** is off; its saved value and scope note remain. This choice applies to this Mac. It adds no reader, consent field, permission, prompt, helper, provider or cloud allowlist/schema member. Existing remote allowlisted choices can change the master hover setting without replacing this local value; M1 stays deferred.
+
+Existing synthesized Codable/Equatable, strict recovery and generic API validation include the new Boolean. A new/missing file or missing key uses `false`. Actual JSON Booleans persist. A malformed saved field repairs to `false` with the existing repaired-field notice, damaged-byte backup and independent-grant reduction. Whole-document fallback uses `Self()` plus the unchanged all-29-reader-OFF recovery inventory. Invalid API types reject the whole transaction before apply; they do not exercise file repair.
+
+Ordinary Store application/save/equality/retry and existing visible errors remain in charge. A save failure can leave a session value whose older saved value returns after restart. An overall failed transaction can coexist with a successful JSON write. Session value, disk bytes, backup/error and restart are separate evidence. Backup failure preserves the damaged original. No new error history, banner or retry is added. Common Settings/save work can still reconcile readers, login-item status and session state; this choice makes no zero-status-call claim.
+
+The veto applies only to automatic idle-clock hover. Visible compact input and the existing **Open OpenCove** menu still provide explicit access without enabling readers. With idle hosting content retired, hidden clock clicks are not promised. The task uses existing local surface/model/session facts and one existing public completion getter; it adds no monitor or protected operation and supplies no secure or physical-input guarantee.

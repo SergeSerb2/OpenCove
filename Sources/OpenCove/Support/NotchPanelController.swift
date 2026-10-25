@@ -741,16 +741,58 @@ final class NotchPanelController: NSObject {
         }
     }
 
+    private var allowsHoverExpansionForCurrentActivity: Bool {
+        !store.preferences.disableIdleHoverExpansion || store.hud != nil
+            || store.showsMediaPeek || store.compactActivity != .clock
+    }
+
     private func scheduleExpansion() {
-        guard hoverTask == nil, !store.isExpanded, store.preferences.expandOnHover, !hoveredDisplays.isEmpty else { return }
+        guard hoverTask == nil else { return }
+        // Native reads precede the final local admission and task-slot checks.
+        guard hoveredDisplays.contains(where: { id in
+            guard let surface = surfaces[id], surface.panel.isVisible,
+                  surface.panel.contentView === surface.content else { return false }
+            return surfaces[id] === surface && hoveredDisplays.contains(id)
+        }), hoverTask == nil, started, sessionActive, !screensAsleep,
+              !store.system.state.isLocked, !store.isExpanded,
+              store.preferences.expandOnHover, allowsHoverExpansionForCurrentActivity else { return }
+        let revision = lifecycleRevision
         let delay = finite(store.preferences.hoverDelay, fallback: 0.25, range: 0...10)
         hoverTask = Task { @MainActor [weak self] in
-            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
-            guard !Task.isCancelled, let self else { return }
-            self.hoverTask = nil
-            guard self.started, !self.hoveredDisplays.isEmpty,
-                  self.store.preferences.expandOnHover, !self.screensAsleep,
-                  self.sessionActive, self.currentSessionIsActive(), !self.store.system.state.isLocked else { return }
+            do { try await Task.sleep(for: .seconds(delay)) } catch {
+                if !Task.isCancelled, let self, self.lifecycleRevision == revision {
+                    self.hoverTask = nil
+                }
+                return
+            }
+            guard !Task.isCancelled, let self, self.lifecycleRevision == revision else { return }
+            // Superseding owners cancel before clearing. A canceled or obsolete
+            // closure must leave any replacement task's slot untouched.
+            defer {
+                if !Task.isCancelled, self.lifecycleRevision == revision {
+                    self.hoverTask = nil
+                }
+            }
+            guard self.hoveredDisplays.contains(where: { id in
+                guard let surface = self.surfaces[id], surface.panel.isVisible,
+                      surface.panel.contentView === surface.content else { return false }
+                return self.surfaces[id] === surface && self.hoveredDisplays.contains(id)
+            }), !Task.isCancelled, self.lifecycleRevision == revision,
+                  self.started, self.sessionActive, !self.screensAsleep,
+                  !self.store.system.state.isLocked, !self.store.isExpanded,
+                  self.store.preferences.expandOnHover,
+                  self.allowsHoverExpansionForCurrentActivity else { return }
+            guard self.currentSessionIsActive() else { return }
+            // Retain hoverTask through the getter, then admit only current state.
+            guard self.hoveredDisplays.contains(where: { id in
+                guard let surface = self.surfaces[id], surface.panel.isVisible,
+                      surface.panel.contentView === surface.content else { return false }
+                return self.surfaces[id] === surface && self.hoveredDisplays.contains(id)
+            }), !Task.isCancelled, self.lifecycleRevision == revision,
+                  self.started, self.sessionActive, !self.screensAsleep,
+                  !self.store.system.state.isLocked, !self.store.isExpanded,
+                  self.store.preferences.expandOnHover,
+                  self.allowsHoverExpansionForCurrentActivity else { return }
             self.store.openCompactActivity()
         }
     }
