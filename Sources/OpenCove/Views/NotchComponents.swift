@@ -166,6 +166,7 @@ struct CoveArtwork: View {
     var size: Double
     var radius: Double = 12
     var sourceIdentifier: String?
+    var isPlaying: Bool
     var reduceMotion = false
     @State private var first: RetainedArtwork?
     @State private var second: RetainedArtwork?
@@ -207,6 +208,8 @@ struct CoveArtwork: View {
         thumbnail ?? (hasRetainedSource ? current?.thumbnail : nil)
     }
 
+    private var artworkOpacity: Double { isPlaying ? 1.0 : 0.60 }
+
     var body: some View {
         Group {
             if !immediate && hasRetainedSource {
@@ -219,9 +222,10 @@ struct CoveArtwork: View {
                     guard fadeRevision == revision, fadePhase == .fading(revision) else { return }
                     fadePhase = .completed(revision)
                 }
+                .opacity(artworkOpacity)
                 .transition(.identity)
             } else if let thumbnail = displayed {
-                image(thumbnail).transition(.identity)
+                image(thumbnail).opacity(artworkOpacity).transition(.identity)
             } else {
                 RoundedRectangle(cornerRadius: radius)
                     .fill(LinearGradient(colors: [.white.opacity(0.12), .white.opacity(0.035)],
@@ -619,12 +623,14 @@ struct CoveMediaSurface: View {
         return HStack(alignment: .center, spacing: condensed ? 9 : 15) {
             if locked {
                 CoveArtwork(thumbnail: artwork, size: 54, radius: 12,
-                            sourceIdentifier: media.state.sourceBundleIdentifier, reduceMotion: reduceMotion)
+                            sourceIdentifier: media.state.sourceBundleIdentifier,
+                            isPlaying: media.state.isPlaying, reduceMotion: reduceMotion)
             } else {
                 Button(action: media.openPlayer) {
                     CoveArtwork(thumbnail: artwork, size: condensed ? 46 : 54,
                                 radius: condensed ? 9 : 12,
-                                sourceIdentifier: media.state.sourceBundleIdentifier, reduceMotion: reduceMotion)
+                                sourceIdentifier: media.state.sourceBundleIdentifier,
+                                isPlaying: media.state.isPlaying, reduceMotion: reduceMotion)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open media player")

@@ -284,6 +284,35 @@ Artwork decoding runs outside the main actor. An eight-entry cache of 256px, eig
 
 Ready, different covers from the same source use a 120 ms opacity crossfade with the shared content curve. SwiftUI owns two fixed image slots, retaining at most one outgoing cover. A small native layer view interpolates the top cover's opacity and reports one revision-checked completion. A reversal between those covers starts from the current presentation opacity; a third ready cover waits for the active fade and then uses the latest input. A brief missing decode result preserves the current blend, with a 200 ms hold that repeated missing input or motion changes cannot extend. Source changes, source loss, Reduce Motion, disabled outgoing sections and disappearance clear or settle the presentation immediately. Turning Reduce Motion off cannot resume an old fade. This adds no recurring timer, display link or model publication schedule. The opt-in development snapshot reports native opacity and a conservative remaining-time budget on demand. Native capture copies presentation opacity for its synchronous draw and restores the target without restarting the animation.
 
+Retained M17 is `1.2.1 features[3]`, "Added album art opacity on pause"
+(10 January 2025, `entries[5].minors[7].features[3]`). Later
+`1.6.9 fixes[8]` removes the disable-album-art-opacity control. OpenCove adds no
+replacement preference. Version 1.7.9 is the latest retained declaration, not a
+claim about the latest available release. No original Alcove app, source or
+assets supply this implementation.
+
+`CoveArtwork` requires the existing `MediaState.isPlaying` Boolean at all four
+production calls. Actual displayed artwork uses 1.0 when true and 0.60 when
+false. False includes stopped, missing and unknown state; it is not confirmed
+paused. The fixed 0.60 value is explicit OpenCove policy, not an Alcove
+measurement or proof of legibility or performance. Exact reference pause
+classification, opacity, surfaces, placeholder behavior and motion remain
+**SPEC_UNKNOWN**. Public SwiftUI `View.opacity(_:)` supplies only the mechanism.
+
+The presentation effect covers both retained image slots through their existing
+wrapper and the direct current/immediate/displayed bitmap. The gradient/music-note
+placeholder and decorative border keep their existing opacity. It applies only
+within already-admitted compact, QuickPeek, full/condensed/Duo and locked shared
+media surfaces. Admission, compact grace, privacy, lock/session and hidden-state
+rules stay unchanged. Playback is not part of artwork input identity and does not
+request a decode, restart a fade, replace slots or extend the same-source decode
+gap. Source-switch/loss/nil cleanup, native blend targets, transactions, completion,
+tasks and timers stay unchanged. No new motion, duration, cache, source field or
+API is added. Tint, text, indicators, progress, seek identity, actions, focus and
+accessibility keep their existing contracts. Ancestor opacity multiplication and
+native compositing remain unverified; see the separate M17 gates in
+[quality](quality.md).
+
 The activity timer keeps its saved absolute deadline and schedules one completion boundary. Its API snapshot derives remaining time on demand; it does not publish every second. Only mounted countdown labels use a one-second timeline, which stops while paused. The expanded ring uses a native layer animation toward the actual deadline, with no SwiftUI frame schedule. Color/layout updates preserve its phase. Pause, Reduce Motion, hidden/occluded views and dismantling remove its continuous animation. Reduced Motion keeps functional whole-second progress in that mounted leaf. Clock/wake events recheck completion, reschedule the boundary and retarget native progress, including a full-progress hold after a backwards clock change. Compact accessibility labels use SwiftUI's deadline-based timer text. This does not change persisted deadlines, pause values or notification identity. Calendar activity scheduling is unchanged.
 
 The opt-in development server counts timer publications and reads actual timer-layer state only when requested. Native capture temporarily copies presentation stroke values into model layers for AppKit's caching renderer, then restores those models in the same transaction without stopping motion. It never reads desktop pixels or adds a diagnostic ticker.
