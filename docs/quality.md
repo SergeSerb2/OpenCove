@@ -379,6 +379,57 @@ Populated C04 colors, native input, contrast, AX, performance and exact referenc
 **SPEC_UNKNOWN** gates stay pending. Existing adverse metrics and unproved variants
 receive no replacement result.
 
+## M17 non-playing artwork opacity: conditional source slice
+
+The retained declaration is `1.2.1 features[3]`, "Added album art opacity on
+pause" (10 January 2025, `entries[5].minors[7].features[3]`). Later
+`1.6.9 fixes[8]` removes the disable-opacity control; this slice adds no preference.
+Version 1.7.9 is the latest retained declaration, not a latest-release claim.
+No original Alcove app, source or assets were used.
+
+The explicit OpenCove policy uses the existing `MediaState.isPlaying` Boolean:
+actual displayed artwork is 1.0 when true and 0.60 when false. False includes
+stopped, missing and unknown state, not confirmed paused. The fixed 0.60 value is
+not a reference measurement or legibility/performance proof. Exact reference
+classification, value, surfaces, placeholder behavior and motion are
+**SPEC_UNKNOWN**. Apple's public opacity contract supports the mechanism only.
+
+All four existing calls bind that Boolean. Both retained slots share one
+presentation effect on their existing wrapper; the direct displayed bitmap uses
+the same rule. The generic gradient/music-note placeholder and decorative border
+stay unchanged. Scope is only already-admitted compact, QuickPeek,
+full/condensed/Duo and locked shared media. This creates no surface and changes no
+admission, grace, privacy, lock/session or hidden-state rule. Artwork input/hash
+identity, native blend targets, slots, decode-gap retention, source-switch/loss/nil
+cleanup, transactions, completions, tasks and timers stay unchanged. Playback
+does not restart an image fade or extend its lifecycle. No motion/duration, cache,
+source field, API, reader, model, settings, Store or controller change is included.
+Tint, text, indicators, progress, seek identity, actions, focus and AX stay exact.
+
+This commission permits only source review, syntax-only parsing of the changed
+Swift files, diff checks and immutable hash/mode/text preservation checks. It
+records no built or runtime acceptance. Independent source review and a separate
+parent-owned build remain **PENDING**. A future build needs its own exact source
+and artifact binding and authority; compilation would not accept the effect.
+The general runtime commands below are not authorized by this source slice.
+
+Positive actual-media/native playing → non-playing → playing acceptance is
+**BLOCKED by C-PID FAILED**. No new execution clearance, fixture, identity
+workaround, media query or C-PID repair follows. If that prerequisite is resolved
+and the parent separately authorizes real-interface acceptance, correlate the
+actual displayed source/item and existing Boolean. Check compact, QuickPeek and
+full media separately. Populated Duo, secure lock, source loss, missing artwork,
+same-source decode gaps, interrupted replacement and Reduce Motion remain
+separate variants. An unavailable-media image cannot accept the positive effect.
+
+Native input, populated media, AX, contrast, rendering/compositing, ancestor
+transaction/opacity multiplication, motion and performance remain **UNVERIFIED**.
+Exact reference behavior remains **SPEC_UNKNOWN**. C04 R7 remains bounded
+API/recovery acceptance only; it supplies no M17 or full C04 acceptance.
+**C-PID FAILED; M1 USER-DEFERRED; Stage4 HOLD; Focus HOLD/default backend
+UNVERIFIED; C03 HOLD; blur FAILED; sound blocked; full parity INCOMPLETE** remain
+unchanged. No adverse gate or prior measurement is upgraded by this source work.
+
 ## Build an isolated bundle
 
 ```sh

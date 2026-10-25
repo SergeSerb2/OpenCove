@@ -509,6 +509,7 @@ struct NotchView: View {
             HStack(spacing: 0) {
                 CoveArtwork(thumbnail: artwork, size: 23, radius: 6,
                             sourceIdentifier: media.state.sourceBundleIdentifier,
+                            isPlaying: media.state.isPlaying,
                             reduceMotion: store.preferences.reduceMotion)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Color.clear.frame(width: compactGap)
@@ -610,6 +611,7 @@ struct NotchView: View {
         HStack(spacing: 10) {
             CoveArtwork(thumbnail: artwork, size: 36, radius: 8,
                         sourceIdentifier: media.state.sourceBundleIdentifier,
+                        isPlaying: media.state.isPlaying,
                         reduceMotion: store.preferences.reduceMotion)
             VStack(alignment: .leading, spacing: 3) {
                 Text(CoveNotchStyle.metadataLabel(media.state.title.isEmpty ? "Untitled" : media.state.title, limit: 96))
