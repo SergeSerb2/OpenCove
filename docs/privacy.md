@@ -162,3 +162,28 @@ the process and stays visible after unlocking. Ordinary app-panel facts do not
 prove visibility above the secure screen. Real secure reachability, intact
 authentication and physical power behavior remain separate user-led acceptance
 gates. See [the finite-session contract](lock-screen-keep-awake.md).
+
+## I08 ordinary status-menu playback
+
+The status menu adds fixed **Previous Track**, **Play/Pause** and **Next Track**
+labels. It exposes no title, artist, artwork, source row or playback history.
+Opening or validating the menu reads existing in-memory preferences, media
+availability/capability and lifecycle state. Eligible validation reuses the
+existing public active-console/login check. Media OFF, unavailable media and an
+unsupported command return before that query. This does not promise zero OS
+work or establish that an unknown lock state is securely unlocked.
+
+Only a deliberate selection that passes fresh admission calls the matching
+existing transport method for the currently accepted source. Existing backend
+checks and no-prompt command permission behavior remain unchanged. Previously
+submitted adapter/AppleScript work can finish after a later item/session change
+under its existing queue contract. Selection supplies no new success receipt,
+source-authenticity guarantee or cancellation lease.
+
+This adds no reader, consent, permission request, persistence, schema, default,
+cloud field, observer, timer, process or power handle. Media OFF disables these
+actions even if independent lock-widget consent keeps media populated. Existing
+whole-document recovery's Media OFF is sufficient; missing-file factory policy
+is unchanged. Failed admission does not start a reader, refresh, save, open
+Settings or queue a command for later. Existing media error surfaces remain
+available through Open OpenCove. Native/privacy acceptance remains separate.

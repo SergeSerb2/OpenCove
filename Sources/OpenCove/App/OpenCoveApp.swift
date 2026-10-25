@@ -14,7 +14,7 @@ enum OpenCoveApp {
 }
 
 @MainActor
-final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     private var store: CoveStore!
     private var notch: NotchPanelController?
     private var lockWidgets: LockScreenController?
@@ -163,11 +163,42 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         menu.addItem(withTitle: "Settings…", action: #selector(settingsAction), keyEquivalent: ",").target = self
         menu.addItem(updater.makeMenuItem())
         menu.addItem(.separator())
+        menu.addItem(withTitle: "Previous Track", action: #selector(statusMediaPrevious), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Play/Pause", action: #selector(statusMediaPlayPause), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Next Track", action: #selector(statusMediaNext), keyEquivalent: "").target = self
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Refresh Activities", action: #selector(refresh), keyEquivalent: "r").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit OpenCove", action: #selector(quit), keyEquivalent: "q").target = self
         item.menu = menu
         statusItem = item
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        let action: NotchPanelController.StatusMediaAction
+        switch menuItem.action {
+        case #selector(statusMediaPrevious): action = .previous
+        case #selector(statusMediaPlayPause): action = .playPause
+        case #selector(statusMediaNext): action = .next
+        default: return true
+        }
+        guard !startupFailed, let notch else { return false }
+        return notch.canPerformStatusMediaAction(action)
+    }
+
+    @objc private func statusMediaPrevious() {
+        guard !startupFailed, let notch else { return }
+        notch.performStatusMediaAction(.previous)
+    }
+
+    @objc private func statusMediaPlayPause() {
+        guard !startupFailed, let notch else { return }
+        notch.performStatusMediaAction(.playPause)
+    }
+
+    @objc private func statusMediaNext() {
+        guard !startupFailed, let notch else { return }
+        notch.performStatusMediaAction(.next)
     }
 
     @objc private func toggleNotch() { store.toggleExpanded() }
