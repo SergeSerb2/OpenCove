@@ -577,7 +577,7 @@ private final class CoveLockHostingView: NSHostingView<LockScreenView> {
 /// Opaque per-card route. Only the real controller creates one; the renderer's
 /// default view has none. It holds neither controller nor native row strongly.
 @MainActor
-final class LockScreenKeepAwakeControl: ObservableObject {
+final class LockScreenKeepAwakeControl: @MainActor ObservableObject {
     struct Geometry: Equatable {
         let rowInWindow: NSRect
         let visibleRect: NSRect

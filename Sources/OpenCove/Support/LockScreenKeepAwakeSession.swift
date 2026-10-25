@@ -95,7 +95,7 @@ struct LockScreenKeepAwakeProjection: Codable {
 /// Read-only projection plus a volatile presentation draft. An inert instance is
 /// safe for offscreen views: it owns no controller, timer, capability or power.
 @MainActor
-final class LockScreenKeepAwakeStatus: ObservableObject {
+final class LockScreenKeepAwakeStatus: @MainActor ObservableObject {
     let objectWillChange = ObservableObjectPublisher()
     private(set) var projection = LockScreenKeepAwakeProjection()
     private(set) var draftMinutes = 5
