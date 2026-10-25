@@ -323,6 +323,40 @@ Progress labels use a half-second periodic timeline, not an animation/display-li
 
 Unknown-duration progress is static and does not mount an observing playback clock or timeline; the API clock still advances independently. A later timed item mounts normal progress again. Live status comes from the source's numeric boolean metadata: current `IsAlwaysLive`, with `IsLiveStream` retained as an older-field fallback. Missing/malformed flags remain unknown; zero duration never implies live content. The native mapping was observed from the public MediaPlayer [live-stream property](https://developer.apple.com/documentation/mediaplayer/mpnowplayinginfopropertyislivestream). Live status does not itself remove advertised seek support; the existing duration, item-identity and capability checks still apply.
 
+**M12 local total-duration display.** The retained declaration is
+`entries[4].minors[1].features[1]`, 1.3.8 (14 October 2025), "Added ability to
+toggle slider total duration". No later retained declaration removes it. The
+1.4.1 hour-format fix is context only. Exact reference replacement/hiding,
+default, surfaces and accessibility behavior remain **SPEC_UNKNOWN**.
+
+OpenCove policy uses the ordinary local `showMediaTotalDuration` Boolean, OFF by
+default. With valid duration, OFF keeps elapsed on the left and negative remaining
+time on the right. ON replaces only that existing right label with total duration,
+without a minus sign. Both use the unchanged `CoveNotchStyle.duration` formatter
+(`m:ss` below one hour, `h:mm:ss` at or above one hour) and existing duration
+validation. The elapsed label, Slider binding/range, seek target, capabilities,
+keyboard/focus, accessibility value, input regions, scrub state and clock stay
+unchanged. No timer, reader, action or diagnostic is added.
+
+The required shared-surface input binds the saved choice at all three calls:
+expanded media, condensed Duo and the media lock widget. Existing admission and
+secure lock policy still apply. Compact and QuickPeek gain no slider or label.
+Unknown/invalid duration keeps the static disabled slider and existing fallback
+labels, without a timeline; unavailable media keeps its empty surface. Trusted
+LIVE remains independent of duration. Known duration with unsupported seek uses
+the same label choice without changing seek admission. Artwork identity, decode,
+M17 opacity, retained slots, fades and lifecycle stay unchanged.
+
+Settings keeps "Show total duration" editable with Media OFF through the existing
+ordinary binding. Synthesized coding and the unchanged strict recovery merge
+save the local field: missing or invalid values use false, and whole-document
+recovery starts from the same false default while preserving all 29 OFF choices.
+This is outside reader consent and the explicit cloud allowlist. Ordinary save
+failure retains the session choice and existing error; restart reads the actual
+saved document or its existing recovery path. A failed overall transaction does
+not by itself prove that disk bytes stayed old. See the separate M12 gates in
+[quality](quality.md#m12-local-total-duration-display).
+
 Media state also supplies an ephemeral `seekTarget`. The controller renews it on accepted item/source/backend identity changes and media restarts, including two items with identical displayed metadata. Position, rate, pause and artwork updates for the same identity retain it. Native progress closures capture the rendered target, compare it before value/edit callbacks and include it in scrub identity; the controller rechecks it before submitting. The notch and lock widget use this shared media surface. The locked layout omits app-opening artwork, action menus, clipboard actions and output popovers; its transport and seek controls cannot take keyboard focus. The existing lock/session/privacy and non-key-panel gates remain in the controller. API clients can pass `target` to `media.seek`; a retired target returns 409 and a malformed target returns 400. An omitted target retains immediate-current-item behavior for existing protocol-1 callers. Delayed requests should always echo the current target. Backend-native source/item guards still protect submission races, and HTTP 200 means submission rather than player confirmation. The target is bounded, in-memory and does not add a timer or observer.
 
 Source format, live and advertised-speed badges share one caption row. Format rendering uses at most 32 UTF-16 units plus an ellipsis, with a single line and a tooltip bounded to 160 units plus an ellipsis. The API retains the original source format. This keeps metadata labels from adding unlimited rows or measuring an unbounded format string. Explicit-content status remains optional source data; this live-stream change does not invent an explicit badge from a title or an absent flag.

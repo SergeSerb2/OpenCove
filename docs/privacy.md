@@ -26,6 +26,15 @@ The app requires an owned private data directory, created with mode `0700`. It r
 
 Saved data can include preferences, calendar filters and alert receipts, a timer deadline, file paths/bookmarks, weather coordinates and consent, travel origin and alert-receipt hashes, and optional notification-URL API credentials. Tray removal removes the reference, not the original file. Calendar event snapshots, media state/artwork, mirrored banner text, and audio levels are held in memory rather than intentionally written as content archives. OS notifications or logs can persist separately under macOS policy. Do not attach raw app state, preferences, or data folders to public issues.
 
+The OFF-by-default `showMediaTotalDuration` choice is ordinary local presentation
+data. It changes only the right time label when an admitted media slider has known
+duration. It stays outside reader consent and the cloud allowlist; it adds no
+media reading, permission, player request, action or independent widget grant.
+Settings allows this choice with Media OFF. Missing or invalid values recover to
+false through the existing merge. Ordinary save failure keeps the session choice
+and existing error; restart uses the actual saved document or existing recovery.
+An overall failure status alone does not prove that the local write failed.
+
 If the preferences document cannot be read or recovered as a whole, including
 oversized, malformed or non-object JSON, the session starts with all 29 optional
 integration, widget, HUD, haptic and reader selections off. Corruption cannot

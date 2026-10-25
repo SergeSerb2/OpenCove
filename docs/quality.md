@@ -430,6 +430,60 @@ API/recovery acceptance only; it supplies no M17 or full C04 acceptance.
 UNVERIFIED; C03 HOLD; blur FAILED; sound blocked; full parity INCOMPLETE** remain
 unchanged. No adverse gate or prior measurement is upgraded by this source work.
 
+## M12 local total-duration display
+
+This commissioned source slice starts directly at
+`a0787515ed946419b5eb74967e5ef2c1f1344925`. Retained M12 is
+`entries[4].minors[1].features[1]`, 1.3.8 (14 October 2025), "Added ability to
+toggle slider total duration". No later retained declaration removes it. The
+1.4.1 hour-format fix is context only; the existing `m:ss`/`h:mm:ss` formatter
+stays unchanged. Replacement of the right label and the OFF default are explicit
+OpenCove policy. Exact reference behavior remains **SPEC_UNKNOWN**. No original
+Alcove app, source or assets were used, and the removed M17 control stays absent.
+
+The ordinary local Boolean uses existing recovery and saving. All three shared
+media calls explicitly bind it. ON changes only the existing valid-duration right
+label to total duration; OFF keeps negative remaining time. Elapsed, invalid or
+unknown duration, unavailable media, trusted LIVE, unsupported seek, Slider/AX,
+seek identity, admission, M17 and C04/C03 code retain their existing contracts.
+The Settings row and scope note remain visible and editable with Media OFF.
+
+This source commission permits syntax-only parsing of the five changed Swift
+files, diff checks and immutable Git/hash/mode/text preservation checks only.
+Independent source review is **PENDING** for the actual new immutable delta,
+three callers, both flag states, unchanged fallback branches, complete Slider
+and recovery contracts, protected hunks and all 91 unowned leaves. Static checks
+do not typecheck or establish persistence, native input, pixels or performance.
+
+Build/package/signing is **NOT RUN for M12** and needs separate parent authority
+and exact new source/artifact binding. The a078 build supplies no M12 pass.
+A fresh disabled-reader preference caller/API review and package binding are
+**PENDING / NOT RUN**. C04/c435/e350 caller bindings and green R7 do not transfer.
+Future separately authorized real flows must cover OFF→ON→OFF, saved read-back,
+restart, same-value submission, missing legacy key, strict invalid-Boolean repair,
+whole-document failure, original-byte backup and real backup/write failure.
+Account for existing save reconciliation and login-item status paths. Distinguish
+400 rejection from recovery, and distinguish returned status, session value,
+actual saved bytes, backups and restart outcome: an overall 500 alone does not
+prove that disk bytes stayed old. Preserve actual failures.
+
+Native Settings visibility/editability with Media OFF, actual input, error
+visibility, focus/keyboard and AX require separate authorization and remain
+**UNVERIFIED**. Existing Settings permission/Calendar refresh needs its own review;
+API evidence cannot accept native behavior. Positive total-label pixels and
+actual seek remain **BLOCKED by C-PID FAILED**. Full media, populated Duo, secure
+lock, known-duration/no-seek, unknown-duration, trusted live and item replacement
+remain separate authentic cases. No fixture, player query, injected state/clock/
+bounds/event, C-PID workaround or unavailable screenshot accepts those cases.
+
+Native spoken text and Slider semantics, truncation/large hours, contrast,
+rendering identity, motion and resource/performance comparisons remain
+**UNVERIFIED**. Build time and source equality are not performance evidence.
+**M1 USER-DEFERRED; Stage4 HOLD; Focus HOLD/default backend UNVERIFIED;
+C03 phase/endpoint-binding HOLD; blur FAILED; sound blocked; full parity
+INCOMPLETE** remain unchanged. No adverse result or open variant is upgraded.
+The general runtime commands below are not authorized by this source commission.
+
 ## Build an isolated bundle
 
 ```sh

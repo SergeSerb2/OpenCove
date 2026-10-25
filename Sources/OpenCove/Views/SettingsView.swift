@@ -344,6 +344,8 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 Toggle("Use artwork colors", isOn: preference(\.musicColorAccent))
+                Toggle("Show total duration", isOn: preference(\.showMediaTotalDuration))
+                CoveSettingsNote("When a media progress slider is shown and duration is known, replace the time remaining on the right with total duration. Applies to expanded media, Duo, and the media lock widget. This choice stays on this Mac and does not enable media reading.")
                 Picker("Playback indicator", selection: Binding(get: {
                     !store.preferences.showPlaybackIndicator ? "none" : store.preferences.showLiveWaveform ? "live" : "decorative"
                 }, set: { mode in

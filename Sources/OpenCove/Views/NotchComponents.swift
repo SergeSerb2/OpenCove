@@ -553,6 +553,7 @@ struct CoveMediaSurface: View {
     @ObservedObject var media: MediaController
     let system: SystemController
     let waveform: AudioWaveformController
+    var showMediaTotalDuration: Bool
     var showPlaybackIndicator = true
     var showLiveWaveform = false
     var condensed = false
@@ -769,7 +770,9 @@ struct CoveMediaSurface: View {
             HStack {
                 Text(duration > 0 ? CoveNotchStyle.duration(displayedPosition) : "—")
                 Spacer()
-                Text(duration > 0 ? "−\(CoveNotchStyle.duration(duration - displayedPosition))" : media.state.source)
+                Text(duration > 0
+                     ? (showMediaTotalDuration ? CoveNotchStyle.duration(duration) : "−\(CoveNotchStyle.duration(duration - displayedPosition))")
+                     : media.state.source)
                     .lineLimit(1)
             }
             .font(.system(size: 9, weight: .medium, design: .rounded))

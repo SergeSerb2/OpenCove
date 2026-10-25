@@ -15,6 +15,7 @@ struct LockScreenView: View {
             VStack(spacing: 14) {
                 if store.preferences.showsLockWidget(.media) {
                     CoveMediaSurface(media: store.media, system: store.system, waveform: store.waveform,
+                                     showMediaTotalDuration: store.preferences.showMediaTotalDuration,
                                      showPlaybackIndicator: store.preferences.showPlaybackIndicator,
                                      showLiveWaveform: store.preferences.usesLiveWaveform, locked: true,
                                      musicColorAccent: store.preferences.musicColorAccent,
