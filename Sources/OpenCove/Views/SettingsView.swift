@@ -9,6 +9,7 @@ struct SettingsView: View {
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @ObservedObject var store: CoveStore
     private let updater: CoveUpdater?
+    @ObservedObject private var keepAwakeStatus: LockScreenKeepAwakeStatus
     @ObservedObject private var activities: ActivityController
     @ObservedObject private var media: MediaController
     @ObservedObject private var notificationMirror: NotificationMirror
@@ -23,9 +24,11 @@ struct SettingsView: View {
     @State private var selectedHUD: HUDKind = .volume
     @State private var hudPreviewMessage: String?
 
-    init(store: CoveStore, initialPage: CoveSettingsPage = .general, updater: CoveUpdater? = nil) {
+    init(store: CoveStore, initialPage: CoveSettingsPage = .general, updater: CoveUpdater? = nil,
+         keepAwakeStatus: LockScreenKeepAwakeStatus? = nil) {
         self.store = store
         self.updater = updater
+        self.keepAwakeStatus = keepAwakeStatus ?? LockScreenKeepAwakeStatus()
         self._selection = State(initialValue: initialPage)
         self.activities = store.activities
         self.media = store.media
@@ -139,6 +142,12 @@ struct SettingsView: View {
             }
 
             Section("Lock-screen widgets") {
+                Text("Keep Awake").font(.headline)
+                CoveSettingsNote(keepAwakeStatus.projection.message)
+                if let outcome = keepAwakeStatus.projection.lastOutcome {
+                    LabeledContent("Last Keep Awake outcome", value: outcome.resultCode)
+                }
+                CoveSettingsNote("Start a finite 1–120 minute session from an available lock-screen card. The default is 5 minutes. Stop ends it; Restart starts a new finite session. This affects automatic display sleep on this Mac. Closing the lid or choosing Sleep still works. Activity and duration are never saved. Settings cannot start a session.")
                 Toggle("Show widgets on the lock screen", isOn: preference(\.showOnLockScreen))
                 Toggle("Use the same widgets as activities", isOn: preference(\.lockWidgetsFollowActivities))
                 CoveSettingsNote("These choices apply only to this Mac. Changing mode clears independent choices.")

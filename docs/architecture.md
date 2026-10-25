@@ -370,3 +370,19 @@ These are implementation limits, not a cross-machine performance guarantee. See 
 The shared media surface renders a static explicit-content badge only for `isExplicit == true`. It uses the existing source-coherent state; it adds no timer, process, metadata inference or extra read. False and unknown states omit the badge. The label says Explicit content for accessibility and identifies the player as the source of the marking.
 
 Shared media artwork uses one bounded cache result per mounted surface for both cover and tint. A mounted cover can keep its outgoing thumbnail for at most 200 ms while the same source prepares a replacement, then apply the bounded transition above. A source change suppresses it immediately, and opt-out unmounts it. This is presentation continuity only: it never supplies old bytes or tint as current-item metadata. Its cancellable decode task runs only on cover/source changes. The displayed bytes must match the resolved bytes, and canceled tasks cannot replace newer artwork. The artwork-color preference selects this ready tint immediately, including compact media and song peeks; missing/invalid artwork uses the surface’s existing fallback. The adapter reader waits for actual data, a lifecycle wake pipe, or its existing watchdog deadline. Stop and child exit wake it directly; the reader owns descriptor cleanup. Travel owns a heartbeat only while its service and saved travel enablement are active.
+
+## Finite Lock Screen Keep Awake ownership (L06)
+
+`OpenCoveDelegate` roots one specialized `LockScreenKeepAwakeSession` for the
+process lifetime, independently of panels, Settings and the optional server.
+The lock controller retains full incoming preference/system winners and binds
+explicit actions to the actual mounted native row, current presentation and
+revisions. Stored getters can only veto. A one-way lifetime record revokes on
+controller deinit before exact-generation main-actor cleanup. The owner alone
+creates the finite public display-idle assertion and owns one cancellable active
+expiry task. It roots a successful provisional handle before publication, and
+retires stale success. Off once then Release once ends ownership only on Release
+success; failure freezes the full record in process-life quarantine. No saved
+power state, extra reader or automatic renewal is added. Existing Store/save and
+M12 behavior remain separate. See [the complete L06 contract](lock-screen-keep-awake.md)
+for the strict authenticated prepare/commit/Stop route and source/runtime limits.

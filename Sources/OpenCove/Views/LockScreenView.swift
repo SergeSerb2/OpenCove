@@ -9,10 +9,26 @@ import SwiftUI
 struct LockScreenView: View {
     @ObservedObject var store: CoveStore
     @ObservedObject var weather: WeatherController
+    @ObservedObject private var keepAwakeStatus: LockScreenKeepAwakeStatus
+    private let keepAwakeControl: LockScreenKeepAwakeControl?
+
+    init(store: CoveStore, weather: WeatherController,
+         keepAwakeStatus: LockScreenKeepAwakeStatus? = nil,
+         keepAwakeControl: LockScreenKeepAwakeControl? = nil) {
+        self.store = store
+        self.weather = weather
+        self.keepAwakeStatus = keepAwakeStatus ?? LockScreenKeepAwakeStatus()
+        self.keepAwakeControl = keepAwakeControl
+    }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
+                if let keepAwakeControl {
+                    CoveMountedKeepAwakeSection(status: keepAwakeStatus, control: keepAwakeControl)
+                } else {
+                    CoveKeepAwakeSection(status: keepAwakeStatus, available: false, action: nil)
+                }
                 if store.preferences.showsLockWidget(.media) {
                     CoveMediaSurface(media: store.media, system: store.system, waveform: store.waveform,
                                      showMediaTotalDuration: store.preferences.showMediaTotalDuration,
@@ -242,4 +258,159 @@ private struct CoveLockSystemSection: View {
         }
         return controller.state.audioOutputIsBluetooth ? "Bluetooth audio" : "Bluetooth unavailable"
     }
+}
+
+@MainActor
+private struct CoveMountedKeepAwakeSection: View {
+    @ObservedObject var status: LockScreenKeepAwakeStatus
+    @ObservedObject var control: LockScreenKeepAwakeControl
+    var body: some View {
+        CoveKeepAwakeSection(status: status, available: control.available, control: control) { purpose, expected, minutes in
+            control.activate(purpose, minutes: minutes, expected: expected)
+        }
+    }
+}
+
+@MainActor
+private struct CoveKeepAwakeSection: View {
+    @ObservedObject var status: LockScreenKeepAwakeStatus
+    let available: Bool
+    var control: LockScreenKeepAwakeControl? = nil
+    let action: ((String, UUID?, Int) -> Void)?
+    private var active: Bool { status.projection.handleState == "active" }
+    private var faulted: Bool {
+        ["quarantined", "creationUnconfirmed", "retiring", "provisional"].contains(status.projection.handleState)
+    }
+    var body: some View {
+        let displayedSessionID = status.projection.sessionID
+        let displayedMinutes = status.draftMinutes
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Keep Awake", systemImage: "display")
+                .font(.system(size: 11, weight: .semibold))
+            if active {
+                Text(status.projection.message)
+                if let end = status.projection.expectedEnd {
+                    Text("Expected end: \(end, format: .dateTime.hour().minute())")
+                        .foregroundStyle(.secondary)
+                }
+            } else if faulted {
+                Text(status.projection.message)
+            } else {
+                Text("Keep displays awake for \(status.draftMinutes) min")
+            }
+            Slider(value: Binding(get: { Double(status.draftMinutes) }, set: { value in
+                guard value.isFinite, value.rounded(.towardZero) == value, (1...120).contains(value) else { return }
+                status.setDraft(Int(value))
+            }), in: 1...120, step: 1) {
+                Text("Duration, 1 to 120 minutes")
+            }
+            .accessibilityLabel("Duration, 1 to 120 minutes")
+            .accessibilityValue("\(status.draftMinutes) minutes")
+            .focusable(false)
+            .disabled(!available || faulted || action == nil)
+            if active {
+                Text("Duration applies to Restart: \(status.draftMinutes) min")
+                    .foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                if active {
+                    // Separate deliberate actions. Neither gets a key equivalent.
+                    Button("Stop") { action?("stop", displayedSessionID, displayedMinutes) }
+                        .disabled(!available || action == nil)
+                    Button("Restart for \(status.draftMinutes) min") {
+                        action?("replace", displayedSessionID, displayedMinutes)
+                    }
+                    .disabled(!available || action == nil || status.projection.applicationDeadlinePassed)
+                } else {
+                    Button("Start for \(status.draftMinutes) min") { action?("start", nil, displayedMinutes) }
+                        .disabled(!available || faulted || action == nil)
+                }
+            }
+            .background {
+                // Admission tracks the mounted action row, not a visible heading
+                // or disclosure while all action buttons have scrolled away.
+                if let control { CoveKeepAwakeRowAttachment(control: control) }
+            }
+            if !available { Text("Keep Awake is unavailable here.").foregroundStyle(.secondary) }
+            if let outcome = status.projection.lastOutcome,
+               !["PREPARED", "STARTED", "REPLACED", "RETIRED", "STOPPED", "IDLE"].contains(outcome.resultCode), !faulted {
+                Text("Keep Awake action: \(outcome.resultCode)").foregroundStyle(.secondary)
+            }
+            Text("Prevents automatic display sleep on this Mac. Stops when this lock-screen session ends. Closing the lid or choosing Sleep still works.")
+                .foregroundStyle(.secondary)
+        }
+        .font(.system(size: 10))
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .focusable(false)
+        .lineLimit(nil)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A passive native row attachment. Mount/layout can only register or revoke
+/// capability; only the explicit controls above can request power.
+@MainActor
+private struct CoveKeepAwakeRowAttachment: NSViewRepresentable {
+    let control: LockScreenKeepAwakeControl
+    func makeNSView(context: Context) -> CoveKeepAwakeRowView { CoveKeepAwakeRowView(control: control) }
+    func updateNSView(_ view: CoveKeepAwakeRowView, context: Context) {}
+    static func dismantleNSView(_ view: CoveKeepAwakeRowView, coordinator: ()) { view.detach() }
+}
+
+@MainActor
+private final class CoveKeepAwakeRowView: NSView {
+    private let control: LockScreenKeepAwakeControl
+    private var observations: [NSObjectProtocol] = []
+    init(control: LockScreenKeepAwakeControl) {
+        self.control = control
+        super.init(frame: .zero)
+        postsFrameChangedNotifications = true
+        postsBoundsChangedNotifications = true
+    }
+    required init?(coder: NSCoder) { nil }
+    override var acceptsFirstResponder: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow !== window { detach() }
+        super.viewWillMove(toWindow: newWindow)
+    }
+    override func viewWillMove(toSuperview newSuperview: NSView?) {
+        if newSuperview == nil { detach() }
+        super.viewWillMove(toSuperview: newSuperview)
+    }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); attach() }
+    override func viewDidMoveToSuperview() { super.viewDidMoveToSuperview(); attach() }
+    override func layout() { super.layout(); control.geometryChanged() }
+    private func attach() {
+        for token in observations { NotificationCenter.default.removeObserver(token) }
+        observations.removeAll()
+        guard window != nil, superview != nil else { return }
+        control.mounted(self)
+        var ancestor: NSView? = self
+        while let view = ancestor {
+            view.postsFrameChangedNotifications = true
+            view.postsBoundsChangedNotifications = true
+            for name in [NSView.frameDidChangeNotification, NSView.boundsDidChangeNotification] {
+                observations.append(NotificationCenter.default.addObserver(forName: name, object: view, queue: .main) { [weak control] _ in
+                    MainActor.assumeIsolated { control?.geometryChanged() }
+                })
+            }
+            ancestor = view.superview
+        }
+        if let window {
+            for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification, NSWindow.didChangeOcclusionStateNotification] {
+                observations.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak control] _ in
+                    MainActor.assumeIsolated { control?.geometryChanged() }
+                })
+            }
+        }
+    }
+    func detach() {
+        control.removed(self)
+        for token in observations { NotificationCenter.default.removeObserver(token) }
+        observations.removeAll()
+    }
+    deinit { for token in observations { NotificationCenter.default.removeObserver(token) } }
 }

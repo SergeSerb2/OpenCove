@@ -144,3 +144,21 @@ acceptance and runtime privacy behavior remain unverified; see [acceptance limit
 An explicit `--control-port` launch enables an HTTP listener bound to `127.0.0.1`. It requires an ephemeral token and checks the host/origin. `control.json` holds the token in the app data directory with owner-only file permissions. The API can expose media, event, file, and device state and perform real app/settings actions. A token-bearing URL grants that access to its holder; do not share it. Normal launches do not start the listener.
 
 A separate optional notification URL API uses the app's URL scheme and a saved token. Its token can appear in a URL and in the sending application's history or logs. It is off until enabled. Revoke it from the app if exposed. Neither interface is an internet service.
+
+## Explicit finite Lock Screen Keep Awake (L06)
+
+An available lock card can explicitly start a 1–120 minute system-wide display-
+idle assertion, default 5 minutes. It can affect other displays and idle system
+sleep. It does not wake a sleeping display or override lid/manual sleep. No
+active state or duration is saved or synced. Effective private/widget opt-outs,
+private-content reductions and other admission losses retire the session even
+if saving fails. There is no new preference, permission, reader or helper.
+
+Full incoming tuples and action authority remain private in memory. The opt-in
+authenticated loopback command route exposes only bounded non-content receipts
+and opaque one-use prepare tokens; tokens and private tuples do not appear in
+the Keep Awake state projection. Release uncertainty blocks later creates for
+the process and stays visible after unlocking. Ordinary app-panel facts do not
+prove visibility above the secure screen. Real secure reachability, intact
+authentication and physical power behavior remain separate user-led acceptance
+gates. See [the finite-session contract](lock-screen-keep-awake.md).
