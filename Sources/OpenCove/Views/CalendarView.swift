@@ -8,14 +8,17 @@ struct CoveCalendarView: View {
     @ObservedObject private var activities: ActivityController
     let showCalendarList: Bool
     let showCalendarEventIndicators: Bool
+    let useCalendarViewSourceColors: Bool
     let condensed: Bool
     @State private var showsCondensedSchedule = false
     @State private var showsCalendarStatus = false
 
-    init(activities: ActivityController, showCalendarList: Bool, showCalendarEventIndicators: Bool, condensed: Bool = false) {
+    init(activities: ActivityController, showCalendarList: Bool, showCalendarEventIndicators: Bool,
+         useCalendarViewSourceColors: Bool = true, condensed: Bool = false) {
         self.activities = activities
         self.showCalendarList = showCalendarList
         self.showCalendarEventIndicators = showCalendarEventIndicators
+        self.useCalendarViewSourceColors = useCalendarViewSourceColors
         self.condensed = condensed
     }
 
@@ -169,7 +172,7 @@ struct CoveCalendarView: View {
                 HStack(spacing: 1) {
                     if showCalendarEventIndicators {
                         ForEach(colors.prefix(3), id: \.self) { color in
-                            Circle().fill(calendarColor(color)).frame(width: 2, height: 2)
+                            Circle().fill(useCalendarViewSourceColors ? calendarColor(color) : CoveNotchStyle.secondary).frame(width: 2, height: 2)
                         }
                     }
                 }
@@ -253,7 +256,7 @@ struct CoveCalendarView: View {
     private func eventRow(_ event: CoveEvent) -> some View {
         CoveCalendarScheduleRow(
             event: event, timeText: timeDescription(event), sourceText: sourceDescription(event),
-            color: calendarColor(event.colorHex),
+            color: useCalendarViewSourceColors ? calendarColor(event.colorHex) : CoveNotchStyle.secondary,
             open: { activities.openEvent(event.id) }, join: { activities.joinMeeting(event.id) }
         )
     }

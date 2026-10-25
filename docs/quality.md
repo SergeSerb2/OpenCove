@@ -223,6 +223,85 @@ Bounded parent plan, only in a separately authorized real-app context:
 **C-PID FAILED; M1 USER-DEFERRED; Stage4 HOLD; Focus execution HOLD;
 full parity INCOMPLETE** remain unchanged. This preparation clears none of them.
 
+## Local Calendar source-color policy
+
+This one bounded C04 slice starts at exact published base
+`3a5dffa670c12062ebe18411c14aa4a29a81bc44`, tree
+`c700870f74ac6bbc5f5e4deeb63e91355309c4f2`. It independently addresses retained
+`1.5.0 features[12]`, “Added calendar color option”. Exact reference defaults,
+surfaces and behavior remain **SPEC_UNKNOWN**. It does not accept full C04 or parity.
+
+The native **Use source colors in Calendar view** Toggle and scope note use the
+existing ordinary Store binding. `useCalendarViewSourceColors = true` is local,
+outside reader consent and the cloud allowlist. Missing legacy keys keep true;
+malformed Boolean values recover to false through existing strict recovery,
+repair notices and backup protection. Whole-document damage retains reader-off
+recovery. Save failure keeps the session value and existing error; the older
+saved value can return after restart. Ordinary saves still reconcile services;
+no zero-system-status-call path is claimed.
+
+On keeps the old source fills, hex RGB parser and invalid-hex gray fallback.
+Off changes only month-dot and schedule-row leading-rail fills to existing
+`CoveNotchStyle.secondary`, including the shared condensed schedule popover.
+Distinct original source-hex grouping, sorting and the three-dot cap remain
+before color selection. Neutral groups do not collapse into one dot. Counts,
+help/AX, text/time zones, selection/date identity, Today circles, navigation,
+actions, list/dot choices, source filters, access/loading/recovery/privacy,
+popover binding, geometry, cadence and automatic Duo keep their existing paths.
+Dots off means no dots; list off means no list content/opener; no real events
+means no marks. Compact activity and lock/widget colors stay outside this policy.
+
+Only source/text/Git/hash/static comparisons, syntax-only Swift parsing and diff
+checks are permitted in this slice. No build/typecheck, app/caller/helper/CLI,
+runtime, unit/mock/synthetic event, fixture, permission/status query, personal-data
+read, browser/native input, computer use or nested agent runs are permitted.
+Parent-owned independent review, optimized real build, exact caller binding,
+bounded execution and any PR remain separate work at a fresh candidate pin.
+
+Future acceptance requires a separately authorized legitimate real context:
+
+1. Keep all protected readers, Calendar activity, independent widget readers,
+   media/private integrations, cloud, providers, hardware replacement and sound
+   OFF. Preserve existing local choices. Use the existing real Settings or
+   already-authorized preference interface in an app-owned disposable data path.
+   Inspect and save true/false/true, close/reopen, perform unrelated saves and
+   restart. Verify saved/effective values and unchanged grants, filters and other
+   choices. No new permission/status query or personal-data access is authorized
+   to find that context. Settings already checks AX trust and refreshes Calendar;
+   ordinary saves can inspect login-item status and reconcile readers. Calendar
+   activity plus widget demand OFF gates its refresh before EventKit status/read;
+   an enabled grid's `events(on:)` still checks authorization. No supported
+   zero-status native Settings context is established here.
+2. Through the existing real preferences command, reject numeric, string, null,
+   array and object Boolean representations, unknown fields and mixed-invalid
+   requests. Require no partial save. In owned disposable settings files, check
+   missing-key true, valid true/false, malformed-field false repair, whole-document
+   recovery, notices, exact damaged-byte recovery backup and backup failure.
+   Require backup failure to preserve the damaged file. Exercise an actual save
+   failure, visible error and session value; restart to inspect the saved value,
+   restore the path, save normally and restart again. No mock storage or new route.
+3. Native Toggle reachability, keyboard/AX labels, normal-window scrolling/error
+   visibility and actual native input remain **UNVERIFIED**. API/browser readback
+   proves only its caller and cannot establish native approval. This slice adds
+   no native input, desktop-driving computer use, fixture or permission bypass.
+4. Populated full Calendar, Duo and condensed popover colors need separately
+   authorized real existing events. Compare on/off/on, original color grouping,
+   sorting/cap, list/dot combinations, counts/help/AX/actions, retained selection
+   and month navigation, and real empty/loading/access/privacy states. Do not
+   grant access or add synthetic events to obtain proof. Disabled/unloaded output
+   does not prove an authorized-empty or populated view. Actual automatic
+   media-plus-Calendar Duo still depends on the separate failed media/real-data
+   prerequisites. All these positive/native checks remain **UNVERIFIED**.
+5. Actual source/neutral contrast, native scales/appearances, clipping, reference
+   meaning/defaults/surfaces, real motion/cadence and measured resource impact are
+   separate **UNVERIFIED** gates. Source reuse, a future build, or a saved Boolean
+   accepts none of these. Do not invent RGB, opacity, timing or geometry policy.
+
+**C-PID FAILED; M1 USER-DEFERRED; original Stage4 HOLD; Focus execution HOLD;
+blur-control background-alpha FAILED; C03 phase HOLD; sound blocked;
+full parity INCOMPLETE** remain unchanged. Existing adverse measurements and
+unproved variants receive no replacement metric or acceptance here.
+
 ## Build an isolated bundle
 
 ```sh
