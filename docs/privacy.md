@@ -26,6 +26,24 @@ The app requires an owned private data directory, created with mode `0700`. It r
 
 Saved data can include preferences, calendar filters and alert receipts, a timer deadline, file paths/bookmarks, weather coordinates and consent, travel origin and alert-receipt hashes, and optional notification-URL API credentials. Tray removal removes the reference, not the original file. Calendar event snapshots, media state/artwork, mirrored banner text, and audio levels are held in memory rather than intentionally written as content archives. OS notifications or logs can persist separately under macOS policy. Do not attach raw app state, preferences, or data folders to public issues.
 
+If the preferences document cannot be read or recovered as a whole, including
+oversized, malformed or non-object JSON, the session starts with all 29 optional
+integration, widget, HUD, haptic and reader selections off. Corruption cannot
+restore their enabled factory defaults. This fallback does not change new-install
+defaults for a missing file, valid saved choices, or individual-field recovery.
+Local presentation defaults, including Calendar source colors, list and dots,
+remain unchanged. Features can be enabled again through their existing explicit
+controls; existing macOS permissions and separate reader-consent rules still apply.
+Recovery itself requests no new permission.
+
+Loading damaged preferences does not replace the original file. Before an explicit
+save can replace it, recovery copies its exact bytes to a private
+`preferences.recovery.<UUID>.json` backup. If that backup fails, the save does not
+replace the damaged file. Ordinary session-only save behavior and errors still
+apply. Shared startup, session and system-status work can still run with optional
+selections off; this policy does not promise zero OS calls. The real startup and
+backup-failure checks remain [pending](quality.md#whole-document-preferences-recovery-safety).
+
 Choosing an individual display saves its system display UUID in preferences. Names and geometry remain in memory and appear in the optional authenticated control state. This display information is not sent to a service. Choosing Main or Built-in clears the saved UUID; choosing All retains it for later use.
 
 Disable the related feature and remove its saved origin/location in Settings when available. To remove all local app data, quit OpenCove and remove its own data folder. This also removes saved timers and file references. It does not delete source files, revoke OS permissions, or cancel all OS-managed records. Turn off native notifications and login-item registration in the app before uninstalling if those options were enabled.

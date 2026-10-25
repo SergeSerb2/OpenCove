@@ -79,12 +79,32 @@ struct CovePreferences: Codable, Equatable {
         return (result, Array(Set(repairs)).sorted())
     }
 
-    /// A damaged file must not turn previously disabled private integrations back on.
+    /// Whole-document recovery keeps optional integrations, readers, HUDs and haptics off.
     static var recoveryDefaults: CovePreferences {
         var result = Self()
-        result.enablePrivateAPIs = false
         result.enableCalendar = false
         result.enableMedia = false
+        result.enablePrivateAPIs = false
+        result.enableBluetooth = false
+        result.enableFocus = false
+        result.enableWeather = false
+        result.enableNotifications = false
+        result.syncSettingsWithiCloud = false
+        result.showOnLockScreen = false
+        result.showLiveWaveform = false
+        result.launchAtLogin = false
+        result.allowAppleScript = false
+        result.enableVolumeHUD = false
+        result.enableBrightnessHUD = false
+        result.enableBattery = false
+        result.enableHaptics = false
+        result.enableFileTray = false
+        result.enableTimer = false
+        result.replaceSystemHUDs = false
+        result.mirrorSystemNotifications = false
+        result.clearIndependentLockWidgets()
+        result.enableBetterDisplayFeedback = false
+        result.hideForGamesCategory = false
         result.enableLowPowerModeAlerts = false
         return result
     }

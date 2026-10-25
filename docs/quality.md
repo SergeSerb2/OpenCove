@@ -302,6 +302,83 @@ blur-control background-alpha FAILED; C03 phase HOLD; sound blocked;
 full parity INCOMPLETE** remain unchanged. Existing adverse measurements and
 unproved variants receive no replacement metric or acceptance here.
 
+## Whole-document preferences recovery safety
+
+This separate hardening layer starts directly at C04 commit
+`eb65f8700717454b7f1ac37ee1f6f95e841af71a`. The selected product policy strengthens
+whole-document fallback to all 29 optional selections OFF. It does not relax the
+all-OFF acceptance rule or identify an introduced C04 defect. The historical
+`becc168e39108252339b7f7f2e9d1d797cf68a0de81a856d48943b6d940b051e`
+caller preparation remains **BLOCKED / NOT RUN**. This source change cannot clear
+or authorize that caller.
+
+Only `CovePreferences.recoveryDefaults` changes product behavior. The Store uses
+it when the saved document cannot be read or recovered, including oversized,
+malformed and non-object JSON. It installs the fallback before services start and
+before the control server exists. A later preferences request cannot establish
+an all-OFF startup. Missing files still use factory defaults; readable valid
+documents, individual-field recovery, strict Boolean checks, missing-field consent,
+grant repair, normalization and the cloud allowlist retain their existing rules.
+This is a corruption fallback policy, not a new consent policy for valid documents.
+
+The exact fallback inventory is:
+
+```text
+enableCalendar, enableMedia, enablePrivateAPIs, enableBluetooth, enableFocus,
+enableWeather, enableNotifications, syncSettingsWithiCloud, showOnLockScreen,
+showLiveWaveform, launchAtLogin, allowAppleScript, enableVolumeHUD,
+enableBrightnessHUD, enableBattery, enableHaptics, enableFileTray, enableTimer,
+replaceSystemHUDs, mirrorSystemNotifications, lockWidgetMedia, lockWidgetCalendar,
+lockWidgetWeather, lockWidgetFocus, lockWidgetBluetooth, lockWidgetBattery,
+enableBetterDisplayFeedback, hideForGamesCategory, enableLowPowerModeAlerts
+```
+
+Local presentation defaults stay unchanged: Calendar source colors, list and dots
+remain true, as does `lockWidgetsFollowActivities`. Disabled activities and cleared
+widget selections produce no extra reader demand. `completedOnboarding` retains
+its normal recovery default. Existing affirmative controls can enable ordinary
+choices again; protected readers still require their existing explicit consent
+and macOS permission rules. No automatic permission request is added.
+
+Recovery does not rewrite preferences on load. Before explicit replacement, the
+existing Store must preserve an exact private copy of the original damaged bytes.
+Backup failure prevents replacement. Ordinary save errors can still leave a
+session-only value; successful save and restart need actual evidence. Store,
+reader policy, file ownership, source error notices and atomic writes are unchanged.
+
+Source checks and syntax-only Swift parsing are the permitted evidence here.
+Build/typecheck and real-interface acceptance remain **PENDING**. The parent owns
+a newly hashed caller, its baseline and ownership rules, exact source/package
+binding, independent review and authorization before execution. Required future
+acceptance uses the real packaged app and existing interface:
+
+1. Launch with owned malformed JSON in a fresh private data directory. Require
+   actual preflight state with all 29 selections false. Review source guards and
+   actual startup scope for provider, EventKit, Bluetooth, Focus, notification and
+   physical actions before launch. Do not infer their absence from an empty view
+   or from a later all-OFF POST. Shared AX, session, status and system monitoring
+   work remains; no zero-OS-call claim or observed startup result exists here.
+2. Keep the original bytes separately. After readiness, use only the fixed
+   filesystem mechanism: change the retained owned data-directory descriptor from
+   `0700` to `0500` so creation of a recovery backup fails. Require the actual
+   backup error, no backup, unchanged original bytes and the real save failure;
+   an ordinary HTTP 500 alone is insufficient. Restore that same descriptor to
+   `0700` in independent cleanup even if an assertion or receipt fails. Do not
+   substitute injected state, mock storage, permission probes or another directory.
+3. With write access restored, explicitly save through the existing real caller.
+   Require the actual backup to byte-match the retained original, the actual
+   notice, saved choices and restart readback. Separately retain the missing-file,
+   valid-document and partial-field recovery regression gates. Do not run the
+   historical blocked caller or flip its commissioning constant.
+
+No runtime result is recorded for this layer. C03 phase and diagnostic execution
+remain **HOLD / BLOCKED**; its final tiny Store fix has separate static CLEAR only
+and is unintegrated. **C-PID FAILED; M1 USER-DEFERRED; Stage4 HOLD; Focus execution
+HOLD; blur FAILED; sound blocked; full parity INCOMPLETE** remain unchanged.
+Populated C04 colors, native input, contrast, AX, performance and exact reference
+**SPEC_UNKNOWN** gates stay pending. Existing adverse metrics and unproved variants
+receive no replacement result.
+
 ## Build an isolated bundle
 
 ```sh
