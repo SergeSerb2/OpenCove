@@ -909,3 +909,22 @@ unknown. Native positive providers, power, hardware, secure visibility/input,
 AX, animation and performance remain UNVERIFIED. Reference is SPEC_UNKNOWN and
 full parity remains INCOMPLETE. Independent review, exact build, future native
 acceptance and PR decisions remain with the parent.
+
+## I06: Separate source and execution gates
+
+The local idle-only hover veto is adopted OpenCove policy, default OFF. Source comparison and syntax-only parsing do not establish `SOURCE CLEAR`, build success, native behavior, accessibility, animation, performance or reference parity. Independent review of the exact candidate is required before any parent build. Historical prospective acceptance text above remains unchanged.
+
+Future work needs separate exact-head authority and evidence for each gate:
+
+- **Source:** Verify exactly six existing paths, 95 whole-file identities/modes, all six full inverses, insertion-only preference/Settings ranges, append-only docs and the bounded scheduler replacement. Trace current positive Timer and idle-flag-OFF paths as well as veto, getter reentrancy, cancel-before-clear and replacement-slot cleanup. Preserve I08, L06, Store, all phase/motion code and held C03 boundaries.
+- **Build:** Bind a separately authorized build/package to this exact candidate. The saved faec build does not transfer.
+- **API/storage:** Through the real generic interface in an owned reviewed context, save/read back/restart false/true/false. Reject non-Boolean and mixed-invalid requests without partial apply. Exercise missing-key, malformed-field and whole-document recovery, exact damaged-byte backups and genuine write/backup failure. Keep session, actual disk bytes, overall result, backup/error and restart distinct. Derive fields from the current model; do not hardcode an older Boolean count. Keep all 29 optional recovery selections OFF.
+- **Native empty/explicit:** User-led real Settings and pointer input must compare fresh entries with idle visible, master ON and veto ON/OFF. ON stays collapsed; OFF can open empty controls. With idle hiding ON, use the actual Open OpenCove menu escape; do not claim a hidden clock click. Master OFF disables the retained child value and keeps the note visible. Already-expanded edits must not collapse.
+- **Local Timer positive/failure:** With separate authority for only the real local Timer, fresh hover with veto ON must open the current nonempty Timer, including paused nonempty state, without changing identity, deadline or running state. Observe natural transition to clock during a pending attempt if reachable, real leave, flag/master edits and replacement. After denied entry, activity arrival or repeated move alone must not arm. Real lifecycle/getter-reentrancy/late-cleanup cases require actual evidence; unavailable overlap remains UNVERIFIED. No synthetic state, event, clock, fixture or unit/mock substitute.
+- **Provider variants:** Real media/Calendar/HUD/QuickPeek and session/display variants remain separate. Authentic positive media stays blocked by C-PID FAILED; empty/Timer proof does not accept these variants or C03 endpoints.
+- **AX/animation/performance:** User-led keyboard/VoiceOver and actual native delivery, errors, menu escape, display breadth and frames remain separate. Preserved source is not visual or timing acceptance. Comparable real full-path measurements must retain adverse and unsampled results; no CPU/wake/memory/latency improvement follows from the predicate or task count.
+- **Reference:** Retained 1.7.9 changelog data declares I06 at 1.2.6, `$.entries[5].minors[2].features[8]`, but exact inactive meaning/default/surface/timing remains SPEC_UNKNOWN. This source implements the commissioned OpenCove policy, not recovered Alcove behavior.
+
+No build/typecheck/app/caller/helper/preflight/validator/control/CLI/Timer/media/provider/native/power/status/process/permission execution is supplied by this source change. No injected coverage or desktop automation is authorized. Parent owns independent review, later build/caller binding/execution decisions and PR/integration.
+
+Inherited gates remain **C-PID FAILED; M1 USER-DEFERRED; C03 HOLD/tiny Store UNINTEGRATED; Stage4/Focus HOLD/default backend UNVERIFIED; blur FAILED; sound blocked; D10 capture exclusion blocked; C02 lunar convention unknown**. Native positive providers, power, hardware, secure visibility/input, AX, animation and performance remain **UNVERIFIED**; reference **SPEC_UNKNOWN**; full parity **INCOMPLETE**.

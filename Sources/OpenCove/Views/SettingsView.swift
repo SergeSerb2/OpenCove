@@ -193,6 +193,9 @@ struct SettingsView: View {
                     .disabled(!store.preferences.swipeToSkip)
                 CoveSettingsNote("Swipe left over media for Next, or right for Previous. Direction follows device movement regardless of Natural Scrolling. Reverse changes skipping only. The top edge still changes sections. Some players support buttons only. These choices apply to this Mac.")
                 Toggle("Expand on hover", isOn: preference(\.expandOnHover))
+                Toggle("Don't expand on hover when idle", isOn: preference(\.disableIdleHoverExpansion))
+                    .disabled(!store.preferences.expandOnHover)
+                CoveSettingsNote("When only the idle clock is available, hover will not open controls. Use Open OpenCove in the menu to open them. This choice applies to this Mac.")
                 CovePreferenceSlider(
                     title: "Hover delay", value: preference(\.hoverDelay),
                     range: 0...2, step: 0.05, format: "%.2f s"
