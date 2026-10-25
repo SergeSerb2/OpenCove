@@ -10,6 +10,8 @@ final class DevelopmentServer {
     private let store: CoveStore
     private weak var updater: CoveUpdater?
     private weak var notch: NotchPanelController?
+    private weak var lockWidgets: LockScreenController?
+    private weak var keepAwake: LockScreenKeepAwakeSession?
     private let port: UInt16
     private let token = UUID().uuidString + UUID().uuidString
     private var listener: NWListener?
@@ -42,10 +44,13 @@ final class DevelopmentServer {
 
     private let descriptorURL = CovePaths.dataDirectory.appendingPathComponent("control.json")
 
-    init(store: CoveStore, port: UInt16, updater: CoveUpdater? = nil, notch: NotchPanelController? = nil) {
+    init(store: CoveStore, port: UInt16, updater: CoveUpdater? = nil, notch: NotchPanelController? = nil,
+         lockWidgets: LockScreenController? = nil, keepAwake: LockScreenKeepAwakeSession? = nil) {
         self.store = store
         self.updater = updater
         self.notch = notch
+        self.lockWidgets = lockWidgets
+        self.keepAwake = keepAwake
         self.port = port
         // Only explicitly enabled development controls observe this count.
         timerObservation = store.activities.$timer.dropFirst().sink { [weak self] _ in
@@ -261,6 +266,26 @@ final class DevelopmentServer {
                 catch { throw ControlError.invalid("The command body must be a JSON object.") }
                 guard let object = value as? [String: Any], let action = object["action"] as? String,
                       !action.isEmpty, action.utf8.count <= 128 else { throw ControlError.invalid("A command action is required.") }
+                if action.hasPrefix("keepAwake.") {
+                    // Authentication, exact endpoint, body and origin checks
+                    // have already passed. Origin is never caller-supplied.
+                    guard let lockWidgets else {
+                        let outcome = keepAwake?.reject("OWNER_UNAVAILABLE", purpose: action, origin: "command")
+                        var response: [String: Any] = ["resultCode": "OWNER_UNAVAILABLE", "apiAttempted": false]
+                        if let outcome { response["keepAwakeOutcome"] = try encoded(outcome) }
+                        respond(connection, status: 409, json: response)
+                        return
+                    }
+                    let result = lockWidgets.keepAwakeCommand(object)
+                    // The bounded immutable receipt is already cached, even if
+                    // encoding or response delivery fails. No submitted fiction.
+                    var response: [String: Any] = ["keepAwakeOutcome": try encoded(result.outcome)]
+                    response["resultCode"] = result.outcome.resultCode
+                    if let token = result.intentToken { response["intentToken"] = token }
+                    if let seconds = result.validForSeconds { response["validForSeconds"] = seconds }
+                    respond(connection, status: result.outcome.httpStatus, json: response)
+                    return
+                }
                 if action == "input.middleClick" {
                     guard Set(object.keys).isSubset(of: ["action", "region"]),
                           let region = object["region"] as? String,
@@ -658,6 +683,7 @@ final class DevelopmentServer {
             return value
         }
         var result: [String: Any] = ["app": "OpenCove", "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unbundled", "expanded": store.isExpanded, "tab": store.selectedTab.rawValue, "settingsVisible": store.settingsVisible, "dataDirectory": CovePaths.dataDirectory.path, "nativeWindows": windows]
+        result["keepAwake"] = try encoded(keepAwake?.projection() ?? LockScreenKeepAwakeProjection())
         result["preferences"] = try encoded(store.preferences)
         result["mediaSourceAppHiding"] = notch?.hidesForActiveMediaSource ?? false
         result["declaredGameCategoryHiding"] = notch?.hidesForDeclaredGameCategory ?? false

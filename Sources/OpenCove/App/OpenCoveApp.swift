@@ -18,6 +18,7 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     private var store: CoveStore!
     private var notch: NotchPanelController?
     private var lockWidgets: LockScreenController?
+    private let keepAwake = LockScreenKeepAwakeSession()
     private var settingsWindow: NSWindow?
     private var statusItem: NSStatusItem?
     private var control: DevelopmentServer?
@@ -47,13 +48,13 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         store.start()
         notch = NotchPanelController(store: store)
         notch?.start()
-        lockWidgets = LockScreenController(store: store)
+        lockWidgets = LockScreenController(store: store, keepAwake: keepAwake)
         lockWidgets?.start()
         let arguments = ProcessInfo.processInfo.arguments
         if let index = arguments.firstIndex(of: "--control-port") {
             let valueIndex = index + 1
             let port = arguments.indices.contains(valueIndex) ? UInt16(arguments[valueIndex]) ?? 0 : 0
-            control = DevelopmentServer(store: store, port: port, updater: updater, notch: notch)
+            control = DevelopmentServer(store: store, port: port, updater: updater, notch: notch, lockWidgets: lockWidgets, keepAwake: keepAwake)
             do { try control?.start() } catch {
                 control?.reportFailure(error)
             }
@@ -74,6 +75,7 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         readyForIncomingURLs = false
         pendingURLs.removeAll()
         pendingURLOverflow = false
+        keepAwake.shutdown()
         control?.stop()
         notch?.stop()
         lockWidgets?.stop()
@@ -176,7 +178,7 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     private func showSettings() {
         store.settingsVisible = true
         if let settingsWindow { settingsWindow.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
-        let content = OpenCoveSettingsRoot(store: store, updater: updater)
+        let content = OpenCoveSettingsRoot(store: store, updater: updater, keepAwakeStatus: keepAwake.status)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 580), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "OpenCove"
         window.identifier = NSUserInterfaceItemIdentifier("OpenCove.Settings")
@@ -200,9 +202,10 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 private struct OpenCoveSettingsRoot: View {
     @ObservedObject var store: CoveStore
     let updater: CoveUpdater
+    @ObservedObject var keepAwakeStatus: LockScreenKeepAwakeStatus
     var body: some View {
         Group {
-            if store.preferences.completedOnboarding { SettingsView(store: store, updater: updater) }
+            if store.preferences.completedOnboarding { SettingsView(store: store, updater: updater, keepAwakeStatus: keepAwakeStatus) }
             else { OnboardingView(store: store) }
         }
     }

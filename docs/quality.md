@@ -815,3 +815,28 @@ references and bracket both fade phases with native opacity samples. An item ID
 change or a third cover that decodes only after completion does not establish
 three-cover interruption coverage. The record is cleared on source/input
 replacement, hiding and retirement and adds no timer or model publication.
+
+## L06 finite Lock Screen Keep Awake candidate gates
+
+The [L06 contract](lock-screen-keep-awake.md) defines a positive finite public
+assertion path behind real current mounted-card admission. This source task
+permits syntax-only parsing and static source/diff/Git/hash/mode checks. It does
+not grant a build, app/helper/control launch, provider/power/status/permission
+query, native operation or computer-use test. No tests, mocks or synthetic
+state/clock/bounds/API-result injection are added.
+
+The parent must independently review the exact implementation, then separately
+commission an isolated build. A fresh no-effect real-interface caller/package
+binding and execution decision must precede authenticated rejection/empty/stale
+flows. Positive power needs its own explicit gate: real finite assertion,
+independent observation, timeout, Stop, repeated-Start invariance, release-before-
+create Restart and teardown. Unreachable real failure cases remain UNVERIFIED.
+Native secure visibility, pointer/AX reachability, full existing widgets/scroll
+at 320×180 and normal bounds, and intact authentication require separate user-
+led evidence. API acceptance is not secure or hardware proof. Performance needs
+comparable full-flow measurements. Secure reachability failure fails usable L06.
+
+M12 exact-26cf saved evidence and R7 CLEAR do not transfer to this candidate.
+C-PID remains FAILED, M1 USER-DEFERRED, C03 and Stage4/Focus HOLD, blur FAILED,
+and sound blocked. Native/positive power/secure/AX/performance remain UNVERIFIED;
+reference behavior is SPEC_UNKNOWN and full parity remains INCOMPLETE.
