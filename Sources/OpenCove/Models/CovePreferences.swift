@@ -193,6 +193,8 @@ struct CovePreferences: Codable, Equatable {
     var showCalendarList: Bool = true
     // Local month-grid dots only; outside reader consent and cloud settings.
     var showCalendarEventIndicators: Bool = true
+    // Local Calendar dot/list fills only; outside reader consent and cloud settings.
+    var useCalendarViewSourceColors: Bool = true
     // Calendar filtering stays local, outside CoveSyncedSettings.
     var showDeclinedCalendarEvents: Bool = false
     var excludeSubscribedCalendars: Bool = false

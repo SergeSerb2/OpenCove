@@ -475,6 +475,8 @@ struct SettingsView: View {
                 CoveSettingsNote("Keep the month grid when the list is hidden. Your selected day stays selected.")
                 Toggle("Show event dots", isOn: preference(\.showCalendarEventIndicators))
                 CoveSettingsNote("Month-grid dots only. Event counts stay in day help and accessibility information.")
+                Toggle("Use source colors in Calendar view", isOn: preference(\.useCalendarViewSourceColors))
+                CoveSettingsNote("Only month-grid event dots and selected-day list accents, including the condensed list popover.")
                 Toggle("Show declined events", isOn: preference(\.showDeclinedCalendarEvents))
                 CoveSettingsNote("Include events you declined. Canceled events and excluded calendars stay hidden.")
                 Toggle("Exclude subscribed calendars", isOn: preference(\.excludeSubscribedCalendars))
