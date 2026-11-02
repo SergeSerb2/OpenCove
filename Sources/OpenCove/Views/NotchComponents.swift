@@ -1641,7 +1641,6 @@ struct CoveSystemStatsSurface: View {
                 Circle().trim(from: 0, to: level)
                     .stroke(color, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                    .animation(.easeOut(duration: 0.4), value: level)
                 Image(systemName: symbol).font(.system(size: 13, weight: .medium)).foregroundStyle(color)
             }
             .frame(width: 44, height: 44)

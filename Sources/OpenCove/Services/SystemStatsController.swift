@@ -23,6 +23,7 @@ final class SystemStatsController: ObservableObject {
     private var task: Task<Void, Never>?
     private var previousCPU: (busy: UInt64, total: UInt64)?
     private var previousNetwork: (received: UInt64, sent: UInt64, date: Date)?
+    private var lastDiskRead: Date?
 
     var isSampling: Bool { task != nil }
 
@@ -47,6 +48,7 @@ final class SystemStatsController: ObservableObject {
         task = nil
         previousCPU = nil
         previousNetwork = nil
+        lastDiskRead = nil
     }
 
     private func sample() {
@@ -54,10 +56,13 @@ final class SystemStatsController: ObservableObject {
         next.cpu = readCPU()
         next.memoryUsed = Self.readMemoryUsed()
         (next.downloadRate, next.uploadRate) = readNetwork()
-        if let values = try? URL(fileURLWithPath: "/").resourceValues(forKeys: [
+        // Free-space queries include purgeable space and are comparatively slow; disk space changes slowly.
+        if lastDiskRead.map({ Date().timeIntervalSince($0) >= 30 }) ?? true,
+           let values = try? URL(fileURLWithPath: "/").resourceValues(forKeys: [
             .volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]) {
             next.diskFree = values.volumeAvailableCapacityForImportantUsage.map(Double.init)
             next.diskTotal = values.volumeTotalCapacity.map(Double.init)
+            lastDiskRead = Date()
         }
         if next != snapshot { snapshot = next }
     }
