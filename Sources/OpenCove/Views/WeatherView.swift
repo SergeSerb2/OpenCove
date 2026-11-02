@@ -365,6 +365,18 @@ struct CoveWeatherSurface: View {
         CoveTemperature.degrees(value)
     }
 
+    /// The first hour in the next 12 with at least a 50% chance of rain.
+    private func rainOutlook(_ state: WeatherState, now: Date) -> String {
+        let window = state.hourly.filter { $0.date > now.addingTimeInterval(-1800) && $0.date <= now.addingTimeInterval(12 * 3600) }
+        guard !window.isEmpty else { return "No hourly forecast" }
+        guard let wet = window.first(where: { ($0.precipitationProbability ?? 0) >= 50 }) else {
+            return "No rain expected in the next 12 hours"
+        }
+        let time = wet.date.formatted(Date.FormatStyle(timeZone: state.timeZone).hour().minute())
+        let chance = Int((wet.precipitationProbability ?? 0).rounded())
+        return wet.date <= now.addingTimeInterval(1800) ? "Rain likely now (\(chance)%)" : "Rain likely around \(time) (\(chance)%)"
+    }
+
     var body: some View {
         let state = controller.state
         if !state.available {
@@ -421,6 +433,8 @@ struct CoveWeatherSurface: View {
                     }
                     .padding(.vertical, 8)
                     .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    Label(rainOutlook(state, now: now), systemImage: "umbrella")
+                        .font(.system(size: 10)).foregroundStyle(CoveNotchStyle.secondary).lineLimit(1)
                     VStack(spacing: 5) {
                         ForEach(days) { day in
                             HStack(spacing: 8) {

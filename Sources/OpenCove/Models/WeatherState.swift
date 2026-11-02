@@ -146,7 +146,9 @@ enum CoveTemperature {
     static func degrees(_ celsius: Double?) -> String {
         guard let celsius, celsius.isFinite else { return "—" }
         let value = fahrenheit ? celsius * 9 / 5 + 32 : celsius
-        return value.formatted(.number.precision(.fractionLength(0))) + "°"
+        // Round first so values such as -0.3 read "0°", never "-0°".
+        let rounded = value.rounded()
+        return (rounded == 0 ? 0 : rounded).formatted(.number.precision(.fractionLength(0))) + "°"
     }
 
     /// Wind follows the temperature unit: km/h with Celsius, mph with Fahrenheit.
