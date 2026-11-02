@@ -222,7 +222,7 @@ struct SettingsView: View {
                 CoveSettingsNote("macOS manages login access in System Settings → General → Login Items.")
                 Toggle("Hide menu bar icon", isOn: preference(\.hideMenuBarIcon))
                 if store.preferences.hideMenuBarIcon {
-                    CoveSettingsNote("To return here, open OpenCove again from Finder or Spotlight, or use the panel's menu.")
+                    CoveSettingsNote("To return here, open OpenCove again from Finder or Spotlight. Right-click the panel for Settings and Quit.")
                 }
                 HStack {
                     Text("Setup")
