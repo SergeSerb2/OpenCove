@@ -1,4 +1,5 @@
 import SwiftUI
+import QuickLookThumbnailing
 import AppKit
 import UniformTypeIdentifiers
 
@@ -1131,11 +1132,12 @@ struct CoveTrayFileRow: View {
     private var openButton: some View {
         Button { activities.openFile(file.id) } label: {
             HStack(spacing: 8) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: file.url.path))
-                    .resizable().scaledToFit().frame(width: 25, height: 25)
+                CoveFileThumbnail(url: file.url, available: file.isAvailable)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(file.name).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                    if !file.isAvailable {
+                    if file.isAvailable {
+                        CoveFileDetail(url: file.url)
+                    } else {
                         Text("Add this file again to restore access.")
                             .font(.system(size: 9)).foregroundStyle(.orange).lineLimit(1)
                     }
@@ -1603,5 +1605,57 @@ struct CoveNotesSurface: View {
             .lineLimit(1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// A Quick Look thumbnail for images, PDFs and other previewable files,
+/// with the file's icon until (or unless) a thumbnail is ready.
+@MainActor
+struct CoveFileThumbnail: View {
+    let url: URL
+    let available: Bool
+    @State private var thumbnail: NSImage?
+
+    var body: some View {
+        Group {
+            if let thumbnail {
+                Image(nsImage: thumbnail).resizable().scaledToFill()
+                    .frame(width: 25, height: 25)
+                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            } else {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    .resizable().scaledToFit().frame(width: 25, height: 25)
+            }
+        }
+        .task(id: url) {
+            // Text and other documents look clearer as their icon than as a tiny page.
+            guard available, let type = UTType(filenameExtension: url.pathExtension),
+                  type.conforms(to: .image) || type.conforms(to: .pdf) || type.conforms(to: .audiovisualContent) else { return }
+            let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: 50, height: 50),
+                                                       scale: 2, representationTypes: .thumbnail)
+            if let result = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request) {
+                thumbnail = result.nsImage
+            }
+        }
+    }
+}
+
+/// "PDF document · 1.2 MB", read once per file.
+@MainActor
+struct CoveFileDetail: View {
+    let url: URL
+    @State private var text = ""
+
+    var body: some View {
+        Text(text).font(.system(size: 9)).foregroundStyle(CoveNotchStyle.secondary).lineLimit(1)
+            .task(id: url) {
+                let values = try? url.resourceValues(forKeys: [.localizedTypeDescriptionKey, .fileSizeKey, .isDirectoryKey])
+                var parts: [String] = []
+                if let kind = values?.localizedTypeDescription { parts.append(kind) }
+                if values?.isDirectory != true, let size = values?.fileSize {
+                    parts.append(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
+                }
+                text = parts.joined(separator: " · ")
+            }
     }
 }
