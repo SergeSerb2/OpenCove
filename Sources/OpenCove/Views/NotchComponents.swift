@@ -334,6 +334,61 @@ struct CoveArtwork: View {
     }
 }
 
+enum CoveHUDBarStyle: String, CaseIterable, Identifiable {
+    case accent, white, segmented, gradient
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+/// The level bar of a compact overlay. Value changes animate unless motion is reduced.
+struct CoveHUDBar: View {
+    let fraction: Double
+    let accent: Color
+    var style: CoveHUDBarStyle = .accent
+    var reduceMotion = false
+    var height: Double = 4
+
+    private static let segments = 16
+
+    var body: some View {
+        let value = CoveNotchStyle.fraction(fraction)
+        Group {
+            if style == .segmented {
+                HStack(spacing: 2) {
+                    ForEach(0..<Self.segments, id: \.self) { index in
+                        let lit = Double(index) < (value * Double(Self.segments)).rounded()
+                        RoundedRectangle(cornerRadius: 1.2)
+                            .fill(lit ? AnyShapeStyle(accent) : AnyShapeStyle(.white.opacity(0.14)))
+                    }
+                }
+                .frame(height: height + 2)
+            } else {
+                GeometryReader { geometry in
+                    Capsule().fill(.white.opacity(0.14))
+                        .overlay(alignment: .leading) {
+                            Capsule().fill(fill)
+                                .frame(width: max(height, geometry.size.width * value))
+                                .opacity(value > 0 ? 1 : 0)
+                                .shadow(color: style == .gradient ? accent.opacity(0.55) : .clear, radius: 3)
+                        }
+                }
+                .frame(height: height)
+            }
+        }
+        .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: value)
+        .accessibilityHidden(true)
+    }
+
+    private var fill: AnyShapeStyle {
+        switch style {
+        case .accent, .segmented: return AnyShapeStyle(accent)
+        case .white: return AnyShapeStyle(Color.white.opacity(0.92))
+        case .gradient: return AnyShapeStyle(LinearGradient(colors: [accent.opacity(0.55), accent, .white.opacity(0.9)],
+                                                              startPoint: .leading, endPoint: .trailing))
+        }
+    }
+}
+
 struct CoveCompactHUD: View {
     let hud: CoveHUD
     let accent: Color
@@ -341,21 +396,39 @@ struct CoveCompactHUD: View {
     var showLabels = true
     var showPercentage = true
     var brightnessHUDGlow = false
+    var barStyle: CoveHUDBarStyle = .accent
+    var reduceMotion = false
 
     private var percentage: String? {
         guard showPercentage, let value = hud.value, value.isFinite else { return nil }
         return "\(Int((CoveNotchStyle.fraction(value) * 100).rounded()))%"
     }
 
+    /// Volume and brightness symbols fill with the level, like the system controls.
+    private var symbolImage: Image {
+        if let value = hud.value, value.isFinite {
+            let level = CoveNotchStyle.fraction(value)
+            if hud.kind == .volume, hud.symbol == "speaker.wave.2.fill", level > 0 {
+                return Image(systemName: "speaker.wave.3.fill", variableValue: level)
+            }
+            if hud.kind == .brightness, hud.symbol == "sun.max.fill" {
+                return Image(systemName: level < 0.5 ? "sun.min.fill" : "sun.max.fill")
+            }
+        }
+        return Image(systemName: hud.symbol)
+    }
+
     @ViewBuilder private var hudSymbol: some View {
         if hud.kind == .brightness && brightnessHUDGlow {
             // OpenCove's static symbol glow stays inside the existing surface clip.
-            Image(systemName: hud.symbol)
+            symbolImage
                 .shadow(color: accent.opacity(0.65), radius: 2, x: 0, y: 0)
         } else {
-            Image(systemName: hud.symbol)
+            symbolImage
         }
     }
+
+    private var barAccent: Color { hud.kind == .battery ? .green : accent }
 
     var body: some View {
         if centerGap > 0 {
@@ -374,9 +447,8 @@ struct CoveCompactHUD: View {
                             Text(percentage)
                                 .font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit()
                         }
-                        ProgressView(value: CoveNotchStyle.fraction(value)).tint(accent)
-                            .progressViewStyle(.linear).frame(width: 70)
-                            .accessibilityHidden(true)
+                        CoveHUDBar(fraction: value, accent: barAccent, style: barStyle, reduceMotion: reduceMotion, height: 3)
+                            .frame(width: 70)
                     } else if showLabels {
                         Text(hud.subtitle.isEmpty ? hud.title : hud.subtitle)
                             .font(.system(size: 10, weight: .medium))
@@ -412,15 +484,7 @@ struct CoveCompactHUD: View {
                     }
                 }
                 if let value = hud.value {
-                    GeometryReader { geometry in
-                        Capsule().fill(.white.opacity(0.14))
-                            .overlay(alignment: .leading) {
-                                Capsule().fill(accent)
-                                    .frame(width: geometry.size.width * CoveNotchStyle.fraction(value))
-                            }
-                    }
-                    .frame(height: 3)
-                    .accessibilityHidden(true)
+                    CoveHUDBar(fraction: value, accent: barAccent, style: barStyle, reduceMotion: reduceMotion, height: 3)
                 } else if showLabels && !hud.subtitle.isEmpty {
                     Text(hud.subtitle)
                         .font(.system(size: 10))
@@ -437,6 +501,15 @@ struct CoveBatteryMark: View {
     var percent: Int
     var charging: Bool
     var showPercent = false
+    var warningLevel = 20
+    var minutesToFull: Int? = nil
+
+    private var detail: String {
+        guard charging else { return "Battery: \(percent)%" }
+        guard let minutesToFull else { return "Battery: \(percent)% · Charging" }
+        let time = minutesToFull >= 60 ? "\(minutesToFull / 60) h \(minutesToFull % 60) min" : "\(minutesToFull) min"
+        return "Battery: \(percent)% · \(time) until full"
+    }
 
     private var symbol: String {
         if charging { return "battery.100percent.bolt" }
@@ -455,13 +528,15 @@ struct CoveBatteryMark: View {
                 Text("\(min(100, max(0, percent)))%")
                     .font(.system(size: 9, weight: .medium, design: .rounded))
                     .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
             }
             Image(systemName: symbol).font(.system(size: 13))
         }
-        .foregroundStyle(charging ? Color.green : percent <= 20 ? Color.orange : CoveNotchStyle.secondary)
+        .foregroundStyle(charging ? Color.green : percent <= warningLevel ? Color.orange : CoveNotchStyle.secondary)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Battery \(percent) percent\(charging ? ", charging" : "")")
-        .help("Battery: \(percent)%\(charging ? " · Charging" : "")")
+        .help(detail)
     }
 }
 
@@ -482,12 +557,17 @@ struct CoveSystemIndicators: View {
                     .help("Focus is on")
             }
             if preferences.enableBluetooth && !system.state.bluetoothDevices.isEmpty {
-                Image(systemName: system.state.audioOutputIsBluetooth ? "headphones" : "dot.radiowaves.left.and.right")
+                Image(systemName: system.state.audioOutputIsBluetooth
+                      ? CoveDeviceSymbol.symbol(forName: system.state.outputDevice, fallback: "headphones")
+                      : "dot.radiowaves.left.and.right")
                     .accessibilityLabel("Connected: \(system.state.bluetoothDevices.joined(separator: ", "))")
                     .help(system.state.bluetoothDevices.joined(separator: ", "))
             }
             if preferences.enableBattery && system.state.hasBattery && system.state.batteryAvailable {
-                CoveBatteryMark(percent: system.state.batteryPercent, charging: system.state.isCharging)
+                CoveBatteryMark(percent: system.state.batteryPercent, charging: system.state.isCharging,
+                                showPercent: preferences.showBatteryPercentage,
+                                warningLevel: preferences.lowBatteryWarningThreshold ?? 20,
+                                minutesToFull: system.state.batteryTimeToFullMinutes)
             }
         }
         .foregroundStyle(CoveNotchStyle.secondary)
@@ -560,6 +640,10 @@ struct CoveMediaSurface: View {
     var locked = false
     var musicColorAccent = true
     var reduceMotion = false
+    var cleanTitles = false
+    var artworkGlow = false
+    var showsLockVolume = false
+    var showsSourceBadge = false
     @State private var scrubbing = false
     @State private var scrubTime = 0.0
     @State private var scrubIdentity: CoveMediaScrubIdentity?
@@ -593,8 +677,14 @@ struct CoveMediaSurface: View {
                                 .background(CoveMediaRegionMarker(blocksInput: true))
                         }
                     }
+                    .overlay(alignment: .trailing) {
+                        if locked && showsLockVolume { CoveLockVolumeControl(system: system) }
+                    }
                 }
                 .tint(musicColorAccent ? artwork?.tint : nil)
+                .background(alignment: .topLeading) {
+                    if artworkGlow, !locked, let artwork { CoveArtworkGlow(artwork: artwork, condensed: condensed) }
+                }
                 .background(CoveMediaRegionMarker(blocksInput: scrubbing || showsOutput))
             }
             .onAppear {
@@ -612,9 +702,8 @@ struct CoveMediaSurface: View {
                 CoveEmptySurface(symbol: "music.note", title: "Nothing playing",
                                  message: "Start playback after unlocking.")
             } else {
-                CoveEmptySurface(symbol: "music.note", title: "Nothing playing",
-                                 message: media.lastError ?? "Play something in your favorite app.",
-                                 actionTitle: "Refresh", action: media.refreshFromUser)
+                CoveNothingPlaying(message: media.lastError ?? "Play something in your favorite app.",
+                                   refresh: media.refreshFromUser)
             }
         }
     }
@@ -632,6 +721,14 @@ struct CoveMediaSurface: View {
                                 radius: condensed ? 9 : 12,
                                 sourceIdentifier: media.state.sourceBundleIdentifier,
                                 isPlaying: media.state.isPlaying, reduceMotion: reduceMotion)
+                        .overlay(alignment: .bottomTrailing) {
+                            if showsSourceBadge, let icon = CoveSourceIcon.icon(for: media.state.sourceBundleIdentifier) {
+                                Image(nsImage: icon).resizable().frame(width: 18, height: 18)
+                                    .shadow(color: .black.opacity(0.5), radius: 2, y: 1)
+                                    .offset(x: 5, y: 5)
+                                    .accessibilityHidden(true)
+                            }
+                        }
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open media player")
@@ -666,6 +763,12 @@ struct CoveMediaSurface: View {
                             }
                         }
                     }
+                    Button("Copy Title and Artist", systemImage: "doc.on.doc") { media.copyTitleAndArtist() }
+                        .disabled(media.state.title.isEmpty)
+                    if media.canSkipWithinItem {
+                        Button("Back 15 Seconds", systemImage: "gobackward.15") { media.skip(by: -15) }
+                        Button("Forward 30 Seconds", systemImage: "goforward.30") { media.skip(by: 30) }
+                    }
                     Button("Open Player", action: media.openPlayer)
                 } label: { Image(systemName: "ellipsis.circle").font(.system(size: 13)) }
                 .menuStyle(.borderlessButton)
@@ -678,7 +781,7 @@ struct CoveMediaSurface: View {
 
     private var metadata: some View {
         VStack(alignment: .leading, spacing: 5) {
-            CoveScrollingMediaText(text: media.state.title.isEmpty ? "Untitled" : media.state.title,
+            CoveScrollingMediaText(text: media.state.displayTitle(clean: cleanTitles),
                                    size: condensed ? 12 : 15, weight: .semibold,
                                    reduceMotion: reduceMotion || systemReduceMotion)
             CoveScrollingMediaText(text: media.lastError != nil ? (locked ? "Playback controls unavailable" : "Open player to retry controls") : (media.state.artist.isEmpty ? media.state.source : media.state.artist),
@@ -785,7 +888,7 @@ struct CoveMediaSurface: View {
         HStack(spacing: condensed ? 15 : 18) {
             if media.state.supportsShuffle && !condensed {
                 CoveIconButton(symbol: "shuffle", label: "Toggle shuffle", allowsKeyboardFocus: !locked, action: media.toggleShuffle)
-                    .foregroundStyle(media.state.isShuffling == true ? Color.mint : Color.white.opacity(0.5))
+                    .foregroundStyle(media.state.isShuffling == true ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.white.opacity(0.5)))
             }
             CoveIconButton(symbol: "backward.fill", label: "Previous track", size: 15,
                            allowsKeyboardFocus: !locked,
@@ -806,7 +909,7 @@ struct CoveMediaSurface: View {
                 .disabled(!media.state.supportsNext)
             if media.state.supportsRepeat && !condensed {
                 CoveIconButton(symbol: media.state.repeatMode == "one" ? "repeat.1" : "repeat", label: "Cycle repeat mode", allowsKeyboardFocus: !locked, action: media.cycleRepeat)
-                    .foregroundStyle(media.state.isRepeating == true ? Color.mint : Color.white.opacity(0.5))
+                    .foregroundStyle(media.state.isRepeating == true ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.white.opacity(0.5)))
             }
         }
         .background(CoveMediaRegionMarker(blocksInput: true))
@@ -1039,11 +1142,12 @@ struct CoveTrayFileRow: View {
     private var openButton: some View {
         Button { activities.openFile(file.id) } label: {
             HStack(spacing: 8) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: file.url.path))
-                    .resizable().scaledToFit().frame(width: 25, height: 25)
+                CoveFileThumbnail(url: file.url, available: file.isAvailable)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(file.name).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                    if !file.isAvailable {
+                    if file.isAvailable {
+                        CoveFileDetail(url: file.url)
+                    } else {
                         Text("Add this file again to restore access.")
                             .font(.system(size: 9)).foregroundStyle(.orange).lineLimit(1)
                     }
@@ -1061,25 +1165,31 @@ struct CoveTrayFileRow: View {
 @MainActor
 struct CoveTimerSurface: View {
     @ObservedObject var activities: ActivityController
+    @ObservedObject var stopwatch: CoveStopwatch
     var color: Color = .accentColor
     var reduceMotion = false
+    var isBreak = false
     private let presets: [Double] = [60, 300, 900, 1500]
+    @State private var choosingCustom = false
+    @State private var customMinutes = 45
 
     var body: some View {
-        if activities.timer.remaining > 0 {
+        if activities.timer.remaining <= 0 && stopwatch.isActive {
+            stopwatchView
+        } else if activities.timer.remaining > 0 {
             HStack(spacing: 23) {
                 ZStack {
                     Circle().stroke(.white.opacity(0.08), lineWidth: 5)
                     CoveTimerRing(timer: activities.timer, clockRevision: activities.timerClockRevision,
                                   reduceMotion: reduceMotion, color: color)
-                    Image(systemName: activities.timer.running ? "timer" : "pause.fill")
+                    Text(Image(systemName: !activities.timer.running ? "pause.fill" : isBreak ? "cup.and.saucer" : "timer"))
                         .font(.system(size: 28, weight: .light))
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(color)
                 }
                 .frame(width: 93, height: 93)
                 .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 9) {
-                    Text(activities.timer.running ? "Time remaining" : "Timer paused")
+                    Text(!activities.timer.running ? (isBreak ? "Break paused" : "Timer paused") : isBreak ? "Break" : "Time remaining")
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(CoveNotchStyle.secondary)
                     CoveTimerText(timer: activities.timer)
                         .font(.system(size: 36, weight: .light, design: .rounded))
@@ -1092,6 +1202,10 @@ struct CoveTimerSurface: View {
                             else { activities.resumeTimer() }
                         }
                         .buttonStyle(CovePillButtonStyle())
+                        Button("1 min", systemImage: "plus") { activities.extendTimer(seconds: 60) }
+                            .buttonStyle(CovePillButtonStyle())
+                            .fixedSize()
+                            .accessibilityLabel("Add one minute")
                         Button("Cancel", action: activities.cancelTimer)
                             .buttonStyle(CovePillButtonStyle())
                     }
@@ -1102,9 +1216,9 @@ struct CoveTimerSurface: View {
         } else {
             VStack(spacing: 13) {
                 HStack(spacing: 10) {
-                    Image(systemName: "timer")
+                    Text(Image(systemName: "timer"))
                         .font(.system(size: 30, weight: .ultraLight))
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(color)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Start a timer").font(.system(size: 15, weight: .semibold))
                         Text("A moment to focus. A reminder to pause.")
@@ -1128,9 +1242,93 @@ struct CoveTimerSurface: View {
                         .buttonStyle(CoveQuietButtonStyle())
                         .accessibilityLabel("Start \(Int(seconds / 60)) minute timer")
                     }
+                    Button { stopwatch.start() } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: "stopwatch")
+                                .font(.system(size: 17, weight: .light))
+                                .frame(height: 26)
+                            Text("STOPWATCH").font(.system(size: 8, weight: .semibold)).tracking(0.5)
+                                .lineLimit(1).minimumScaleFactor(0.7)
+                                .foregroundStyle(CoveNotchStyle.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 63)
+                        .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(CoveQuietButtonStyle())
+                    .accessibilityLabel("Start stopwatch")
+                    Button { choosingCustom = true } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: "slider.horizontal.3")
+                                .font(.system(size: 17, weight: .light))
+                                .frame(height: 26)
+                            Text("CUSTOM").font(.system(size: 8, weight: .semibold)).tracking(1)
+                                .foregroundStyle(CoveNotchStyle.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 63)
+                        .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(CoveQuietButtonStyle())
+                    .accessibilityLabel("Start a custom timer")
+                    .popover(isPresented: $choosingCustom, arrowEdge: .bottom) {
+                        VStack(spacing: 12) {
+                            Text("Custom timer").font(.system(size: 13, weight: .semibold))
+                            Stepper(value: $customMinutes, in: 1...720, step: customMinutes < 10 ? 1 : 5) {
+                                Text(customMinutes >= 60 ? "\(customMinutes / 60) h \(customMinutes % 60) min" : "\(customMinutes) min")
+                                    .font(.system(size: 20, weight: .light, design: .rounded)).monospacedDigit()
+                                    .frame(minWidth: 110, alignment: .leading)
+                            }
+                            Button("Start") {
+                                choosingCustom = false
+                                activities.startTimer(seconds: Double(customMinutes) * 60)
+                            }
+                            .keyboardShortcut(.defaultAction)
+                        }
+                        .padding(16)
+                    }
                 }
             }
         }
+    }
+}
+
+extension CoveTimerSurface {
+    @ViewBuilder var stopwatchView: some View {
+        HStack(spacing: 23) {
+            ZStack {
+                Circle().stroke(.white.opacity(0.08), lineWidth: 5)
+                Text(Image(systemName: stopwatch.isRunning ? "stopwatch" : "pause.fill"))
+                    .font(.system(size: 28, weight: .light))
+                    .foregroundStyle(color)
+            }
+            .frame(width: 93, height: 93)
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 9) {
+                Text(stopwatch.isRunning ? "Stopwatch" : "Stopwatch paused")
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(CoveNotchStyle.secondary)
+                Group {
+                    if let anchor = stopwatch.anchor {
+                        Text(anchor, style: .timer)
+                    } else {
+                        Text(CoveNotchStyle.duration(stopwatch.pausedTotal))
+                    }
+                }
+                .font(.system(size: 36, weight: .light, design: .rounded))
+                .monospacedDigit()
+                HStack(spacing: 8) {
+                    Button(stopwatch.isRunning ? "Pause" : "Resume",
+                           systemImage: stopwatch.isRunning ? "pause.fill" : "play.fill") {
+                        if stopwatch.isRunning { stopwatch.pause() } else { stopwatch.start() }
+                    }
+                    .buttonStyle(CovePillButtonStyle()).fixedSize()
+                    Button("Reset", action: stopwatch.reset)
+                        .buttonStyle(CovePillButtonStyle()).fixedSize()
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 9)
     }
 }
 
@@ -1144,7 +1342,14 @@ struct CoveNotificationButton: View {
                        label: "Notifications, \(activities.notifications.count)") { presented.toggle() }
             .popover(isPresented: $presented, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Notifications").font(.system(size: 13, weight: .semibold))
+                    HStack {
+                        Text("Notifications").font(.system(size: 13, weight: .semibold))
+                        Spacer()
+                        if !activities.notifications.isEmpty {
+                            Button("Clear All", action: activities.clearNotifications)
+                                .buttonStyle(.borderless).font(.system(size: 11))
+                        }
+                    }
                     if activities.notifications.isEmpty {
                         Text("You’re all caught up.")
                             .font(.system(size: 12)).foregroundStyle(.secondary)
@@ -1159,6 +1364,12 @@ struct CoveNotificationButton: View {
                                             Spacer()
                                             Text(notification.date, style: .relative)
                                                 .font(.system(size: 9)).foregroundStyle(.secondary)
+                                            Button { activities.removeNotification(notification.id) } label: {
+                                                Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .foregroundStyle(.secondary)
+                                            .accessibilityLabel("Remove notification")
                                         }
                                         Text(notification.body).font(.system(size: 11)).foregroundStyle(.secondary)
                                     }

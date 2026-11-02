@@ -543,6 +543,15 @@ final class DevelopmentServer {
             guard store.media.setPlaybackSpeed(speed, source: source, itemID: item) else {
                 throw ControlError.rejected(store.media.lastError ?? "Playback speed could not be submitted.")
             }
+        case "media.copyInfo":
+            guard store.media.copyTitleAndArtist() else { throw ControlError.rejected("No media title is available.") }
+        case "media.skipBy":
+            let seconds = try number("seconds")
+            guard abs(seconds) <= 600 else { throw ControlError.invalid("Skip at most 600 seconds at a time.") }
+            guard store.media.canSkipWithinItem else { throw ControlError.rejected("No seekable media item is available.") }
+            guard store.media.skip(by: seconds) else {
+                throw ControlError.rejected(store.media.lastError ?? "The skip could not be submitted.")
+            }
         case "media.seek":
             let seconds = try number("seconds")
             guard store.media.state.available, store.media.state.supportsSeek else { throw ControlError.rejected("No seekable media source is available.") }
@@ -634,10 +643,44 @@ final class DevelopmentServer {
             try requireCapability(store.activities.timer.remaining > 0, "There is no paused timer to resume.")
             try activity { store.activities.resumeTimer() }
         case "timer.cancel": try activity { store.activities.cancelTimer() }
+        case "stayAwake.start":
+            let minutes = values["minutes"] as? Int
+            guard store.stayAwake.start(minutes: minutes) else { throw ControlError.failed("Stay Awake could not start.") }
+        case "stayAwake.stop": store.stayAwake.stop()
+        case "stopwatch.start": store.stopwatch.start()
+        case "stopwatch.pause": store.stopwatch.pause()
+        case "stopwatch.reset": store.stopwatch.reset()
+        case "timer.extend":
+            let seconds = try number("seconds")
+            try activity { store.activities.extendTimer(seconds: seconds) }
         case "notification.post":
             guard let title = values["title"] as? String, title.count <= 200, let body = values["body"] as? String, body.count <= 2_000 else { throw ControlError.invalid("A short title and body are required.") }
             guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !body.isEmpty else { throw ControlError.invalid("Enter a notification title or message.") }
             try activity { store.activities.postNotification(title: title, body: body) }
+        case "clipboard.copyNewest":
+            guard let item = store.clipboard.items.dropFirst().first else { throw ControlError.rejected("Clipboard history needs at least two items.") }
+            store.clipboard.copy(item)
+        case "notes.set":
+            guard let text = values["text"] as? String, text.utf8.count <= 4_096 else { throw ControlError.invalid("Provide note text of at most 4096 bytes.") }
+            store.notes.update(text)
+        case "notes.flush":
+            store.notes.flush()
+            if let error = store.notes.lastError { throw ControlError.failed(error) }
+        case "shortcuts.refresh":
+            store.shortcuts.refreshList()
+        case "shortcuts.run":
+            guard let name = values["name"] as? String, store.preferences.enableShortcuts,
+                  store.preferences.pinnedShortcutNames.contains(name) else {
+                throw ControlError.invalid("Only a pinned shortcut can run, with Shortcuts on.")
+            }
+            guard store.shortcuts.run(name) else { throw ControlError.rejected("The shortcut is already running or unavailable.") }
+        case "sound.preview":
+            guard let name = values["event"] as? String, let event = CoveSoundEvent(rawValue: name) else {
+                throw ControlError.invalid("Choose a sound event: \(CoveSoundEvent.allCases.map(\.rawValue).joined(separator: ", ")).")
+            }
+            guard store.sounds.play(event, volume: store.preferences.soundVolume) else {
+                throw ControlError.failed("The sound could not start.")
+            }
         default: throw ControlError.invalid("Unknown command action.")
         }
     }
@@ -671,7 +714,8 @@ final class DevelopmentServer {
     private func snapshot() throws -> [String: Any] {
         let windows = NSApp.windows.filter { $0.isVisible && ($0.title == "OpenCove" || $0.identifier != nil) }.map { window in
             var value: [String: Any] = ["title": window.title, "width": window.frame.width, "height": window.frame.height,
-                                       "x": window.frame.origin.x, "y": window.frame.origin.y]
+                                       "x": window.frame.origin.x, "y": window.frame.origin.y,
+                                       "sharingType": window.sharingType == .none ? "none" : "readOnly"]
             if let hidden = NotchPanelController.contentIsHidden(in: window) {
                 value["contentHidden"] = hidden
                 value["missionControlPolicy"] = [
@@ -721,6 +765,30 @@ final class DevelopmentServer {
         result["compactDismissActivity"] = store.compactDismissActivity.map { $0.rawValue as Any } ?? NSNull()
         result["compactRestoreActivity"] = store.compactRestoreActivity.map { $0.rawValue as Any } ?? NSNull()
         result["mediaPeekVisible"] = store.showsMediaPeek
+        result["sounds"] = ["playCount": store.sounds.playCount,
+                            "lastEvent": store.sounds.lastPlayed?.event.rawValue ?? NSNull(),
+                            "hourlyChimeScheduled": store.hourlyChimeScheduled]
+        result["toggleShortcut"] = store.hotKey.status.description
+        result["timerBreak"] = store.breakTimerIdentifier != nil
+        result["stayAwake"] = ["active": store.stayAwake.isActive,
+                               "endsAt": store.stayAwake.endsAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull()] as [String: Any]
+        result["stopwatch"] = ["running": store.stopwatch.isRunning, "elapsed": store.stopwatch.elapsed()] as [String: Any]
+        result["clipboard"] = ["watching": store.clipboard.isWatching, "count": store.clipboard.items.count,
+                               "newestLength": store.clipboard.items.first?.text.count ?? 0] as [String: Any]
+        result["notes"] = ["length": store.notes.text.count, "unsaved": store.notes.hasUnsavedChanges,
+                           "error": store.notes.lastError ?? NSNull()] as [String: Any]
+        let stats = store.systemStats.snapshot
+        result["systemStats"] = ["sampling": store.systemStats.isSampling,
+                                 "cpu": stats.cpu ?? NSNull(), "memoryUsed": stats.memoryUsed ?? NSNull(),
+                                 "memoryTotal": stats.memoryTotal, "downloadRate": stats.downloadRate ?? NSNull(),
+                                 "uploadRate": stats.uploadRate ?? NSNull(), "diskFree": stats.diskFree ?? NSNull(),
+                                 "batteryHealth": stats.batteryHealth ?? NSNull(), "batteryCycles": stats.batteryCycles ?? NSNull()] as [String: Any]
+        result["shortcuts"] = ["availableCount": store.shortcuts.available.count,
+                               "listing": store.shortcuts.isListing,
+                               "listError": store.shortcuts.listError ?? NSNull(),
+                               "pinned": store.preferences.pinnedShortcutNames,
+                               "running": Array(store.shortcuts.running).sorted(),
+                               "lastOutcome": store.shortcuts.lastOutcome.map { ["name": $0.name, "succeeded": $0.succeeded] as [String: Any] } ?? NSNull()] as [String: Any]
         result["mediaPeekRemaining"] = store.mediaPeekRemaining.map { $0 as Any } ?? NSNull()
         result["hudRemaining"] = store.hudRemaining.map { $0 as Any } ?? NSNull()
         result["playbackClock"] = ["receivedSamples": store.media.playback.receivedSamples,
@@ -860,6 +928,9 @@ final class DevelopmentServer {
         case "onboarding":
             size = CGSize(width: 700, height: 550)
             content = AnyView(OnboardingView(store: store))
+        case "onboarding-ready":
+            size = CGSize(width: 700, height: 600)
+            content = AnyView(OnboardingView(store: store, finalPage: true))
         case "settings":
             size = CGSize(width: 760, height: 550)
             content = AnyView(SettingsView(store: store))
@@ -867,18 +938,27 @@ final class DevelopmentServer {
             size = CGSize(width: 760, height: 550)
             content = AnyView(SettingsView(store: store, initialPage: .appearance))
         case "settings-media":
-            size = CGSize(width: 760, height: 550)
+            size = CGSize(width: 760, height: 1500)
             content = AnyView(SettingsView(store: store, initialPage: .media))
         case "settings-activities":
             size = CGSize(width: 760, height: 900)
             content = AnyView(SettingsView(store: store, initialPage: .activities))
+        case "settings-search":
+            size = CGSize(width: 760, height: 550)
+            content = AnyView(SettingsView(store: store, initialPage: .overlays, initialSearch: "batt"))
+        case "settings-permissions":
+            size = CGSize(width: 760, height: 1400)
+            content = AnyView(SettingsView(store: store, initialPage: .permissions))
+        case "settings-overlays":
+            size = CGSize(width: 760, height: 1800)
+            content = AnyView(SettingsView(store: store, initialPage: .overlays))
         case "settings-general":
             size = CGSize(width: 760, height: 1600)
             content = AnyView(SettingsView(store: store, initialPage: .general))
         case "settings-calendar":
             // The same real Activities form at a taller bounded size exposes
             // its Calendar section without desktop input or a test-only view.
-            size = CGSize(width: 760, height: 2400)
+            size = CGSize(width: 760, height: 3200)
             content = AnyView(SettingsView(store: store, initialPage: .activities))
         case "settings-updates":
             size = CGSize(width: 760, height: 760)
@@ -887,8 +967,10 @@ final class DevelopmentServer {
             size = CGSize(width: 760, height: 550)
             content = AnyView(SettingsView(store: store, initialPage: .weather))
         case "lock":
-            size = CGSize(width: 460, height: 250)
-            content = AnyView(LockScreenView(store: store, weather: store.weather).environment(\.colorScheme, .dark))
+            size = CGSize(width: 460, height: 360)
+            // Offscreen drawing cannot show system glass; a dark backdrop stands in for the lock screen.
+            content = AnyView(LockScreenView(store: store, weather: store.weather).environment(\.colorScheme, .dark)
+                .background(LinearGradient(colors: [Color(white: 0.22), Color(white: 0.1)], startPoint: .top, endPoint: .bottom)))
         case "weather":
             size = CGSize(width: 560, height: 760)
             content = AnyView(ScrollView { WeatherView(controller: store.weather,
@@ -899,7 +981,11 @@ final class DevelopmentServer {
         }
         // An unordered window supplies native AppKit rendering context. It never
         // becomes visible/key, reads the desktop, or receives user input.
-        let hosting = NSHostingView(rootView: content.frame(width: size.width, height: size.height)
+        // Settings and onboarding are ordinary windows; draw their window background,
+        // which an offscreen borderless window otherwise leaves blank.
+        let windowed = surface.hasPrefix("settings") || surface.hasPrefix("onboarding")
+        let backed = windowed ? AnyView(content.background(Color(nsColor: .windowBackgroundColor))) : content
+        let hosting = NSHostingView(rootView: backed.frame(width: size.width, height: size.height)
             .transaction { transaction in
                 transaction.disablesAnimations = true
                 transaction.animation = nil

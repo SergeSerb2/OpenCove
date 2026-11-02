@@ -47,6 +47,19 @@ final class CoveStore: ObservableObject {
     let notificationMirror = NotificationMirror()
     let settingsSync = CoveSettingsSyncController()
     private let betterDisplayFeedback = BetterDisplayFeedbackController()
+    let sounds = CoveSoundPlayer()
+    let hotKey = CoveHotKey()
+    let shortcuts = ShortcutsController()
+    let systemStats = SystemStatsController()
+    let notes = CoveNotesStore()
+    let clipboard = ClipboardHistory()
+    let stopwatch = CoveStopwatch()
+    let stayAwake = CoveStayAwake()
+    private var hourlyChimeTask: Task<Void, Never>?
+    /// The identity of a break timer that OpenCove started, so a finished break does not start another.
+    @Published private(set) var breakTimerIdentifier: UUID?
+    var timerIsBreak: Bool { breakTimerIdentifier != nil && breakTimerIdentifier == activities.timerActivityIdentifier }
+    var hourlyChimeScheduled: Bool { hourlyChimeTask != nil }
     private var betterDisplaySnapshotCurrent = false
     private var systemAwake = true
     private var screensAwake = true
@@ -58,11 +71,16 @@ final class CoveStore: ObservableObject {
     var onPreferencesChange: (() -> Void)?
 
     var enabledTabs: [CoveTab] {
-        CoveTab.allCases.filter { tab in
+        CoveTab.ordered(preferences.sectionOrder).filter { tab in
             switch tab {
             case .media: return preferences.enableMedia
             case .calendar: return preferences.enableCalendar
             case .files: return preferences.enableFileTray
+            case .shortcuts: return preferences.enableShortcuts
+            case .system: return preferences.enableSystemStats
+            case .weather: return preferences.enableWeather && preferences.showWeatherSection
+            case .notes: return preferences.enableNotes
+            case .clipboard: return preferences.enableClipboard
             case .timer: return preferences.enableTimer
             }
         }
@@ -461,7 +479,41 @@ final class CoveStore: ObservableObject {
         }
         activities.onHUD = { [weak self] value in
             guard let self, value.origin != "calendar" || self.preferences.enableCalendar else { return }
+            if value.origin == "calendar", self.sessionActive {
+                self.sounds.play(.eventStart, preferences: self.preferences)
+            }
             self.showHUD(value)
+        }
+        shortcuts.onFinish = { [weak self] outcome in
+            guard let self else { return }
+            self.showHUD(CoveHUD(kind: .notification, title: outcome.name,
+                                 subtitle: outcome.succeeded ? "Shortcut finished" : "Shortcut did not finish",
+                                 symbol: outcome.succeeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+                                 origin: "shortcuts"))
+        }
+        system.onLockTransition = { [weak self] locked in
+            guard let self, self.started, self.sessionActive else { return }
+            self.sounds.play(locked ? .lock : .unlock, preferences: self.preferences)
+        }
+        activities.onTimerFinished = { [weak self] in
+            guard let self, self.started, self.sessionActive, self.preferences.enableTimer else { return }
+            self.sounds.play(.timerFinished, preferences: self.preferences)
+            let finishedBreak = self.breakTimerIdentifier == self.activities.timerActivityIdentifier
+            self.breakTimerIdentifier = nil
+            guard self.preferences.startBreakAfterTimer, !finishedBreak else { return }
+            let minutes = Int(self.preferences.breakMinutes)
+            self.activities.startTimer(seconds: Double(minutes) * 60)
+            self.breakTimerIdentifier = self.activities.timerActivityIdentifier
+            self.showHUD(CoveHUD(kind: .notification, title: "Break time", subtitle: "\(minutes)-minute break started",
+                                 symbol: "cup.and.saucer.fill", origin: "timerBreak"))
+        }
+        system.onPowerConnected = { [weak self] in
+            guard let self, self.started, self.sessionActive, !self.system.state.isLocked else { return }
+            self.sounds.play(.powerConnected, preferences: self.preferences)
+        }
+        system.onLowBattery = { [weak self] _ in
+            guard let self, self.started, self.sessionActive, !self.system.state.isLocked else { return }
+            self.sounds.play(.lowBattery, preferences: self.preferences)
         }
         travel.onHUD = { [weak self] value in
             guard let self, self.preferences.enableCalendar else { return }
@@ -589,6 +641,38 @@ final class CoveStore: ObservableObject {
         appliedPreferences = preferences
         reconcileCompactMedia()
         settingsSync.startIfEnabled(preferences)
+        system.lowBatteryThreshold = preferences.lowBatteryWarningThreshold
+        reconcileHourlyChime()
+        hotKey.onPress = { [weak self] in
+            guard let self, self.started, self.sessionActive, !self.system.state.isLocked else { return }
+            self.toggleExpanded()
+        }
+        hotKey.apply(CoveHotKeyChoice(rawValue: preferences.toggleShortcut) ?? .off)
+        clipboard.setEnabled(preferences.enableClipboard)
+        CoveTemperature.fahrenheit = preferences.temperatureUnit == "fahrenheit"
+    }
+
+    /// Plays one chime at the start of each hour while the preference is on,
+    /// the session is active and the screen is unlocked.
+    private func reconcileHourlyChime() {
+        let wanted = started && preferences.playHourlyChime
+        if !wanted { hourlyChimeTask?.cancel(); hourlyChimeTask = nil; return }
+        guard hourlyChimeTask == nil else { return }
+        hourlyChimeTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                let calendar = Calendar.current
+                let now = Date()
+                guard let next = calendar.nextDate(after: now, matching: DateComponents(minute: 0, second: 0),
+                                                   matchingPolicy: .nextTime) else { return }
+                do { try await Task.sleep(for: .seconds(max(1, next.timeIntervalSince(now)))) } catch { return }
+                guard let self, !Task.isCancelled else { return }
+                // A late wake (for example after sleep) does not chime for a missed hour.
+                guard abs(Date().timeIntervalSince(next)) < 60, self.sessionActive, !self.system.state.isLocked else { continue }
+                let hour = Calendar.current.component(.hour, from: Date())
+                guard !self.preferences.hourlyChimeDaytimeOnly || (8...22).contains(hour) else { continue }
+                self.sounds.play(.hourlyChime, preferences: self.preferences)
+            }
+        }
     }
 
     func stop() {
@@ -606,6 +690,11 @@ final class CoveStore: ObservableObject {
         hudDismiss?.cancel()
         activeReaderPolicy = nil
         media.stop(); system.stop(); activities.stop(); weather.stop()
+        reconcileHourlyChime()
+        hotKey.unregister()
+        notes.flush()
+        clipboard.setEnabled(false)
+        stayAwake.stop()
         waveform.setEnabled(false); travel.stop(); hardwareKeys.stop()
         reconcileMirroring()
         hud = nil
@@ -1074,6 +1163,15 @@ final class CoveStore: ObservableObject {
         reconcileLowPowerModeAlerts()
         reconcileBetterDisplayFeedback()
         if !preferences.syncSettingsWithiCloud { settingsSync.stop() }
+        system.lowBatteryThreshold = preferences.lowBatteryWarningThreshold
+        reconcileHourlyChime()
+        let fahrenheit = preferences.temperatureUnit == "fahrenheit"
+        if CoveTemperature.fahrenheit != fahrenheit {
+            CoveTemperature.fahrenheit = fahrenheit
+            weather.objectWillChange.send()
+        }
+        if started { hotKey.apply(CoveHotKeyChoice(rawValue: preferences.toggleShortcut) ?? .off) }
+        clipboard.setEnabled(started && preferences.enableClipboard)
         if started {
             refreshSessionActivity()
             reconcileReaders()

@@ -223,7 +223,9 @@ func rgba(_ image: NSBitmapImageRep, _ x: Int, _ y: Int) -> [Double] {
 }
 func differs(_ a: [Double], _ b: [Double]) -> Bool { zip(a,b).contains { abs($0.0 - $0.1) > 3.0 / 255 } }
 var changedBorder = 0, changedInterior = 0, restoredBorderMismatch = 0
-let insetX = min(40, width / 4), insetY = min(6, height / 4)
+// The rounded bottom corners reach 5 px above the edge at the 40 px inset on 2x
+// renders; keep that anti-aliased arc in the border band, not the interior.
+let insetX = min(40, width / 4), insetY = min(10, height / 4)
 for y in 0..<height { for x in 0..<width {
     let a = rgba(images[0],x,y), b = rgba(images[1],x,y), c = rgba(images[2],x,y)
     let interior = x >= insetX && x < width-insetX && y >= insetY && y < height-insetY

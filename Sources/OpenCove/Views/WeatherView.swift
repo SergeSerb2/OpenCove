@@ -118,7 +118,7 @@ struct WeatherView: View {
                         metric("Humidity", value: value.formatted(.number.precision(.fractionLength(0))) + "%", symbol: "humidity")
                     }
                     if let value = controller.state.windSpeed {
-                        metric("Wind", value: value.formatted(.number.precision(.fractionLength(0))) + " km/h", symbol: "wind")
+                        metric("Wind", value: CoveTemperature.wind(value), symbol: "wind")
                     }
                 }
                 if !controller.state.hourly.isEmpty || !controller.state.daily.isEmpty {
@@ -154,8 +154,7 @@ struct WeatherView: View {
     }
 
     static func degrees(_ value: Double?) -> String {
-        guard let value, value.isFinite else { return "—" }
-        return value.formatted(.number.precision(.fractionLength(0))) + "°"
+        CoveTemperature.degrees(value)
     }
 
     private var locationEditor: some View {
@@ -352,5 +351,116 @@ private struct CoveWeatherDayRow: View {
         .font(.caption.weight(.medium)).monospacedDigit()
         .accessibilityElement(children: .combine)
         .accessibilityHint(day.condition + ". Low and high temperature, with precipitation chance.")
+    }
+}
+
+/// The panel's Weather section: current conditions, the next six hours and
+/// the next four days, in the forecast location's time zone.
+@MainActor
+struct CoveWeatherSurface: View {
+    @ObservedObject var controller: WeatherController
+    let openSettings: () -> Void
+
+    private func degrees(_ value: Double?) -> String {
+        CoveTemperature.degrees(value)
+    }
+
+    /// The first hour in the next 12 with at least a 50% chance of rain.
+    private func rainOutlook(_ state: WeatherState, now: Date) -> String {
+        let window = state.hourly.filter { $0.date > now.addingTimeInterval(-1800) && $0.date <= now.addingTimeInterval(12 * 3600) }
+        guard !window.isEmpty else { return "No hourly forecast" }
+        guard let wet = window.first(where: { ($0.precipitationProbability ?? 0) >= 50 }) else {
+            return "No rain expected in the next 12 hours"
+        }
+        let time = wet.date.formatted(Date.FormatStyle(timeZone: state.timeZone).hour().minute())
+        let chance = Int((wet.precipitationProbability ?? 0).rounded())
+        return wet.date <= now.addingTimeInterval(1800) ? "Rain likely now (\(chance)%)" : "Rain likely around \(time) (\(chance)%)"
+    }
+
+    var body: some View {
+        let state = controller.state
+        if !state.available {
+            CoveEmptySurface(symbol: "cloud.sun", title: controller.isLoading ? "Loading weather…" : "No weather yet",
+                             message: "Choose a location in Weather settings.",
+                             actionTitle: controller.isLoading ? nil : "Weather Settings",
+                             action: controller.isLoading ? nil : openSettings)
+        } else {
+            let now = Date()
+            let hours = Array(state.hourly.filter { $0.date > now.addingTimeInterval(-3600) }.prefix(6))
+            let days = Array(state.daily.filter { $0.date > now.addingTimeInterval(-12 * 3600) }.dropFirst().prefix(4))
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Image(systemName: state.symbol).symbolRenderingMode(.multicolor).font(.system(size: 30))
+                        Text(degrees(state.temperature)).font(.system(size: 38, weight: .light, design: .rounded))
+                    }
+                    Text(state.condition).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                    if let today = state.today {
+                        Text("H \(degrees(today.maximum))  L \(degrees(today.minimum))")
+                            .font(.system(size: 11)).monospacedDigit().foregroundStyle(CoveNotchStyle.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let feels = state.apparentTemperature, feels.isFinite {
+                            Label("Feels like \(degrees(feels))", systemImage: "thermometer.medium")
+                        }
+                        if let humidity = state.humidity, humidity.isFinite {
+                            Label("\(Int(humidity.rounded()))% humidity", systemImage: "humidity")
+                        }
+                        if let wind = state.windSpeed, wind.isFinite {
+                            Label("\(CoveTemperature.wind(wind)) wind", systemImage: "wind")
+                        }
+                    }
+                    .font(.system(size: 10)).monospacedDigit()
+                    .foregroundStyle(CoveNotchStyle.secondary)
+                    .padding(.top, 6)
+                    Spacer(minLength: 0)
+                    Label(state.locationName.isEmpty ? "Saved location" : state.locationName, systemImage: "location.fill")
+                        .font(.system(size: 10)).foregroundStyle(CoveNotchStyle.secondary).lineLimit(1)
+                }
+                .frame(width: 140, alignment: .leading)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 0) {
+                        ForEach(hours) { hour in
+                            VStack(spacing: 5) {
+                                Text(hour.date, format: Date.FormatStyle(timeZone: state.timeZone).hour())
+                                    .font(.system(size: 9)).foregroundStyle(CoveNotchStyle.secondary)
+                                Image(systemName: hour.symbol).symbolRenderingMode(.multicolor).font(.system(size: 14))
+                                    .frame(height: 16)
+                                Text(degrees(hour.temperature)).font(.system(size: 11, weight: .medium)).monospacedDigit()
+                            }
+                            .frame(maxWidth: .infinity)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("\(hour.date.formatted(Date.FormatStyle(timeZone: state.timeZone).hour())), \(hour.condition), \(degrees(hour.temperature))")
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    Label(rainOutlook(state, now: now), systemImage: "umbrella")
+                        .font(.system(size: 10)).foregroundStyle(CoveNotchStyle.secondary).lineLimit(1)
+                    VStack(spacing: 5) {
+                        ForEach(days) { day in
+                            HStack(spacing: 8) {
+                                Text(day.date, format: Date.FormatStyle(timeZone: state.timeZone).weekday(.abbreviated))
+                                    .frame(width: 34, alignment: .leading)
+                                Image(systemName: day.symbol).symbolRenderingMode(.multicolor).frame(width: 20)
+                                if let rain = day.precipitationProbability, rain >= 20 {
+                                    Text("\(Int(rain.rounded()))%").font(.system(size: 9)).foregroundStyle(.cyan)
+                                }
+                                Spacer(minLength: 4)
+                                Text(degrees(day.minimum)).foregroundStyle(CoveNotchStyle.secondary)
+                                Text(degrees(day.maximum)).frame(width: 30, alignment: .trailing)
+                            }
+                            .font(.system(size: 11)).monospacedDigit()
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("\(day.date.formatted(Date.FormatStyle(timeZone: state.timeZone).weekday(.wide))), \(day.condition), high \(degrees(day.maximum)), low \(degrees(day.minimum))"
+                                + ((day.precipitationProbability ?? 0) >= 20 ? ", \(Int((day.precipitationProbability ?? 0).rounded())) percent chance of rain" : ""))
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .padding(.top, 2)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
     }
 }

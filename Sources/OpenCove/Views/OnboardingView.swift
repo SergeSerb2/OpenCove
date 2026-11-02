@@ -13,7 +13,9 @@ struct OnboardingView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var step: CoveOnboardingStep = .welcome
 
-    init(store: CoveStore) {
+    /// `finalPage` opens on the last step; used for development renders.
+    init(store: CoveStore, finalPage: Bool = false) {
+        if finalPage { _step = State(initialValue: .ready) }
         self.store = store
         self.activities = store.activities
         self.notificationMirror = store.notificationMirror
@@ -130,6 +132,10 @@ struct OnboardingView: View {
                 symbol: "slider.horizontal.3", title: "Your Mac, at a glance",
                 detail: "Choose overlays for volume, brightness, battery, audio devices, and Focus."
             )
+            CoveOnboardingFeature(
+                symbol: "hand.draw", title: "Hover, click or swipe",
+                detail: "Swipe down on the panel to open it and up to close it. Swipe sideways or press ← → to change sections. Space plays or pauses. Esc closes."
+            )
             Divider()
             CoveSettingsNote("An independent app under the MIT license. Not affiliated with or endorsed by Alcove.")
         }
@@ -230,15 +236,39 @@ struct OnboardingView: View {
             if CovePaths.isDevelopment {
                 CoveSettingsNote("Launch at login is available in the release app.")
             }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Sections")
+                HStack(spacing: 6) {
+                    ForEach([CoveTab.timer, .files, .notes, .clipboard, .system], id: \.self) { tab in
+                        let on = store.preferences[keyPath: tab.enabledKey]
+                        Button {
+                            store.updatePreferences { $0[keyPath: tab.enabledKey] = !on }
+                        } label: {
+                            Label(tab.title, systemImage: tab.symbol)
+                                .font(.callout)
+                                .padding(.horizontal, 10).padding(.vertical, 5)
+                                .foregroundStyle(on ? Color.black.opacity(0.85) : Color.primary)
+                                .background(on ? CovePreferenceAccent.color(for: store.preferences.accent) : Color.secondary.opacity(0.15),
+                                            in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(tab.title)
+                        .accessibilityValue(on ? "On" : "Off")
+                        .help(tab.settingsHelp)
+                    }
+                }
+                CoveSettingsNote("You can change sections and their order later in Settings → Activities.")
+            }
             Picker("Expanded layout", selection: preference(\.expandedLayout)) {
+                Text("Automatic").tag("automatic")
                 Text("Now Playing").tag("media")
                 Text("Calendar").tag("calendar")
                 Text("Media & Calendar").tag("duo")
             }
             Divider()
             Toggle("Enable private macOS integrations", isOn: preference(\.enablePrivateAPIs))
-            CoveSettingsNote("Now Playing, brightness, and Focus can use undocumented system interfaces. Support varies by Mac and macOS version, and an update can disable these features. This does not bypass system permissions.", symbol: "info.circle")
-            CoveSettingsNote("Settings includes opt-in weather, notification mirroring, and live system audio levels. Live levels need Screen & System Audio Recording access. Automatic audio mixing is controlled by your player.")
+            CoveSettingsNote("Now Playing, brightness and Focus use private macOS interfaces. A macOS update can break them. They never bypass system permissions.", symbol: "info.circle")
+            CoveSettingsNote("More in Settings: weather, sounds, notification mirroring and live audio levels.")
         }
     }
 

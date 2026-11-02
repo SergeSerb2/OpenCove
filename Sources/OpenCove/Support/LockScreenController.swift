@@ -475,6 +475,7 @@ final class LockScreenController {
                                   styleMask: [.borderless, .nonactivatingPanel],
                                   backing: .buffered, defer: false)
         panel.title = "OpenCove widgets"
+        panel.sharingType = store.preferences.hideFromScreenCapture ? .none : .readOnly
         panel.isReleasedWhenClosed = false
         panel.canBecomeVisibleWithoutLogin = true
         panel.level = .screenSaver
@@ -512,7 +513,9 @@ final class LockScreenController {
         let width = min(finite(layout.width, fallback: 460, range: 320...560), bounds.width - 64)
         let height = min(finite(layout.height, fallback: 250, range: 180...280), safeTop - safeBottom)
         guard width >= 320, height >= 180 else { return nil }
-        let center = bounds.minY + bounds.height * finite(layout.verticalCenterFraction, fallback: 0.55, range: 0.45...0.65)
+        // The user's position choice moves the card within the same safe band.
+        let preferred = layout.verticalCenterFraction + 0.1 * CGFloat(store.preferences.lockWidgetPosition)
+        let center = bounds.minY + bounds.height * finite(preferred, fallback: 0.55, range: 0.45...0.65)
         let y = min(max(center - height / 2, safeBottom), safeTop - height)
         let scale = max(1, screen.backingScaleFactor)
         return NSRect(x: (bounds.midX - width / 2) * scale, y: y * scale,

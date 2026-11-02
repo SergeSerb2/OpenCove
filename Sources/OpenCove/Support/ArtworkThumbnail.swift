@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import AppKit
+import CoreImage
 import CryptoKit
 import ImageIO
 import SwiftUI
@@ -11,7 +12,25 @@ struct CoveArtworkThumbnail: @unchecked Sendable {
     let red: Double
     let green: Double
     let blue: Double
+    /// A 64-pixel soft light made from the artwork, with transparent edges.
+    var glow: CGImage? = nil
     var tint: Color { Color(red: red, green: green, blue: blue) }
+
+    static func makeGlow(from image: CGImage) -> CGImage? {
+        let side = 64, inner = 30
+        guard let canvas = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                     space: CGColorSpaceCreateDeviceRGB(),
+                                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        canvas.interpolationQuality = .medium
+        let inset = Double(side - inner) / 2
+        canvas.draw(image, in: CGRect(x: inset, y: inset, width: Double(inner), height: Double(inner)))
+        guard let padded = canvas.makeImage() else { return nil }
+        let input = CIImage(cgImage: padded)
+        let blurred = input.applyingGaussianBlur(sigma: 7)
+            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.7])
+            .cropped(to: input.extent)
+        return CIContext(options: [.useSoftwareRenderer: false]).createCGImage(blurred, from: input.extent)
+    }
 }
 
 actor CoveArtworkCache {
@@ -54,7 +73,8 @@ actor CoveArtworkCache {
             return true
         }
         let lift: (Int) -> Double = { sampled ? 0.35 + 0.65 * Double(pixel[$0]) / 255 : 1 }
-        let value = CoveArtworkThumbnail(image: image, red: lift(0), green: lift(1), blue: lift(2))
+        let value = CoveArtworkThumbnail(image: image, red: lift(0), green: lift(1), blue: lift(2),
+                                         glow: CoveArtworkThumbnail.makeGlow(from: image))
         entries.append((key, value))
         if entries.count > 8 { entries.removeFirst(entries.count - 8) }
         return value

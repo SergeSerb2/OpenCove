@@ -79,6 +79,8 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     @Published private(set) var nativeNotificationsEnabled = false
     @Published private(set) var incomingURLAuthorization = "Disabled"
     var onHUD: ((CoveHUD) -> Void)?
+    /// Called once when a running timer reaches zero.
+    var onTimerFinished: (() -> Void)?
     // Internal route consumers receive filtered source events, independent of UI redaction.
     var onRoutingEvents: (([CoveEvent]) -> Void)?
     var routingEvents: [CoveEvent] {
@@ -1250,6 +1252,30 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
         scheduleTimerNotification()
     }
 
+    /// Adds time to the current timer, running or paused. The total stays within one year.
+    func extendTimer(seconds: Double) {
+        loadIfNeeded()
+        updateTimer()
+        guard seconds.isFinite, seconds > 0, timer.duration > 0, timer.remaining > 0 || timer.running else {
+            lastError = "Start a timer before adding time."
+            return
+        }
+        guard timer.duration + seconds <= CoveTimerState.maximumDuration else {
+            lastError = "A timer can be at most one year long."
+            return
+        }
+        timer.duration += seconds
+        timer.remaining += seconds
+        if timer.running {
+            removeTimerNotification()
+            timer.endsAt = (timer.endsAt ?? Date()).addingTimeInterval(seconds)
+            timer.notificationIdentifier = "OpenCove.timer.\(UUID().uuidString)"
+        }
+        save(timer, as: "activity-timer.json")
+        updateCountdown()
+        if timer.running { scheduleTimerNotification() }
+    }
+
     func cancelTimer() {
         loadIfNeeded()
         removeTimerNotification()
@@ -1288,6 +1314,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
         save(timer, as: "activity-timer.json")
         updateCountdown()
         enqueueNotification(title: "Timer finished", body: "Your OpenCove timer has finished.", source: "Timer", symbol: "timer")
+        onTimerFinished?()
     }
 
     private func handleClockChange() {

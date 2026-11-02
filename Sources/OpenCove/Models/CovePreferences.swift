@@ -133,12 +133,21 @@ struct CovePreferences: Codable, Equatable {
         animationSpeed = bounded(animationSpeed, 0.25...2, defaults.animationSpeed)
         pausedMediaDelay = bounded(pausedMediaDelay, 1...300, defaults.pausedMediaDelay)
         mediaPeekDuration = bounded(mediaPeekDuration, 1...10, defaults.mediaPeekDuration)
+        lowBatteryThreshold = (bounded(lowBatteryThreshold, 5...50, defaults.lowBatteryThreshold) / 5).rounded() * 5
+        soundVolume = bounded(soundVolume, 0.05...1, defaults.soundVolume)
+        breakMinutes = bounded(breakMinutes, 1...30, defaults.breakMinutes).rounded()
+        lockWidgetPosition = (bounded(lockWidgetPosition, -1...1, 0) * 10).rounded() / 10
         if !selectedDisplayUUID.isEmpty, UUID(uuidString: selectedDisplayUUID) == nil { selectedDisplayUUID = "" }
         if CoveWeatherStyle(rawValue: weatherStyle) == nil { weatherStyle = defaults.weatherStyle }
         if !["automatic", "media", "calendar", "timer"].contains(compactActivity) { compactActivity = defaults.compactActivity }
         if !["automatic", "media", "calendar", "duo"].contains(expandedLayout) { expandedLayout = defaults.expandedLayout }
         if !["glass", "clear", "frosted"].contains(nowPlayingStyle) { nowPlayingStyle = defaults.nowPlayingStyle }
         if !["smooth", "fast", "instant"].contains(hudSpeed) { hudSpeed = defaults.hudSpeed }
+        sectionOrder = CoveTab.normalizedOrder(sectionOrder)
+        pinnedShortcuts = Self.normalizedShortcutList(pinnedShortcuts.split(separator: "\n").map(String.init))
+        if !["celsius", "fahrenheit"].contains(temperatureUnit) { temperatureUnit = defaults.temperatureUnit }
+        if CoveHotKeyChoice(rawValue: toggleShortcut) == nil { toggleShortcut = defaults.toggleShortcut }
+        if CoveHUDBarStyle(rawValue: hudProgressStyle) == nil { hudProgressStyle = defaults.hudProgressStyle }
         if !["system", "music", "spotify"].contains(preferredMusicApp) { preferredMusicApp = defaults.preferredMusicApp }
         if !["calendar", "fantastical", "notionCalendar"].contains(preferredCalendarApp) { preferredCalendarApp = defaults.preferredCalendarApp }
         if !["mint", "blue", "purple", "pink", "orange"].contains(accent) { accent = defaults.accent }
@@ -184,6 +193,21 @@ struct CovePreferences: Codable, Equatable {
     // Explicit native Settings consent on this Mac; outside CoveSyncedSettings.
     var enableBetterDisplayFeedback = false
     var enableBattery = true
+    var showBatteryPercentage = true
+    var warnOnLowBattery = true
+    var lowBatteryThreshold = 20.0
+    // Sounds use built-in macOS alert sounds. All are off by default.
+    var playSoundOnLowBattery = false
+    var playSoundOnLock = false
+    var playSoundOnUnlock = false
+    var playHourlyChime = false
+    var hourlyChimeDaytimeOnly = true
+    var playSoundOnEventStart = false
+    var playSoundOnPowerConnected = false
+    var playSoundOnTimerFinished = true
+    var startBreakAfterTimer = false
+    var breakMinutes = 5.0
+    var soundVolume = 0.6
     // Separate native, save-first consent on this Mac. Never synced or granted by widgets.
     var enableLowPowerModeAlerts = false
     var enableBluetooth = true
@@ -192,6 +216,17 @@ struct CovePreferences: Codable, Equatable {
     var mirrorSystemNotifications = false
     var enableFileTray = false
     var enableTimer = false
+    var enableShortcuts = false
+    var enableSystemStats = false
+    var showWeatherSection = false
+    // Follows the region until chosen: Fahrenheit for the US measurement system.
+    var temperatureUnit = Locale.current.measurementSystem == .us ? "fahrenheit" : "celsius"
+    var enableNotes = false
+    var enableClipboard = false
+    /// Section order as comma-separated names. Empty means the default order.
+    var sectionOrder = ""
+    /// Pinned shortcut names, one per line, in tile order.
+    var pinnedShortcuts = ""
     var enableFocus = true
     var enableWeather = false
     var weatherStyle = "conditions"
@@ -205,10 +240,19 @@ struct CovePreferences: Codable, Equatable {
     var showHUDLabels = true
     var showHUDPercentage = true
     var brightnessHUDGlow = false
+    var hudProgressStyle = "accent"
     var showPlaybackIndicator = true
     var showLiveWaveform = false
     var musicColorAccent = true
     var showMediaTotalDuration: Bool = false
+    var hideMediaTitleExtras = false
+    var mediaArtworkGlow = true
+    var showMediaSourceBadge = true
+    var showCompactProgress = false
+    var showLockScreenVolume = false
+    var showCompactPlaybackIndicator = true
+    /// -1 (lower) to 1 (higher); moves lock widgets within their safe band.
+    var lockWidgetPosition = 0.0
     var preferredMusicApp = "system"
     var preferredCalendarApp = "calendar"
     // Local layout only; never changes Calendar reader demand or cloud settings.
@@ -221,6 +265,9 @@ struct CovePreferences: Codable, Equatable {
     var showDeclinedCalendarEvents: Bool = false
     var excludeSubscribedCalendars: Bool = false
     var hideInFullscreen = false
+    var hideMenuBarIcon = false
+    var toggleShortcut = "off"
+    var hideFromScreenCapture = false
     // AppKit window presentation only. Device-local, outside cloud settings.
     var hideInMissionControl = false
     // Local presentation choice; never starts a media reader.
@@ -276,6 +323,23 @@ struct CovePreferences: Codable, Equatable {
         lockWidgetsFollowActivities ? self[keyPath: widget.activityKey] : permitsExtraLockWidgetReader(widget)
     }
 
+    static let shortcutNameLimit = 80
+    static let pinnedShortcutLimit = 8
+
+    var pinnedShortcutNames: [String] { pinnedShortcuts.split(separator: "\n").map(String.init) }
+
+    static func normalizedShortcutList(_ names: [String]) -> String {
+        var seen = Set<String>()
+        let kept = names.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0.count <= shortcutNameLimit && seen.insert($0).inserted }
+        return kept.prefix(pinnedShortcutLimit).joined(separator: "\n")
+    }
+
+    /// The battery percentage that starts a low-battery warning, or nil when warnings are off.
+    var lowBatteryWarningThreshold: Int? {
+        enableBattery && warnOnLowBattery ? Int(lowBatteryThreshold) : nil
+    }
+
     /// A saved waveform choice alone must not start system-audio capture.
     var usesLiveWaveform: Bool { enableMedia && showPlaybackIndicator && showLiveWaveform }
 }
@@ -293,8 +357,23 @@ enum CoveCompactActivity: String {
 }
 
 enum CoveTab: String, Codable, CaseIterable, Identifiable {
-    case media, calendar, files, timer
+    case media, calendar, weather, files, clipboard, notes, timer, shortcuts, system
     var id: String { rawValue }
+
+    /// All sections in the saved order; unknown names are dropped and new sections join at the end.
+    static func ordered(_ saved: String) -> [CoveTab] {
+        var result: [CoveTab] = []
+        for name in saved.split(separator: ",") {
+            if let tab = CoveTab(rawValue: String(name)), !result.contains(tab) { result.append(tab) }
+        }
+        return result + allCases.filter { !result.contains($0) }
+    }
+
+    /// The canonical saved form: empty when the order matches the default.
+    static func normalizedOrder(_ saved: String) -> String {
+        let order = ordered(saved)
+        return order == allCases ? "" : order.map(\.rawValue).joined(separator: ",")
+    }
     var title: String { rawValue.capitalized }
     var symbol: String {
         switch self {
@@ -302,6 +381,11 @@ enum CoveTab: String, Codable, CaseIterable, Identifiable {
         case .calendar: return "calendar"
         case .files: return "tray"
         case .timer: return "timer"
+        case .shortcuts: return "square.grid.2x2"
+        case .system: return "gauge.with.dots.needle.33percent"
+        case .weather: return "cloud.sun"
+        case .notes: return "note.text"
+        case .clipboard: return "doc.on.clipboard"
         }
     }
 }

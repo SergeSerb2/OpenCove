@@ -223,6 +223,24 @@ signed replacement, delta updates, or the public Cloudflare feed. Those require
 separate owned release/account and runtime evidence. No such proof is claimed
 by adding this integration.
 
+## Published beta verification — November 2, 2026
+
+`0.1.0-beta.3` (build 3) is published as a universal, Developer ID signed,
+notarized and stapled ZIP. Its SHA-256 is
+`3535d69b71a1780f7d65c71541e6348a9a1f4969d50cbe6a5c5a9b09ac4f104c`
+(7,828,540 bytes). The archive passed the release validators. All four public
+files downloaded from the host matched the local bytes. The downloaded app
+passed Gatekeeper and staple checks and the 9-flow smoke suite. The feed was
+generated with the pinned Sparkle tools from the live beta.2 feed, so it lists
+build 3 first and keeps build 2. The release descriptor and feed were uploaded
+after those checks, feed last.
+
+The pinned Sparkle 2.10.0 CLI, built from upstream source, found build 3 for an
+isolated copy of the published beta.2 archive. It installed the update from the
+public feed. The result passed signature, staple and Gatekeeper checks, its
+binary matched the published beta.3 binary, and a second probe reported no
+update. The target was not running, so automatic relaunch was not tested.
+
 ## Published beta verification — October 23, 2026
 
 `0.1.0-beta.2` (build 2) is published at the owned domain as a universal,

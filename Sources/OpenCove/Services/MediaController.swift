@@ -230,6 +230,27 @@ final class MediaController: ObservableObject {
         return true // Submission, not player acknowledgement or an atomic OS compare-and-send.
     }
 
+    /// Moves the current item forward or back from its live position, within the track.
+    @discardableResult
+    func skip(by seconds: Double) -> Bool {
+        guard seconds.isFinite, state.duration > 0 else { lastError = "This item has no known length."; return false }
+        let position = min(max(0, playback.elapsed + seconds), state.duration)
+        return seek(to: position, target: state.seekTarget)
+    }
+
+    /// Copies "Title — Artist" for the current item to the clipboard.
+    @discardableResult
+    func copyTitleAndArtist() -> Bool {
+        guard state.available, !state.title.isEmpty else { return false }
+        let text = state.artist.isEmpty ? state.title : "\(state.title) — \(state.artist)"
+        NSPasteboard.general.clearContents()
+        return NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    var canSkipWithinItem: Bool {
+        state.available && state.supportsSeek && state.seekTarget != nil && state.duration > 0
+    }
+
     @discardableResult
     func seek(to seconds: Double, target: String? = nil) -> Bool {
         guard seconds.isFinite else { lastError = "The seek time must be finite."; return false }

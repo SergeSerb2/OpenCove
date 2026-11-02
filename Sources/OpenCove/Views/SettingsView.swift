@@ -23,9 +23,11 @@ struct SettingsView: View {
     @State private var showsOnboarding = false
     @State private var selectedHUD: HUDKind = .volume
     @State private var hudPreviewMessage: String?
+    @State private var search = ""
 
     init(store: CoveStore, initialPage: CoveSettingsPage = .general, updater: CoveUpdater? = nil,
-         keepAwakeStatus: LockScreenKeepAwakeStatus? = nil) {
+         keepAwakeStatus: LockScreenKeepAwakeStatus? = nil, initialSearch: String = "") {
+        self._search = State(initialValue: initialSearch)
         self.store = store
         self.updater = updater
         self.keepAwakeStatus = keepAwakeStatus ?? LockScreenKeepAwakeStatus()
@@ -54,12 +56,26 @@ struct SettingsView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 20)
 
-                List(CoveSettingsPage.allCases, selection: $selection) { page in
-                    Label(page.rawValue, systemImage: page.symbol)
-                        .padding(.vertical, 3)
-                        .tag(page)
+                List(CoveSettingsPage.matching(search), selection: $selection) { page in
+                    VStack(alignment: .leading, spacing: 1) {
+                        Label(page.rawValue, systemImage: page.symbol)
+                        if let hint = page.matchHint(search) {
+                            Text(hint).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                .padding(.leading, 26)
+                        }
+                    }
+                    .padding(.vertical, 3)
+                    .tag(page)
                 }
                 .listStyle(.sidebar)
+                .searchable(text: $search, placement: .sidebar, prompt: "Search")
+                .onChange(of: search) { _, _ in
+                    let matches = CoveSettingsPage.matching(search)
+                    if let first = matches.first, !matches.contains(selection ?? .general) { selection = first }
+                }
+                if CoveSettingsPage.matching(search).isEmpty {
+                    Text("No matching settings").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 16)
+                }
             }
             .navigationSplitViewColumnWidth(min: 172, ideal: 172, max: 190)
         } detail: {
@@ -97,6 +113,7 @@ struct SettingsView: View {
                     case .appearance: appearanceSettings
                     case .media: mediaSettings
                     case .activities: activitySettings
+                    case .overlays: overlaySettings
                     case .weather: weatherSettings
                     case .permissions: permissionSettings
                     case .about: aboutSettings
@@ -135,32 +152,41 @@ struct SettingsView: View {
                 Toggle("Hide when idle", isOn: preference(\.hideWhenIdle))
                 Toggle("Hide in full-screen apps", isOn: preference(\.hideInFullscreen))
                 Toggle("Hide in Mission Control", isOn: preference(\.hideInMissionControl))
+                Toggle("Hide from screenshots and recordings", isOn: preference(\.hideFromScreenCapture))
+                    .help("Some capture tools can still record the panel.")
                 Toggle("Hide while the Now Playing app is active", isOn: preference(\.hideWhenMediaAppActive))
-                CoveSettingsNote("Hides the panel while the app providing Now Playing is frontmost. Temporary alerts still appear. This choice applies to this Mac.")
+                CoveSettingsNote("Hides the panel while you use the music app itself. Alerts still appear.")
                 Toggle("Hide for apps in the Games category", isOn: preference(\.hideForGamesCategory))
-                CoveSettingsNote("Uses only the frontmost app’s declared Games category or an Apple-documented game subcategory. Apps without a supported declaration do not hide the panel. This does not detect Game Mode or actual play. Temporary alerts still appear. Off by default and local to this Mac.")
+                CoveSettingsNote("Works with apps that macOS lists as games. Alerts still appear.")
             }
 
             Section("Lock-screen widgets") {
-                Text("Keep Awake").font(.headline)
-                CoveSettingsNote(keepAwakeStatus.projection.message)
-                if let outcome = keepAwakeStatus.projection.lastOutcome {
-                    LabeledContent("Last Keep Awake outcome", value: outcome.resultCode)
-                }
-                CoveSettingsNote("Start a finite 1–120 minute session from an available lock-screen card. The default is 5 minutes. Stop ends it; Restart starts a new finite session. This affects automatic display sleep on this Mac. Closing the lid or choosing Sleep still works. Activity and duration are never saved. Settings cannot start a session.")
                 Toggle("Show widgets on the lock screen", isOn: preference(\.showOnLockScreen))
                 Toggle("Use the same widgets as activities", isOn: preference(\.lockWidgetsFollowActivities))
-                CoveSettingsNote("These choices apply only to this Mac. Changing mode clears independent choices.")
+                    .help("Applies only to this Mac. Changing this clears independent widget choices.")
                 Toggle("Show event details while locked", isOn: preference(\.showLockScreenPrivateContent))
                     .disabled(!store.preferences.showOnLockScreen)
-                CoveSettingsNote("Lock-screen visibility depends on macOS security policy. Widgets appear only in an app-confirmed locked, active session with displays awake.")
+                CovePreferenceSlider(title: "Widget position", value: preference(\.lockWidgetPosition),
+                                     range: -1...1, step: 0.1, format: "%+.0f", displayScale: 10)
+                    .disabled(!store.preferences.showOnLockScreen)
+                    .help("Moves the widgets up or down, always clear of the clock and the password field.")
+                LabeledContent("Keep Awake") {
+                    Text(keepAwakeStatus.projection.handleState == "active" ? keepAwakeStatus.projection.message : "Start from the lock screen")
+                        .foregroundStyle(.secondary)
+                }
+                .help("Keeps the display awake for 1–120 minutes while locked. Closing the lid or choosing Sleep still works.")
+                if let outcome = keepAwakeStatus.projection.lastOutcome,
+                   !["PREPARED", "STARTED", "REPLACED", "RETIRED", "STOPPED", "IDLE"].contains(outcome.resultCode) {
+                    LabeledContent("Last Keep Awake result", value: outcome.resultCode)
+                }
+                CoveSettingsNote("Widgets appear while your Mac is locked and the display is on. macOS can limit what shows.")
                 if !store.preferences.enablePrivateAPIs {
-                    CoveSettingsNote("Widgets stay hidden and independent readers stay off while private integrations are off. Enable this prerequisite separately; widget choices do not enable it.")
+                    CoveSettingsNote("Turn on private macOS integrations in Permissions to use lock-screen widgets.")
                 } else if !system.state.lockStateKnown {
                     CoveSettingsNote(system.state.capabilityMessages["lock"] ?? "Waiting for a confirmed session lock state.")
                 }
                 if !store.preferences.lockWidgetsFollowActivities {
-                    CoveSettingsNote("Each widget you enable can keep its existing data reader running while this app session is active and lock-screen widgets are on, including while your Mac is unlocked. Existing permissions and source choices still apply. Widget choices do not request access.")
+                    CoveSettingsNote("Each widget reads its data even when the matching activity is off. Widgets never ask for new access.")
                     ForEach(CoveLockWidget.allCases) { widget in
                         Toggle("Enable \(widget.title) widget and reading", isOn: Binding(
                             get: { store.preferences[keyPath: widget.selectionKey] },
@@ -168,8 +194,8 @@ struct SettingsView: View {
                             .disabled(!store.preferences.showOnLockScreen || !store.preferences.enablePrivateAPIs)
                         CoveSettingsNote(widget.disclosure)
                     }
-                    CoveSettingsNote("Turning an activity off also turns its independent widget off. Enable that widget in a separate action if you still want it. Turning widgets, private integrations, or event details off clears independent choices.")
-                    CoveSettingsNote("If saving an off choice fails, it stops extra reading for this session. The previous saved choice may return after restart. Check any save error shown above.")
+                    CoveSettingsNote("Turning an activity off also turns off its widget.")
+                    CoveSettingsNote("If a change cannot be saved, it applies until OpenCove restarts.")
                 }
             }
 
@@ -180,22 +206,28 @@ struct SettingsView: View {
                     Text("Calendar").tag("calendar")
                     Text("Timer").tag("timer")
                 }
-                CoveSettingsNote("Prefer this activity while it is available. Otherwise use automatic switching: media, timer, then calendar. Temporary alerts still appear. Opening the compact panel shows its activity.")
+                CoveSettingsNote("Shows this activity first when available. Automatic picks media, then timer, then calendar.")
                 Picker("Expanded layout", selection: preference(\.expandedLayout)) {
                     Text("Automatic").tag("automatic")
                     Text("Now Playing").tag("media")
                     Text("Calendar").tag("calendar")
                     Text("Media & Calendar").tag("duo")
                 }
-                CoveSettingsNote("Automatic pairs playing media with a current or starting-soon calendar activity. Otherwise it shows Now Playing. Explicit layouts stay selected until you choose another section.")
+                CoveSettingsNote("Automatic shows media and calendar side by side when music plays during or before an event.")
                 Toggle("Swipe to skip media", isOn: preference(\.swipeToSkip))
                 Toggle("Reverse skip swipe direction", isOn: preference(\.reverseSkipSwipe))
                     .disabled(!store.preferences.swipeToSkip)
-                CoveSettingsNote("Swipe left over media for Next, or right for Previous. Direction follows device movement regardless of Natural Scrolling. Reverse changes skipping only. The top edge still changes sections. Some players support buttons only. These choices apply to this Mac.")
+                CoveSettingsNote("Swipe left on media for the next track and right for the previous one. Swipe at the top edge to change sections.")
+                Picker("Open and close shortcut", selection: preference(\.toggleShortcut)) {
+                    ForEach(CoveHotKeyChoice.allCases) { choice in Text(choice.title).tag(choice.rawValue) }
+                }
+                if case .unavailable = store.hotKey.status {
+                    CoveSettingsNote("Another app already uses this shortcut. Choose a different one.", symbol: "exclamationmark.triangle")
+                }
                 Toggle("Expand on hover", isOn: preference(\.expandOnHover))
                 Toggle("Don't expand on hover when idle", isOn: preference(\.disableIdleHoverExpansion))
                     .disabled(!store.preferences.expandOnHover)
-                CoveSettingsNote("When only the idle clock is available, hover will not open controls. Use Open OpenCove in the menu to open them. This choice applies to this Mac.")
+                CoveSettingsNote("When nothing is playing, hovering does not open the panel. Click it or use the menu instead.")
                 CovePreferenceSlider(
                     title: "Hover delay", value: preference(\.hoverDelay),
                     range: 0...2, step: 0.05, format: "%.2f s"
@@ -212,6 +244,10 @@ struct SettingsView: View {
                     .disabled(CovePaths.isDevelopment)
                 LabeledContent("Login item", value: store.loginItemStatus)
                 CoveSettingsNote("macOS manages login access in System Settings → General → Login Items.")
+                Toggle("Hide menu bar icon", isOn: preference(\.hideMenuBarIcon))
+                if store.preferences.hideMenuBarIcon {
+                    CoveSettingsNote("To return here, open OpenCove again from Finder or Spotlight. Right-click the panel for Settings and Quit.")
+                }
                 HStack {
                     Text("Setup")
                     Spacer()
@@ -225,7 +261,7 @@ struct SettingsView: View {
                 Toggle("Sync settings with iCloud on this Mac", isOn: preference(\.syncSettingsWithiCloud))
                 LabeledContent("Status", value: settingsSync.status)
                 CoveSettingsNote(settingsSync.detail)
-                CoveSettingsNote("Shares appearance, interaction, media presentation, and alert timing. Display selection, app access, permissions, files, calendar data, and other device choices stay local. Enable this separately on each Mac.")
+                CoveSettingsNote("Syncs appearance and behavior across your Macs. Displays, permissions, files and calendar data stay on this Mac.")
                 if settingsSync.canChooseLocal {
                     HStack {
                         if settingsSync.canChooseCloud {
@@ -233,7 +269,7 @@ struct SettingsView: View {
                         }
                         Button("Use This Mac's Settings") { settingsSync.useThisMacSettings() }
                     }
-                    CoveSettingsNote("Using this Mac's settings replaces the shared snapshot. Using iCloud settings replaces only the shared appearance and behavior settings on this Mac.")
+                    CoveSettingsNote("Choose which copy to keep. Only appearance and behavior settings change.")
                 }
                 if settingsSync.canCheck {
                     Button("Check for Changes") { settingsSync.checkForChanges() }
@@ -255,15 +291,26 @@ struct SettingsView: View {
     private var appearanceSettings: some View {
         Group {
             Section("Style") {
-                Picker("Accent color", selection: preference(\.accent)) {
-                    ForEach(CovePreferenceAccent.allCases) { accent in
-                        Text(accent.rawValue.capitalized).tag(accent.rawValue)
-                    }
-                    if !CovePreferenceAccent.allCases.contains(where: { $0.rawValue == store.preferences.accent }) {
-                        Text("Custom (\(store.preferences.accent))").tag(store.preferences.accent)
+                CoveAppearancePreview(preferences: store.preferences)
+                    .listRowInsets(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10))
+                LabeledContent("Accent color") {
+                    HStack(spacing: 10) {
+                        ForEach(CovePreferenceAccent.allCases) { accent in
+                            let selected = store.preferences.accent == accent.rawValue
+                            Button { store.updatePreferences { $0.accent = accent.rawValue } } label: {
+                                Circle().fill(CovePreferenceAccent.color(for: accent.rawValue))
+                                    .frame(width: 18, height: 18)
+                                    .overlay(Circle().strokeBorder(.white.opacity(selected ? 0.9 : 0), lineWidth: 2))
+                                    .padding(2)
+                                    .overlay(Circle().strokeBorder(CovePreferenceAccent.color(for: accent.rawValue).opacity(selected ? 0.8 : 0), lineWidth: 1.5))
+                            }
+                            .buttonStyle(.plain)
+                            .help(accent.rawValue.capitalized)
+                            .accessibilityLabel(accent.rawValue.capitalized)
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                        }
                     }
                 }
-                CoveSettingsNote("OpenCove follows your Mac’s light or dark appearance.")
             }
 
             Section("Panel shape") {
@@ -273,7 +320,7 @@ struct SettingsView: View {
                 }
                 CoveSettingsNote("Add a thin outline around the panel. Increase Contrast always uses opaque white.")
                 Toggle("Simulate a notch", isOn: preference(\.simulateNotch))
-                CoveSettingsNote("Use an attached notch with center space from Width and Height. A real camera housing always sets the minimum. Hide when idle still applies.")
+                CoveSettingsNote("Draws a notch-shaped panel on displays without a notch. Width and Height set its size.")
             }
 
             Section("Compact size") {
@@ -325,7 +372,7 @@ struct SettingsView: View {
                 if store.preferences.peekOnSongChange {
                     CovePreferenceSlider(title: "Peek duration", value: preference(\.mediaPeekDuration),
                                          range: 1...10, step: 0.5, format: "%.1f sec")
-                    CoveSettingsNote("Briefly show the new playing item, then return to your compact activity. Opening controls, pausing or an alert dismisses it. Duration changes apply to the next peek.")
+                    CoveSettingsNote("Briefly shows the new track, then returns to the compact view.")
                 }
                 Toggle("Hide paused media from compact view", isOn: preference(\.hidePausedMedia))
                 if store.preferences.hidePausedMedia {
@@ -357,7 +404,14 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 Toggle("Use artwork colors", isOn: preference(\.musicColorAccent))
                 Toggle("Show total duration", isOn: preference(\.showMediaTotalDuration))
-                CoveSettingsNote("When a media progress slider is shown and duration is known, replace the time remaining on the right with total duration. Applies to expanded media, Duo, and the media lock widget. This choice stays on this Mac and does not enable media reading.")
+                    .help("Shows the track length instead of the time remaining.")
+                Toggle("Progress line in compact view", isOn: preference(\.showCompactProgress))
+                Toggle("Volume control on the lock screen", isOn: preference(\.showLockScreenVolume))
+                Toggle("Show the playing app on artwork", isOn: preference(\.showMediaSourceBadge))
+                Toggle("Artwork glow", isOn: preference(\.mediaArtworkGlow))
+                    .help("Casts a soft light from the album artwork into the expanded panel.")
+                Toggle("Hide title extras", isOn: preference(\.hideMediaTitleExtras))
+                    .help("Hides tags such as Remastered, Bonus Track, feat. and Single Version. Remix, Live and Acoustic stay visible.")
                 Picker("Playback indicator", selection: Binding(get: {
                     !store.preferences.showPlaybackIndicator ? "none" : store.preferences.showLiveWaveform ? "live" : "decorative"
                 }, set: { mode in
@@ -370,6 +424,8 @@ struct SettingsView: View {
                     Text("Decorative bars").tag("decorative")
                     Text("System audio levels").tag("live")
                 }
+                Toggle("Show indicator in compact view", isOn: preference(\.showCompactPlaybackIndicator))
+                    .disabled(!store.preferences.showPlaybackIndicator)
                 if store.preferences.usesLiveWaveform {
                     Text(waveform.status).font(.caption).foregroundStyle(.secondary)
                     Button("Allow System Audio Levels") { store.requestWaveformAccess() }
@@ -395,6 +451,110 @@ struct SettingsView: View {
 
     private var activitySettings: some View {
         Group {
+            Section("Panel sections") {
+                CoveSectionOrderList(store: store)
+            }
+
+            if store.preferences.enableTimer {
+                Section("Timer") {
+                    Toggle("Start a break when a timer ends", isOn: preference(\.startBreakAfterTimer))
+                    if store.preferences.startBreakAfterTimer {
+                        CovePreferenceSlider(title: "Break length", value: preference(\.breakMinutes),
+                                             range: 1...30, step: 1, format: "%.0f min")
+                    }
+                }
+            }
+
+            if store.preferences.enableShortcuts {
+                Section("Pinned shortcuts") {
+                    CoveShortcutPinList(store: store, controller: store.shortcuts)
+                }
+            }
+
+            Section("Calendar & meetings") {
+                Toggle("Show calendar events", isOn: preference(\.enableCalendar))
+                Toggle("Show selected-day list", isOn: preference(\.showCalendarList))
+                    .help("Hides the day list and keeps the month grid.")
+                Toggle("Show event dots", isOn: preference(\.showCalendarEventIndicators))
+                    .help("Shows dots on days with events.")
+                Toggle("Use source colors in Calendar view", isOn: preference(\.useCalendarViewSourceColors))
+                    .help("Colors event dots and list accents with each calendar’s color.")
+                Toggle("Show declined events", isOn: preference(\.showDeclinedCalendarEvents))
+                    .help("Includes events you declined. Canceled events stay hidden.")
+                Toggle("Exclude subscribed calendars", isOn: preference(\.excludeSubscribedCalendars))
+                    .help("Hides events from subscribed calendars, such as holidays or sports.")
+                Picker("Calendar app", selection: preference(\.preferredCalendarApp)) {
+                    Text("Calendar").tag("calendar")
+                    Text("Fantastical").tag("fantastical")
+                    Text("Notion Calendar").tag("notionCalendar")
+                }
+                LabeledContent("Calendar access", value: store.preferences.enableCalendar ? activities.calendarAuthorization : "Activity disabled")
+                if activities.calendarAuthorization == "Saved calendar settings need review" {
+                    CoveCalendarSourceRecovery(activities: activities)
+                }
+                Toggle("Event alerts", isOn: Binding(get: { activities.calendarAlertsEnabled }, set: { activities.setCalendarAlertsEnabled($0) }))
+                Stepper("Alert \(activities.calendarPreEventLeadMinutes) minutes before", value: Binding(get: { activities.calendarPreEventLeadMinutes }, set: { activities.setCalendarPreEventLeadMinutes($0) }), in: 0...120)
+                if store.preferences.enableCalendar {
+                    ForEach(activities.calendarSources) { calendar in
+                        Toggle(calendar.title, isOn: Binding(get: { !calendar.isExcluded }, set: { activities.setCalendarExcluded(calendar.id, excluded: !$0) }))
+                    }
+                }
+            }
+
+            Section("Connected devices") {
+                AudioOutputPicker(system: system)
+                LabeledContent("Bluetooth access", value: Self.readableAccess(system.state.bluetoothAuthorization))
+                Button("Allow Bluetooth Access") {
+                    guard store.preferences.enableBluetooth else { return }
+                    system.requestBluetoothAccess()
+                }
+                    .disabled(!store.preferences.enableBluetooth || system.isRequestingBluetoothAccess)
+                LabeledContent("Focus access", value: Self.readableAccess(system.state.focusAuthorization))
+                Button("Allow Focus Status") {
+                    guard store.preferences.enableFocus else { return }
+                    system.requestFocusAccess()
+                }
+                    .disabled(!store.preferences.enableFocus || system.isRequestingFocusAccess)
+                if let error = system.lastError { CoveSettingsError(error) }
+            }
+
+            Section("Time to leave") {
+                TravelSettingsView(controller: store.travel)
+            }
+
+            Section("Notifications") {
+                Toggle("Show OpenCove notification overlays", isOn: preference(\.enableNotifications))
+                Toggle("Mirror system notification banners", isOn: preference(\.mirrorSystemNotifications))
+                CoveSettingsNote("Shows new notification banners in the panel. Needs Accessibility access. Older notifications are not shown.")
+                CoveSettingsNote(store.mirroringStatus, symbol: "info.circle")
+                Button("Review Permissions…") { selection = .permissions }
+            }
+
+            Section("Weather") {
+                Button("Weather settings…") { selection = .weather }
+                CoveSettingsNote("Choose a weather widget style and location.")
+            }
+            Section("Sounds") {
+                soundToggle("Lock", .lock)
+                soundToggle("Unlock", .unlock)
+                soundToggle("Timer finished", .timerFinished)
+                soundToggle("Charger connected", .powerConnected)
+                soundToggle("Low battery", .lowBattery)
+                soundToggle("Calendar event starts", .eventStart)
+                soundToggle("Hourly chime", .hourlyChime)
+                if store.preferences.playHourlyChime {
+                    Toggle("Only between 8 AM and 10 PM", isOn: preference(\.hourlyChimeDaytimeOnly))
+                }
+                CovePreferenceSlider(title: "Sound volume", value: preference(\.soundVolume),
+                                     range: 0.05...1, step: 0.05, format: "%.0f%%", displayScale: 100)
+                CoveSettingsNote("Uses built-in macOS sounds and follows your output volume.")
+            }
+
+        }
+    }
+
+    private var overlaySettings: some View {
+        Group {
             Section("System overlays") {
                 Toggle("Replace hardware-key HUDs", isOn: preference(\.replaceSystemHUDs))
                     .disabled(!store.preferences.enablePrivateAPIs)
@@ -409,12 +569,17 @@ struct SettingsView: View {
                     get: { store.preferences.enableBetterDisplayFeedback },
                     set: { store.setBetterDisplayFeedback(enabled: $0) }))
                     .disabled(!store.preferences.enableBrightnessHUD && !store.preferences.enableBetterDisplayFeedback)
-                CoveSettingsNote("Off by default on this Mac; never synced. Receives local, unauthenticated BetterDisplay reports for one explicitly selected, unique external display. Requires overlay labels. Reports do not prove physical brightness or allow OpenCove to control that display.")
-                CoveSettingsNote("BetterDisplay must already be running with Dispatch OSD notifications enabled in its Integration settings. Configure its overlays yourself to avoid duplicates. OpenCove does not launch or configure BetterDisplay, send requests, change brightness, take over keys, request access, or play haptics for these reports.")
-                Text(store.betterDisplayFeedbackStatus).font(.caption).foregroundStyle(.secondary)
-                Button("Preview BetterDisplay feedback") { hudPreviewMessage = store.previewBetterDisplayFeedback() }
-                    .disabled(store.isExpanded || !store.preferences.enableBetterDisplayFeedback)
-                CoveSettingsNote("This separate preview uses only the last eligible cached report. A 5-second receipt limit is an OpenCove policy, not a physical freshness guarantee. Missing data stays unavailable. The ordinary overlay preview keeps its native source.")
+                    .help("Shows brightness changes that BetterDisplay reports for an external display you select. Needs overlay labels.")
+                if store.preferences.enableBetterDisplayFeedback {
+                    CoveSettingsNote("In BetterDisplay, turn on Integration → Dispatch OSD notifications. Turn off BetterDisplay's own overlay to avoid duplicates.")
+                    Text(store.betterDisplayFeedbackStatus).font(.caption).foregroundStyle(.secondary)
+                    Button("Preview BetterDisplay feedback") { hudPreviewMessage = store.previewBetterDisplayFeedback() }
+                        .disabled(store.isExpanded)
+                        .help("The preview uses the last report from the past 5 seconds.")
+                }
+                Picker("Level bar style", selection: preference(\.hudProgressStyle)) {
+                    ForEach(CoveHUDBarStyle.allCases) { style in Text(style.title).tag(style.rawValue) }
+                }
                 Toggle("Brightness symbol glow", isOn: preference(\.brightnessHUDGlow))
                     .disabled(!store.preferences.enableBrightnessHUD)
                     .help("Add a soft glow to the sun symbol on display brightness overlays.")
@@ -423,9 +588,10 @@ struct SettingsView: View {
                     get: { store.preferences.enableLowPowerModeAlerts },
                     set: { store.setLowPowerModeAlerts(enabled: $0) }))
                     .disabled(!store.preferences.enableBattery && !store.preferences.enableLowPowerModeAlerts)
-                CoveSettingsNote("Off by default on this Mac; never synced. After consent is saved, reads the public Low Power Mode Boolean and receives its change notifications. Shows an OpenCove overlay for observed on/off changes, with the existing battery timing, motion, labels and haptics settings. The first reading is silent.")
-                CoveSettingsNote("Does not change Low Power Mode or send a Notification Center alert. A false reading can mean off, unknown or unsupported hardware. Battery & charging is the master: turning it off clears this choice. Battery widgets grant no mode reading or alerts. The existing charge monitor keeps its current behavior.")
-                Text(store.lowPowerModeAlertsStatus).font(.caption).foregroundStyle(.secondary)
+                    .help("Shows an overlay when Low Power Mode turns on or off. Needs Battery & charging.")
+                if store.preferences.enableLowPowerModeAlerts {
+                    Text(store.lowPowerModeAlertsStatus).font(.caption).foregroundStyle(.secondary)
+                }
                 Toggle("Bluetooth & audio devices", isOn: preference(\.enableBluetooth))
                 Toggle("Focus status", isOn: preference(\.enableFocus))
                 Toggle("Show overlay labels", isOn: preference(\.showHUDLabels))
@@ -477,81 +643,29 @@ struct SettingsView: View {
                 if let hudPreviewMessage { Text(hudPreviewMessage).font(.caption).foregroundStyle(.secondary) }
             }
 
-            Section("Activities") {
-                Toggle("Timer", isOn: preference(\.enableTimer))
-                Toggle("File tray", isOn: preference(\.enableFileTray))
-                CoveSettingsNote("The file tray holds files you add. It does not scan your folders.")
+            Section("Battery") {
+                Toggle("Show battery percentage", isOn: preference(\.showBatteryPercentage))
+                    .disabled(!store.preferences.enableBattery)
+                Toggle("Warn on low battery", isOn: preference(\.warnOnLowBattery))
+                    .disabled(!store.preferences.enableBattery)
+                CovePreferenceSlider(title: "Low battery level", value: preference(\.lowBatteryThreshold),
+                                     range: 5...50, step: 5, format: "%.0f%%")
+                    .disabled(!store.preferences.enableBattery || !store.preferences.warnOnLowBattery)
+                CoveSettingsNote("A warning also appears at 5%. Warnings appear only on battery power.")
             }
 
-            Section("Calendar & meetings") {
-                Toggle("Show calendar events", isOn: preference(\.enableCalendar))
-                Toggle("Show selected-day list", isOn: preference(\.showCalendarList))
-                CoveSettingsNote("Keep the month grid when the list is hidden. Your selected day stays selected.")
-                Toggle("Show event dots", isOn: preference(\.showCalendarEventIndicators))
-                CoveSettingsNote("Month-grid dots only. Event counts stay in day help and accessibility information.")
-                Toggle("Use source colors in Calendar view", isOn: preference(\.useCalendarViewSourceColors))
-                CoveSettingsNote("Only month-grid event dots and selected-day list accents, including the condensed list popover.")
-                Toggle("Show declined events", isOn: preference(\.showDeclinedCalendarEvents))
-                CoveSettingsNote("Include events you declined. Canceled events and excluded calendars stay hidden.")
-                Toggle("Exclude subscribed calendars", isOn: preference(\.excludeSubscribedCalendars))
-                CoveSettingsNote("Hide events from subscribed calendars, including CalDAV subscriptions. Your individual calendar selections stay saved.")
-                Picker("Calendar app", selection: preference(\.preferredCalendarApp)) {
-                    Text("Calendar").tag("calendar")
-                    Text("Fantastical").tag("fantastical")
-                    Text("Notion Calendar").tag("notionCalendar")
-                }
-                LabeledContent("Calendar access", value: store.preferences.enableCalendar ? activities.calendarAuthorization : "Activity disabled")
-                if activities.calendarAuthorization == "Saved calendar settings need review" {
-                    CoveCalendarSourceRecovery(activities: activities)
-                }
-                Toggle("Event alerts", isOn: Binding(get: { activities.calendarAlertsEnabled }, set: { activities.setCalendarAlertsEnabled($0) }))
-                Stepper("Alert \(activities.calendarPreEventLeadMinutes) minutes before", value: Binding(get: { activities.calendarPreEventLeadMinutes }, set: { activities.setCalendarPreEventLeadMinutes($0) }), in: 0...120)
-                if store.preferences.enableCalendar {
-                    ForEach(activities.calendarSources) { calendar in
-                        Toggle(calendar.title, isOn: Binding(get: { !calendar.isExcluded }, set: { activities.setCalendarExcluded(calendar.id, excluded: !$0) }))
-                    }
-                }
-            }
-
-            Section("Connected devices") {
-                AudioOutputPicker(system: system)
-                LabeledContent("Bluetooth access", value: system.state.bluetoothAuthorization)
-                Button("Allow Bluetooth Access") {
-                    guard store.preferences.enableBluetooth else { return }
-                    system.requestBluetoothAccess()
-                }
-                    .disabled(!store.preferences.enableBluetooth || system.isRequestingBluetoothAccess)
-                LabeledContent("Focus access", value: system.state.focusAuthorization)
-                Button("Allow Focus Status") {
-                    guard store.preferences.enableFocus else { return }
-                    system.requestFocusAccess()
-                }
-                    .disabled(!store.preferences.enableFocus || system.isRequestingFocusAccess)
-                if let error = system.lastError { CoveSettingsError(error) }
-            }
-
-            Section("Time to leave") {
-                TravelSettingsView(controller: store.travel)
-            }
-
-            Section("Notifications") {
-                Toggle("Show OpenCove notification overlays", isOn: preference(\.enableNotifications))
-                Toggle("Mirror system notification banners", isOn: preference(\.mirrorSystemNotifications))
-                CoveSettingsNote("Mirroring reads new, readable Notification Center banners with Accessibility access. Banner text can appear in OpenCove. Support varies by macOS version; past notifications are not imported.")
-                CoveSettingsNote(store.mirroringStatus, symbol: "info.circle")
-                Button("Review Permissions…") { selection = .permissions }
-            }
-
-            Section("Weather") {
-                Button("Weather settings…") { selection = .weather }
-                CoveSettingsNote("Choose a weather widget style and location.")
-            }
         }
     }
 
     private var weatherSettings: some View {
         Section("Weather widget") {
             Toggle("Enable weather", isOn: preference(\.enableWeather))
+            Picker("Temperature unit", selection: preference(\.temperatureUnit)) {
+                Text("Celsius (°C)").tag("celsius")
+                Text("Fahrenheit (°F)").tag("fahrenheit")
+            }
+            Toggle("Show a Weather section in the panel", isOn: preference(\.showWeatherSection))
+                .disabled(!store.preferences.enableWeather)
             Picker("Weather widget style", selection: preference(\.weatherStyle)) {
                 ForEach(CoveWeatherStyle.allCases) { style in Text(style.title).tag(style.rawValue) }
             }
@@ -612,7 +726,7 @@ struct SettingsView: View {
 
             Section("System integrations") {
                 Toggle("Enable private macOS integrations", isOn: preference(\.enablePrivateAPIs))
-                CoveSettingsNote("Uses undocumented system interfaces for features such as Now Playing, brightness, and Focus. Support varies by Mac and macOS version. An update can disable these features.", symbol: "info.circle")
+                CoveSettingsNote("Now Playing, brightness and Focus use private macOS interfaces. A macOS update can break them.", symbol: "info.circle")
                 CoveSettingsNote("This switch does not bypass macOS permissions or lock-screen security.")
             }
         }
@@ -645,6 +759,12 @@ struct SettingsView: View {
 
             Section("Open source") {
                 LabeledContent("License", value: "MIT")
+                HStack(spacing: 14) {
+                    Link("Source code", destination: URL(string: "https://github.com/SergeSerb2/OpenCove")!)
+                    Link("Report a bug", destination: URL(string: "https://github.com/SergeSerb2/OpenCove/issues/new/choose")!)
+                    Link("Changes", destination: URL(string: "https://github.com/SergeSerb2/OpenCove/blob/main/CHANGELOG.md")!)
+                }
+                .font(.callout)
                 CoveSettingsNote("Independently authored. OpenCove is not affiliated with or endorsed by Alcove. It contains no Alcove code or artwork.")
             }
 
@@ -669,6 +789,31 @@ struct SettingsView: View {
         return "Version \(version)"
     }
 
+    /// Turns internal access states such as "notDetermined" into plain words.
+    static func readableAccess(_ value: String) -> String {
+        switch value {
+        case "notDetermined": return "Not requested"
+        case "authorized": return "Allowed"
+        case "denied": return "Denied"
+        case "restricted": return "Restricted"
+        case "disabled": return "Off"
+        case "unavailable": return "Unavailable"
+        default: return value.prefix(1).uppercased() + value.dropFirst()
+        }
+    }
+
+    private func soundToggle(_ title: String, _ event: CoveSoundEvent) -> some View {
+        HStack {
+            Toggle(title, isOn: preference(event.writableKey))
+            Button {
+                store.sounds.play(event, volume: store.preferences.soundVolume)
+            } label: { Image(systemName: "play.circle") }
+            .buttonStyle(.borderless)
+            .help("Play the \(title.lowercased()) sound")
+            .accessibilityLabel("Play \(title) sound")
+        }
+    }
+
     private func preference<Value>(_ keyPath: WritableKeyPath<CovePreferences, Value>) -> Binding<Value> {
         Binding(
             get: { store.preferences[keyPath: keyPath] },
@@ -689,6 +834,7 @@ enum CoveSettingsPage: String, CaseIterable, Identifiable {
     case appearance = "Appearance"
     case media = "Media"
     case activities = "Activities"
+    case overlays = "Overlays"
     case weather = "Weather"
     case permissions = "Permissions"
     case about = "About"
@@ -701,6 +847,7 @@ enum CoveSettingsPage: String, CaseIterable, Identifiable {
         case .appearance: return "paintpalette"
         case .media: return "music.note"
         case .activities: return "square.stack.3d.up"
+        case .overlays: return "rectangle.inset.topright.filled"
         case .weather: return "cloud.sun"
         case .permissions: return "hand.raised"
         case .about: return "info.circle"
@@ -713,6 +860,7 @@ enum CoveSettingsPage: String, CaseIterable, Identifiable {
         case .appearance: return "A small space, made yours."
         case .media: return "Keep playback within reach."
         case .activities: return "Choose what appears in your panel."
+        case .overlays: return "Volume, brightness, battery and more, at a glance."
         case .weather: return "Weather for the location you choose."
         case .permissions: return "You choose which access to grant."
         case .about: return "A little more room for what matters."
@@ -742,19 +890,20 @@ struct CovePreferenceSlider: View {
     let range: ClosedRange<Double>
     let step: Double
     let format: String
+    var displayScale: Double = 1
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(title)
                 Spacer()
-                Text(String(format: format, value))
+                Text(String(format: format, value * displayScale))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
             Slider(value: $value, in: range, step: step)
                 .accessibilityLabel(title)
-                .accessibilityValue(String(format: format, value))
+                .accessibilityValue(String(format: format, value * displayScale))
         }
         .padding(.vertical, 3)
     }
@@ -838,6 +987,15 @@ struct CovePermissionRow<Actions: View>: View {
     let status: String
     @ViewBuilder var actions: () -> Actions
 
+    /// Green when granted, orange when refused, gray when not yet decided.
+    private var statusColor: Color {
+        let text = status.lowercased()
+        if text.contains("denied") || text.contains("restricted") { return .orange }
+        if !text.contains("not") && (text.contains("allowed") || text.contains("authorized") || text.contains("full access")
+                                     || text.contains("granted")) { return .green }
+        return .gray
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
@@ -849,10 +1007,13 @@ struct CovePermissionRow<Actions: View>: View {
                     HStack(alignment: .firstTextBaseline) {
                         Text(title).fontWeight(.medium)
                         Spacer(minLength: 8)
-                        Text(status)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
+                        HStack(spacing: 5) {
+                            Circle().fill(statusColor).frame(width: 6, height: 6)
+                            Text(status)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.trailing)
+                        }
                     }
                     Text(detail)
                         .font(.caption)
@@ -884,5 +1045,220 @@ final class CovePermissionAccess: ObservableObject {
     static func openSettings(_ address: String) {
         guard let url = URL(string: address) else { return }
         NSWorkspace.shared.open(url)
+    }
+}
+
+/// A true-size sketch of the compact panel under a menu bar. It follows the
+/// accent, outline, size and corner choices as you change them.
+struct CoveAppearancePreview: View {
+    let preferences: CovePreferences
+
+    var body: some View {
+        let accent = CovePreferenceAccent.color(for: preferences.accent)
+        let width = preferences.notchWidth + 70
+        let height = preferences.notchHeight
+        let radius = min(preferences.cornerRadius, height / 2)
+        ZStack(alignment: .top) {
+            LinearGradient(colors: [Color(red: 0.16, green: 0.2, blue: 0.42), Color(red: 0.45, green: 0.27, blue: 0.5),
+                                    Color(red: 0.86, green: 0.5, blue: 0.42)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            Rectangle().fill(.black.opacity(0.25)).frame(height: 22)
+                .frame(maxHeight: .infinity, alignment: .top)
+            UnevenRoundedRectangle(bottomLeadingRadius: radius, bottomTrailingRadius: radius, style: .continuous)
+                .fill(.black)
+                .overlay {
+                    if preferences.showContrastOutline {
+                        UnevenRoundedRectangle(bottomLeadingRadius: radius, bottomTrailingRadius: radius, style: .continuous)
+                            .strokeBorder(preferences.useAccentOutline ? accent : .white.opacity(0.35), lineWidth: 1)
+                    }
+                }
+                .overlay {
+                    HStack {
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(LinearGradient(colors: [accent, accent.opacity(0.4)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .frame(width: min(23, height - 9), height: min(23, height - 9))
+                        Spacer()
+                        HStack(spacing: 2) {
+                            ForEach([0.5, 0.9, 0.65, 1.0, 0.4], id: \.self) { level in
+                                Capsule().fill(accent).frame(width: 2.5, height: max(3, (height - 16) * level))
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                }
+                .frame(width: width, height: height)
+        }
+        .frame(height: max(96, height + 40))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Panel preview")
+    }
+}
+
+/// Pins macOS Shortcuts to the panel, up to eight, in the order chosen.
+@MainActor
+struct CoveShortcutPinList: View {
+    @ObservedObject var store: CoveStore
+    @ObservedObject var controller: ShortcutsController
+
+    var body: some View {
+        let pinned = store.preferences.pinnedShortcutNames
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Pinned \(pinned.count) of \(CovePreferences.pinnedShortcutLimit)")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(controller.isListing ? "Loading…" : "Refresh") { controller.refreshList() }
+                    .disabled(controller.isListing)
+            }
+            if let error = controller.listError {
+                CoveSettingsNote(error, symbol: "exclamationmark.triangle")
+            } else if controller.available.isEmpty && !controller.isListing {
+                CoveSettingsNote("No shortcuts found. Create one in the Shortcuts app, then refresh.")
+            }
+            // Pinned names that no longer exist stay listed, so they can be unpinned.
+            let missing = controller.isListing || controller.listError != nil ? [] : pinned.filter { !controller.available.contains($0) }
+            ForEach(controller.available + missing, id: \.self) { name in
+                Toggle(missing.contains(name) ? "\(name) (not found)" : name, isOn: Binding(
+                    get: { pinned.contains(name) },
+                    set: { pin in
+                        var names = store.preferences.pinnedShortcutNames
+                        if pin { names.append(name) } else { names.removeAll { $0 == name } }
+                        store.updatePreferences { $0.pinnedShortcuts = CovePreferences.normalizedShortcutList(names) }
+                    }))
+                .disabled(!pinned.contains(name) && pinned.count >= CovePreferences.pinnedShortcutLimit)
+            }
+            CoveSettingsNote("A shortcut runs only when you tap its tile. Shortcuts may ask for their own permissions.")
+        }
+        .onAppear { if controller.available.isEmpty { controller.refreshList() } }
+    }
+}
+
+/// Reorders the panel's sections. Disabled sections stay listed, dimmed, so
+/// their place is kept when they are turned on.
+@MainActor
+struct CoveSectionOrderList: View {
+    @ObservedObject var store: CoveStore
+
+    var body: some View {
+        let order = CoveTab.ordered(store.preferences.sectionOrder)
+        VStack(spacing: 2) {
+            ForEach(Array(order.enumerated()), id: \.element) { index, tab in
+                HStack(spacing: 10) {
+                    Image(systemName: tab.symbol).frame(width: 18).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(tab.title)
+                        if let detail = tab.settingsDetail(store.preferences) {
+                            Text(detail).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Toggle(tab.title, isOn: Binding(
+                        get: { store.preferences[keyPath: tab.enabledKey] },
+                        set: { value in store.updatePreferences { $0[keyPath: tab.enabledKey] = value } }))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .disabled(tab == .weather && !store.preferences.enableWeather)
+                        .help(tab.settingsHelp)
+                    Button { move(order, from: index, by: -1) } label: { Image(systemName: "chevron.up") }
+                        .disabled(index == 0)
+                        .accessibilityLabel("Move \(tab.title) up")
+                    Button { move(order, from: index, by: 1) } label: { Image(systemName: "chevron.down") }
+                        .disabled(index == order.count - 1)
+                        .accessibilityLabel("Move \(tab.title) down")
+                }
+                .buttonStyle(.borderless)
+                .padding(.vertical, 2)
+            }
+            HStack {
+                CoveSettingsNote("Turn sections on or off. The order sets the footer icons, swipes and the section menu.")
+                Spacer()
+                Button("Reset Order") { store.updatePreferences { $0.sectionOrder = "" } }
+                    .disabled(store.preferences.sectionOrder.isEmpty)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private func move(_ order: [CoveTab], from index: Int, by offset: Int) {
+        var next = order
+        let target = index + offset
+        guard next.indices.contains(target) else { return }
+        next.swapAt(index, target)
+        store.updatePreferences { $0.sectionOrder = CoveTab.normalizedOrder(next.map(\.rawValue).joined(separator: ",")) }
+    }
+}
+
+extension CoveSettingsPage {
+    /// Words people may search for, mapped to the page that holds them.
+    private var keywords: [String] {
+        switch self {
+        case .general: return ["display", "monitor", "hide", "full screen", "mission control", "screenshot", "recording",
+                               "lock screen", "widget", "keep awake", "swipe", "gesture", "hover", "shortcut", "hotkey",
+                               "keyboard", "login", "startup", "menu bar", "icon", "icloud", "sync", "layout", "games"]
+        case .appearance: return ["accent", "color", "colour", "outline", "contrast", "notch", "width", "height", "corner",
+                                  "size", "motion", "animation", "haptic", "theme"]
+        case .media: return ["music", "spotify", "player", "now playing", "artwork", "glow", "title", "peek", "duration",
+                             "progress", "waveform", "audio", "applescript", "lock screen volume"]
+        case .activities: return ["timer", "break", "file", "tray", "clipboard", "notes", "shortcuts", "system", "cpu",
+                                  "memory", "network", "disk", "calendar", "event", "meeting", "bluetooth", "device",
+                                  "notification", "travel", "leave", "sound", "chime", "section", "order"]
+        case .overlays: return ["hud", "overlay", "volume", "brightness", "battery", "low battery", "charging",
+                                "low power", "betterdisplay", "focus", "level", "bar", "percentage"]
+        case .weather: return ["weather", "forecast", "temperature", "location", "rain"]
+        case .permissions: return ["permission", "access", "privacy", "accessibility", "private"]
+        case .about: return ["update", "version", "license", "source", "bug", "setup", "onboarding", "reset"]
+        }
+    }
+
+    static func matching(_ query: String) -> [CoveSettingsPage] {
+        let text = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !text.isEmpty else { return allCases }
+        return allCases.filter { $0.rawValue.lowercased().contains(text) || $0.keywords.contains { $0.contains(text) } }
+    }
+
+    /// The first keyword that matched, shown under the page name while searching.
+    func matchHint(_ query: String) -> String? {
+        let text = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !text.isEmpty, !rawValue.lowercased().contains(text) else { return nil }
+        return keywords.first { $0.contains(text) }.map { $0.prefix(1).uppercased() + $0.dropFirst() }
+    }
+}
+
+extension CoveTab {
+    /// The preference that turns this section on.
+    var enabledKey: WritableKeyPath<CovePreferences, Bool> {
+        switch self {
+        case .media: return \.enableMedia
+        case .calendar: return \.enableCalendar
+        case .weather: return \.showWeatherSection
+        case .files: return \.enableFileTray
+        case .clipboard: return \.enableClipboard
+        case .notes: return \.enableNotes
+        case .timer: return \.enableTimer
+        case .shortcuts: return \.enableShortcuts
+        case .system: return \.enableSystemStats
+        }
+    }
+
+    func settingsDetail(_ preferences: CovePreferences) -> String? {
+        switch self {
+        case .weather where !preferences.enableWeather: return "Turn on weather in Weather settings first"
+        case .clipboard: return "Recent copied text, in memory only"
+        case .shortcuts: return "Run pinned macOS Shortcuts"
+        case .system: return "CPU, memory, network and disk"
+        default: return nil
+        }
+    }
+
+    var settingsHelp: String {
+        switch self {
+        case .clipboard: return "Keeps the last 20 copied texts in memory only. Passwords that apps mark as concealed are skipped. Turning this off forgets the history."
+        case .notes: return "A small scratchpad, saved on this Mac."
+        case .system: return "Readings update only while the section is open."
+        case .files: return "Holds files you add. It does not scan your folders."
+        default: return "Show the \(title) section"
+        }
     }
 }

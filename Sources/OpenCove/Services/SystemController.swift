@@ -26,6 +26,14 @@ final class SystemController: NSObject, ObservableObject {
     @Published private(set) var isRequestingBluetoothAccess = false
     @Published private(set) var isRequestingFocusAccess = false
     var onHUD: ((CoveHUD) -> Void)?
+    /// Called for each lock or unlock notification that changes the known state.
+    var onLockTransition: ((Bool) -> Void)?
+    /// Called when the internal battery falls to a warning level while on battery power.
+    var onLowBattery: ((Int) -> Void)?
+    /// Called when a charger connects to a Mac with an internal battery.
+    var onPowerConnected: (() -> Void)?
+    /// The configured warning level. A nil value turns low-battery warnings off.
+    var lowBatteryThreshold: Int? = 20
     var onLockChange: ((Bool) -> Void)?
     var onLowPowerModeInvalidation: (() -> Void)?
 
@@ -179,6 +187,7 @@ final class SystemController: NSObject, ObservableObject {
         generation += 1
         configureLowPowerModeAlerts(enabled: false, admitted: false)
         state.batteryTimeToEmptyMinutes = nil
+        state.batteryTimeToFullMinutes = nil
         refreshWork?.cancel()
         refreshWork = nil
         pendingParts = []
@@ -613,7 +622,9 @@ final class SystemController: NSObject, ObservableObject {
                 emit(CoveHUD(kind: .volume, title: "Audio output disconnected", subtitle: old.outputDevice, symbol: "speaker.slash"))
             } else {
                 emit(CoveHUD(kind: new.audioOutputIsBluetooth ? .bluetooth : .volume,
-                             title: new.outputDevice, subtitle: "Audio output", symbol: new.audioOutputIsBluetooth ? "headphones" : "speaker.wave.2.fill"))
+                             title: new.outputDevice, subtitle: "Audio output",
+                             symbol: new.audioOutputIsBluetooth ? CoveDeviceSymbol.symbol(forName: new.outputDevice, fallback: "headphones")
+                                : "speaker.wave.2.fill"))
             }
         } else if (old.volumeAvailable && new.volumeAvailable && abs(new.volume - old.volume) > 0.001) ||
                     (old.muteAvailable && new.muteAvailable && new.isMuted != old.isMuted) {
@@ -628,10 +639,13 @@ final class SystemController: NSObject, ObservableObject {
         if old.batteryAvailable, new.batteryAvailable, old.hasBattery, new.hasBattery {
             if old.isOnACPower != new.isOnACPower || old.isCharging != new.isCharging {
                 let title = new.isCharging ? "Charging" : (new.isOnACPower ? "Power connected" : "On battery")
+                if !old.isOnACPower && new.isOnACPower { onPowerConnected?() }
                 emit(CoveHUD(kind: .battery, title: title, subtitle: "\(new.batteryPercent)%",
                              symbol: new.isOnACPower ? "battery.100percent.bolt" : "battery.100percent", value: Double(new.batteryPercent) / 100))
-            } else if !new.isOnACPower, [20, 10, 5].contains(where: { old.batteryPercent > $0 && new.batteryPercent <= $0 }) {
+            } else if !new.isOnACPower, let threshold = lowBatteryThreshold,
+                      Set([threshold, min(threshold, 5)]).contains(where: { old.batteryPercent > $0 && new.batteryPercent <= $0 }) {
                 emit(CoveHUD(kind: .battery, title: "Low battery", subtitle: "\(new.batteryPercent)% remaining", symbol: "battery.25percent", value: Double(new.batteryPercent) / 100))
+                onLowBattery?(new.batteryPercent)
             } else if old.batteryPercent < 100, new.batteryPercent == 100, new.isOnACPower {
                 emit(CoveHUD(kind: .battery, title: "Battery full", subtitle: "100%", symbol: "battery.100percent", value: 1))
             }
@@ -639,7 +653,12 @@ final class SystemController: NSObject, ObservableObject {
         if old.bluetoothAvailable, new.bluetoothAvailable {
             for identifier in connectedBluetooth.keys.sorted() where previousBluetooth[identifier] == nil {
                 if !(routeChanged && new.audioOutputIsBluetooth && connectedBluetooth[identifier] == new.outputDevice) {
-                    emit(CoveHUD(kind: .bluetooth, title: connectedBluetooth[identifier] ?? "Bluetooth device", subtitle: "Connected", symbol: "antenna.radiowaves.left.and.right"))
+                    let name = connectedBluetooth[identifier] ?? "Bluetooth device"
+                    let accessory = new.accessoryBatteries.first { $0.label == name }
+                    let battery = accessory?.summaryPercentage
+                    emit(CoveHUD(kind: .bluetooth, title: name, subtitle: accessory?.detailText.map { "Connected · \($0)" } ?? "Connected",
+                                 symbol: CoveDeviceSymbol.symbol(forName: name, fallback: "antenna.radiowaves.left.and.right"),
+                                 value: battery.map { Double($0) / 100 }))
                 }
             }
             for identifier in previousBluetooth.keys.sorted() where connectedBluetooth[identifier] == nil {
@@ -1063,6 +1082,7 @@ final class SystemController: NSObject, ObservableObject {
         defer { finishReadEvidence("battery", since: start) }
         // Never retain an estimate across an unknown, unavailable or AC snapshot.
         next.batteryTimeToEmptyMinutes = nil
+        next.batteryTimeToFullMinutes = nil
         guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let list = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] else {
             next.batteryAvailable = false
@@ -1103,6 +1123,12 @@ final class SystemController: NSObject, ObservableObject {
                remaining.doubleValue.isFinite,
                let minutes = Int32(exactly: remaining.doubleValue), minutes >= 0 {
                 next.batteryTimeToEmptyMinutes = Int(minutes)
+            }
+            // Valid only while charging; -1 means macOS is still calculating.
+            if next.batteryAvailable, next.isCharging,
+               let full = description[kIOPSTimeToFullChargeKey] as? NSNumber,
+               full.doubleValue.isFinite, let minutes = Int32(exactly: full.doubleValue), minutes > 0 {
+                next.batteryTimeToFullMinutes = Int(minutes)
             }
             break
         }
@@ -1417,7 +1443,10 @@ final class SystemController: NSObject, ObservableObject {
                     next.lockStateKnown = true
                     next.capabilityMessages["lock"] = nil
                     self.state = next
-                    if previous.isLocked != locked || !previous.lockStateKnown { self.onLockChange?(locked) }
+                    if previous.isLocked != locked || !previous.lockStateKnown {
+                        self.onLockChange?(locked)
+                        self.onLockTransition?(locked)
+                    }
                     self.emitChanges(from: previous, to: next, previousBluetooth: self.connectedBluetooth)
                     if !previous.lockStateKnown {
                         self.emit(CoveHUD(kind: .lock, title: locked ? "Locked" : "Unlocked", symbol: locked ? "lock.fill" : "lock.open.fill"))

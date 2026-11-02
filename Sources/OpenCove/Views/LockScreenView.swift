@@ -35,7 +35,8 @@ struct LockScreenView: View {
                                      showPlaybackIndicator: store.preferences.showPlaybackIndicator,
                                      showLiveWaveform: store.preferences.usesLiveWaveform, locked: true,
                                      musicColorAccent: store.preferences.musicColorAccent,
-                                     reduceMotion: store.preferences.reduceMotion)
+                                     reduceMotion: store.preferences.reduceMotion, cleanTitles: store.preferences.hideMediaTitleExtras,
+                                     showsLockVolume: store.preferences.showLockScreenVolume)
                 }
                 if store.preferences.showsLockWidget(.calendar) || store.preferences.showsLockWidget(.weather) {
                     HStack(alignment: .top, spacing: 18) {
@@ -221,7 +222,10 @@ private struct CoveLockSystemSection: View {
     private var batteryText: String {
         guard controller.state.batteryAvailable else { return "Battery unavailable" }
         guard controller.state.hasBattery else { return controller.state.isOnACPower ? "AC power" : "No battery" }
-        return "\(min(100, max(0, controller.state.batteryPercent)))%\(controller.state.isCharging ? " charging" : "")"
+        let percent = "\(min(100, max(0, controller.state.batteryPercent)))%"
+        guard controller.state.isCharging else { return percent }
+        guard let minutes = controller.state.batteryTimeToFullMinutes else { return percent + " charging" }
+        return percent + " · full in " + (minutes >= 60 ? "\(minutes / 60) h \(minutes % 60) min" : "\(minutes) min")
     }
 
     private var batterySymbol: String {
@@ -281,70 +285,87 @@ private struct CoveKeepAwakeSection: View {
     private var faulted: Bool {
         ["quarantined", "creationUnconfirmed", "retiring", "provisional"].contains(status.projection.handleState)
     }
+    private static let presets = [5, 15, 30, 60, 120]
+
+    private func durationTitle(_ minutes: Int) -> String {
+        minutes >= 60 ? "\(minutes / 60) h" : "\(minutes) min"
+    }
+
     var body: some View {
         let displayedSessionID = status.projection.sessionID
         let displayedMinutes = status.draftMinutes
-        VStack(alignment: .leading, spacing: 6) {
-            Label("Keep Awake", systemImage: "display")
-                .font(.system(size: 11, weight: .semibold))
-            if active {
-                Text(status.projection.message)
-                if let end = status.projection.expectedEnd {
-                    Text("Expected end: \(end, format: .dateTime.hour().minute())")
-                        .foregroundStyle(.secondary)
-                }
-            } else if faulted {
-                Text(status.projection.message)
-            } else {
-                Text("Keep displays awake for \(status.draftMinutes) min")
-            }
-            Slider(value: Binding(get: { Double(status.draftMinutes) }, set: { value in
-                guard value.isFinite, value.rounded(.towardZero) == value, (1...120).contains(value) else { return }
-                status.setDraft(Int(value))
-            }), in: 1...120, step: 1) {
-                Text("Duration, 1 to 120 minutes")
-            }
-            .accessibilityLabel("Duration, 1 to 120 minutes")
-            .accessibilityValue("\(status.draftMinutes) minutes")
-            .focusable(false)
-            .disabled(!available || faulted || action == nil)
-            if active {
-                Text("Duration applies to Restart: \(status.draftMinutes) min")
-                    .foregroundStyle(.secondary)
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                if active {
-                    // Separate deliberate actions. Neither gets a key equivalent.
-                    Button("Stop") { action?("stop", displayedSessionID, displayedMinutes) }
-                        .disabled(!available || action == nil)
-                    Button("Restart for \(status.draftMinutes) min") {
-                        action?("replace", displayedSessionID, displayedMinutes)
+        let enabled = available && !faulted && action != nil
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                Image(systemName: active ? "sun.max.fill" : "display")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(active ? Color.yellow : .secondary)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Keep Awake").font(.system(size: 12, weight: .semibold))
+                    Group {
+                        if active, let end = status.projection.expectedEnd {
+                            Text("Display stays on until \(end, format: .dateTime.hour().minute())")
+                        } else if faulted {
+                            Text(status.projection.message)
+                        } else if !available {
+                            Text("Unavailable here")
+                        } else {
+                            Text("Stop the display from sleeping while locked")
+                        }
                     }
-                    .disabled(!available || action == nil || status.projection.applicationDeadlinePassed)
-                } else {
-                    Button("Start for \(status.draftMinutes) min") { action?("start", nil, displayedMinutes) }
-                        .disabled(!available || faulted || action == nil)
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                HStack(spacing: 6) {
+                    if active {
+                        // Separate deliberate actions. Neither gets a key equivalent.
+                        Button("Stop") { action?("stop", displayedSessionID, displayedMinutes) }
+                            .disabled(!available || action == nil)
+                        Button("Restart") { action?("replace", displayedSessionID, displayedMinutes) }
+                            .disabled(!available || action == nil || status.projection.applicationDeadlinePassed)
+                            .help("Restart for \(durationTitle(displayedMinutes))")
+                    } else {
+                        Button("Start") { action?("start", nil, displayedMinutes) }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!enabled)
+                            .accessibilityLabel("Start Keep Awake for \(durationTitle(displayedMinutes))")
+                    }
+                }
+                .background {
+                    // Admission tracks the mounted action row, not a visible heading
+                    // or disclosure while all action buttons have scrolled away.
+                    if let control { CoveKeepAwakeRowAttachment(control: control) }
                 }
             }
-            .background {
-                // Admission tracks the mounted action row, not a visible heading
-                // or disclosure while all action buttons have scrolled away.
-                if let control { CoveKeepAwakeRowAttachment(control: control) }
+            HStack(spacing: 5) {
+                ForEach(Self.presets, id: \.self) { minutes in
+                    let selected = status.draftMinutes == minutes
+                    Button { status.setDraft(minutes) } label: {
+                        Text(durationTitle(minutes))
+                            .font(.system(size: 10, weight: selected ? .semibold : .regular))
+                            .monospacedDigit()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                            .background(selected ? Color.white.opacity(0.22) : Color.white.opacity(0.07),
+                                        in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!available || faulted || action == nil)
+                    .accessibilityLabel(durationTitle(minutes))
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                }
             }
-            if !available { Text("Keep Awake is unavailable here.").foregroundStyle(.secondary) }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Keep Awake duration")
             if let outcome = status.projection.lastOutcome,
                !["PREPARED", "STARTED", "REPLACED", "RETIRED", "STOPPED", "IDLE"].contains(outcome.resultCode), !faulted {
-                Text("Keep Awake action: \(outcome.resultCode)").foregroundStyle(.secondary)
+                Text("Keep Awake could not finish: \(outcome.resultCode)").font(.system(size: 10)).foregroundStyle(.secondary)
             }
-            Text("Prevents automatic display sleep on this Mac. Stops when this lock-screen session ends. Closing the lid or choosing Sleep still works.")
-                .foregroundStyle(.secondary)
         }
-        .font(.system(size: 10))
         .buttonStyle(.bordered)
         .controlSize(.small)
         .focusable(false)
-        .lineLimit(nil)
-        .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

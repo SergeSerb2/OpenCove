@@ -105,6 +105,11 @@ private struct CoveExpandedSectionPermissions {
     var calendarDetailsVisible = false
     var filesEnabled = false
     var timerEnabled = false
+    var shortcutsEnabled = false
+    var systemStatsEnabled = false
+    var weatherEnabled = false
+    var notesEnabled = false
+    var clipboardEnabled = false
 
     func permits(_ section: CoveExpandedSection, outgoing: Bool) -> Bool {
         switch section.tab {
@@ -114,6 +119,11 @@ private struct CoveExpandedSectionPermissions {
         case .calendar: return calendarEnabled && (!outgoing || calendarDetailsVisible)
         case .files: return filesEnabled
         case .timer: return timerEnabled
+        case .shortcuts: return shortcutsEnabled
+        case .system: return systemStatsEnabled
+        case .weather: return weatherEnabled
+        case .notes: return notesEnabled
+        case .clipboard: return clipboardEnabled
         case nil: return true
         }
     }
@@ -331,7 +341,12 @@ struct NotchView: View {
             calendarEnabled: store.preferences.enableCalendar && activities.calendarEnabled,
             calendarDetailsVisible: !activities.calendarDetailsHidden,
             filesEnabled: store.preferences.enableFileTray,
-            timerEnabled: store.preferences.enableTimer)
+            timerEnabled: store.preferences.enableTimer,
+            shortcutsEnabled: store.preferences.enableShortcuts,
+            systemStatsEnabled: store.preferences.enableSystemStats,
+            weatherEnabled: store.preferences.enableWeather && store.preferences.showWeatherSection,
+            notesEnabled: store.preferences.enableNotes,
+            clipboardEnabled: store.preferences.enableClipboard)
     }
 
     private var expandedSectionPresentation: CoveExpandedSectionPresentation {
@@ -501,7 +516,9 @@ struct NotchView: View {
         } else if case .hud(let kind) = mode, let hud = store.hud, hud.kind == kind {
             CoveCompactHUD(hud: hud, accent: CoveNotchStyle.accent(store.preferences.accent), centerGap: compactGap,
                            showLabels: store.preferences.showHUDLabels, showPercentage: store.preferences.showHUDPercentage,
-                           brightnessHUDGlow: store.preferences.brightnessHUDGlow)
+                           brightnessHUDGlow: store.preferences.brightnessHUDGlow,
+                           barStyle: CoveHUDBarStyle(rawValue: store.preferences.hudProgressStyle) ?? .accent,
+                           reduceMotion: store.preferences.reduceMotion || systemReduceMotion)
                 .padding(.horizontal, 18)
         } else if mode == .peek && store.preferences.enableMedia && media.state.available {
             mediaPeek(artwork: artwork)
@@ -520,7 +537,7 @@ struct NotchView: View {
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.indigo.opacity(0.9))
                 }
-                if store.preferences.showPlaybackIndicator {
+                if store.preferences.showPlaybackIndicator && store.preferences.showCompactPlaybackIndicator {
                     if store.preferences.showLiveWaveform {
                         LiveWaveformView(controller: waveform, isPlaying: media.state.isPlaying,
                                          color: mediaAccent(artwork: artwork))
@@ -549,13 +566,31 @@ struct NotchView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.horizontal, 15)
+            .overlay(alignment: .bottom) {
+                if store.preferences.showCompactProgress, media.state.duration > 0 {
+                    CoveCompactProgressLine(clock: media.playback, duration: media.state.duration,
+                                            color: mediaAccent(artwork: artwork))
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 1.5)
+                }
+            }
             .modifier(CoveMediaSkipRegionGate(context: CoveMediaSkipContext.current(in: store),
                 kind: .compact, mode: .compact(.activity(.media))))
         } else if mode == .activity(.timer) && store.preferences.enableTimer && activities.timer.remaining > 0 {
             HStack(spacing: 0) {
-                Image(systemName: activities.timer.running ? "timer" : "pause.fill")
-                    .foregroundStyle(CoveNotchStyle.accent(store.preferences.accent))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                ZStack {
+                    Circle().stroke(.white.opacity(0.14), lineWidth: 2.2).padding(1.1)
+                    CoveTimerRing(timer: activities.timer, clockRevision: activities.timerClockRevision,
+                                  reduceMotion: store.preferences.reduceMotion || systemReduceMotion,
+                                  color: store.timerIsBreak ? .green : CoveNotchStyle.accent(store.preferences.accent), lineWidth: 2.2)
+                    if !activities.timer.running {
+                        Image(systemName: "pause.fill").font(.system(size: 6, weight: .bold))
+                            .foregroundStyle(CoveNotchStyle.accent(store.preferences.accent))
+                    }
+                }
+                .frame(width: 15, height: 15)
+                .accessibilityHidden(true)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Color.clear.frame(width: compactGap)
                 CoveTimerText(timer: activities.timer)
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
@@ -585,7 +620,28 @@ struct NotchView: View {
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Color.clear.frame(width: compactGap)
+                    // The clock refreshes every 30 seconds, which also picks up new weather readings.
+                    let weather = store.preferences.enableWeather ? store.weather.state : nil
+                    let showsWeather = weather.map { $0.available && !$0.isStale } ?? false
                     HStack(spacing: 5) {
+                        if showsWeather, let weather {
+                            HStack(spacing: 3) {
+                                Image(systemName: weather.symbol).symbolRenderingMode(.multicolor)
+                                Text(CoveTemperature.degrees(weather.temperature))
+                                    .monospacedDigit()
+                            }
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(CoveNotchStyle.secondary)
+                            .fixedSize()
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("\(weather.condition), \(weather.temperatureText)")
+                        }
+                        if store.stayAwake.isActive {
+                            Text(Image(systemName: "cup.and.saucer.fill"))
+                                .font(.system(size: 9))
+                                .foregroundStyle(CoveNotchStyle.accent(store.preferences.accent))
+                                .accessibilityLabel("Stay Awake is on")
+                        }
                         Text(context.date, format: .dateTime.weekday(.abbreviated).day())
                             .font(.system(size: 9, weight: .medium))
                             .foregroundStyle(CoveNotchStyle.secondary)
@@ -594,8 +650,13 @@ struct NotchView: View {
                             Image(systemName: "moon.fill")
                                 .font(.system(size: 9))
                                 .foregroundStyle(.indigo)
-                        } else if store.preferences.enableBattery && system.state.hasBattery && system.state.batteryAvailable {
-                            CoveBatteryMark(percent: system.state.batteryPercent, charging: system.state.isCharging)
+                        } else if store.preferences.enableBattery && system.state.hasBattery && system.state.batteryAvailable
+                                    // With weather shown, a plugged-in battery that is not charging adds nothing.
+                                    && !(showsWeather && system.state.isOnACPower && !system.state.isCharging) {
+                            // The compact clock has no room for a percentage beside the date.
+                            CoveBatteryMark(percent: system.state.batteryPercent, charging: system.state.isCharging,
+                                            warningLevel: store.preferences.lowBatteryWarningThreshold ?? 20,
+                                            minutesToFull: system.state.batteryTimeToFullMinutes)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -614,7 +675,7 @@ struct NotchView: View {
                         isPlaying: media.state.isPlaying,
                         reduceMotion: store.preferences.reduceMotion)
             VStack(alignment: .leading, spacing: 3) {
-                Text(CoveNotchStyle.metadataLabel(media.state.title.isEmpty ? "Untitled" : media.state.title, limit: 96))
+                Text(CoveNotchStyle.metadataLabel(media.state.displayTitle(clean: store.preferences.hideMediaTitleExtras), limit: 96))
                     .font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Text(CoveNotchStyle.metadataLabel(media.state.artist.isEmpty ? media.state.source : media.state.artist, limit: 96))
                     .font(.system(size: 10, weight: .medium)).foregroundStyle(CoveNotchStyle.secondary).lineLimit(1)
@@ -635,6 +696,34 @@ struct NotchView: View {
             kind: .peek, mode: .compact(.peek)))
         .padding(.top, cutoutHeight + 8)
         .padding(.bottom, 12)
+    }
+
+    /// One-click section switching, centered in the footer.
+    @ViewBuilder private var sectionStrip: some View {
+        let tabs = enabledTabs
+        if tabs.count >= 2 && store.hud == nil {
+            let accent = CoveNotchStyle.accent(store.preferences.accent)
+            HStack(spacing: 2) {
+                ForEach(tabs) { tab in
+                    let selected = store.visibleTab == tab
+                    Button { store.selectTab(tab) } label: {
+                        // Some symbols ignore an image foreground color in this panel; text-embedded
+                        // symbols reliably take the text color.
+                        Text(Image(systemName: tab.symbol))
+                            .font(.system(size: 10, weight: selected ? .semibold : .regular))
+                            .foregroundColor(selected ? accent : CoveNotchStyle.secondary)
+                            .frame(width: 24, height: 18)
+                            .background(selected ? accent.opacity(0.16) : .clear, in: Capsule())
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(tab.title)
+                    .accessibilityLabel(tab.title)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                }
+            }
+            .animation(.snappy(duration: 0.2), value: store.visibleTab)
+        }
     }
 
     private var expanded: some View {
@@ -677,7 +766,9 @@ struct NotchView: View {
                 } label: { Image(systemName: "ellipsis").frame(width: 24, height: 18) }
                 .menuStyle(.borderlessButton).fixedSize()
                 .accessibilityLabel("OpenCove sections and settings")
-            }.frame(height: 18)
+            }
+            .frame(height: 18)
+            .overlay { sectionStrip }
         }
         .padding(.horizontal, 20)
         .padding(.top, 16 + cutoutHeight)
@@ -695,7 +786,9 @@ struct NotchView: View {
                                      showPlaybackIndicator: store.preferences.showPlaybackIndicator,
                                      showLiveWaveform: store.preferences.showLiveWaveform, condensed: true,
                                      musicColorAccent: store.preferences.musicColorAccent,
-                                     reduceMotion: store.preferences.reduceMotion)
+                                     reduceMotion: store.preferences.reduceMotion, cleanTitles: store.preferences.hideMediaTitleExtras,
+                                     artworkGlow: store.preferences.mediaArtworkGlow,
+                                     showsSourceBadge: store.preferences.showMediaSourceBadge)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .modifier(CoveMediaSkipRegionGate(context: CoveMediaSkipContext.current(in: store),
                             kind: .duo, mode: .expanded, section: identity))
@@ -712,19 +805,33 @@ struct NotchView: View {
                                  showPlaybackIndicator: store.preferences.showPlaybackIndicator,
                                  showLiveWaveform: store.preferences.showLiveWaveform,
                                  musicColorAccent: store.preferences.musicColorAccent,
-                                 reduceMotion: store.preferences.reduceMotion)
+                                 reduceMotion: store.preferences.reduceMotion, cleanTitles: store.preferences.hideMediaTitleExtras,
+                                     artworkGlow: store.preferences.mediaArtworkGlow,
+                                     showsSourceBadge: store.preferences.showMediaSourceBadge)
                     .modifier(CoveMediaSkipRegionGate(context: CoveMediaSkipContext.current(in: store),
                         kind: .expanded, mode: .expanded, section: identity))
             }
         case .calendar:
             CoveCalendarView(activities: activities, showCalendarList: store.preferences.showCalendarList,
                              showCalendarEventIndicators: store.preferences.showCalendarEventIndicators,
-                             useCalendarViewSourceColors: store.preferences.useCalendarViewSourceColors)
+                             useCalendarViewSourceColors: store.preferences.useCalendarViewSourceColors,
+                                     weather: store.preferences.enableWeather ? store.weather : nil)
         case .files:
             CoveFileSurface(activities: activities)
+        case .notes:
+            CoveNotesSurface(notes: store.notes)
+        case .clipboard:
+            CoveClipboardSurface(history: store.clipboard, accent: CoveNotchStyle.accent(store.preferences.accent))
+        case .weather:
+            CoveWeatherSurface(controller: store.weather, openSettings: store.openSettings)
+        case .system:
+            CoveSystemStatsSurface(controller: store.systemStats, stayAwake: store.stayAwake, accent: CoveNotchStyle.accent(store.preferences.accent))
+        case .shortcuts:
+            CoveShortcutsSurface(controller: store.shortcuts, pinned: store.preferences.pinnedShortcutNames,
+                                 accent: CoveNotchStyle.accent(store.preferences.accent), openSettings: store.openSettings)
         case .timer:
-            CoveTimerSurface(activities: activities, color: CoveNotchStyle.accent(store.preferences.accent),
-                             reduceMotion: systemReduceMotion || store.preferences.reduceMotion)
+            CoveTimerSurface(activities: activities, stopwatch: store.stopwatch, color: store.timerIsBreak ? .green : CoveNotchStyle.accent(store.preferences.accent),
+                             reduceMotion: systemReduceMotion || store.preferences.reduceMotion, isBreak: store.timerIsBreak)
         case nil:
             CoveEmptySurface(symbol: "sparkle", title: "Your quiet space",
                              message: "Choose what appears here in Settings.",
