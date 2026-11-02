@@ -622,6 +622,8 @@ struct SettingsView: View {
     private var weatherSettings: some View {
         Section("Weather widget") {
             Toggle("Enable weather", isOn: preference(\.enableWeather))
+            Toggle("Show a Weather section in the panel", isOn: preference(\.showWeatherSection))
+                .disabled(!store.preferences.enableWeather)
             Picker("Weather widget style", selection: preference(\.weatherStyle)) {
                 ForEach(CoveWeatherStyle.allCases) { style in Text(style.title).tag(style.rawValue) }
             }

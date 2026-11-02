@@ -107,6 +107,7 @@ private struct CoveExpandedSectionPermissions {
     var timerEnabled = false
     var shortcutsEnabled = false
     var systemStatsEnabled = false
+    var weatherEnabled = false
 
     func permits(_ section: CoveExpandedSection, outgoing: Bool) -> Bool {
         switch section.tab {
@@ -118,6 +119,7 @@ private struct CoveExpandedSectionPermissions {
         case .timer: return timerEnabled
         case .shortcuts: return shortcutsEnabled
         case .system: return systemStatsEnabled
+        case .weather: return weatherEnabled
         case nil: return true
         }
     }
@@ -337,7 +339,8 @@ struct NotchView: View {
             filesEnabled: store.preferences.enableFileTray,
             timerEnabled: store.preferences.enableTimer,
             shortcutsEnabled: store.preferences.enableShortcuts,
-            systemStatsEnabled: store.preferences.enableSystemStats)
+            systemStatsEnabled: store.preferences.enableSystemStats,
+            weatherEnabled: store.preferences.enableWeather && store.preferences.showWeatherSection)
     }
 
     private var expandedSectionPresentation: CoveExpandedSectionPresentation {
@@ -771,6 +774,8 @@ struct NotchView: View {
                                      weather: store.preferences.enableWeather ? store.weather : nil)
         case .files:
             CoveFileSurface(activities: activities)
+        case .weather:
+            CoveWeatherSurface(controller: store.weather, openSettings: store.openSettings)
         case .system:
             CoveSystemStatsSurface(controller: store.systemStats, accent: CoveNotchStyle.accent(store.preferences.accent))
         case .shortcuts:

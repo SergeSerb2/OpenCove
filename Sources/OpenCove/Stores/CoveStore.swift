@@ -71,6 +71,7 @@ final class CoveStore: ObservableObject {
             case .files: return preferences.enableFileTray
             case .shortcuts: return preferences.enableShortcuts
             case .system: return preferences.enableSystemStats
+            case .weather: return preferences.enableWeather && preferences.showWeatherSection
             case .timer: return preferences.enableTimer
             }
         }

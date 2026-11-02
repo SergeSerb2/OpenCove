@@ -354,3 +354,82 @@ private struct CoveWeatherDayRow: View {
         .accessibilityHint(day.condition + ". Low and high temperature, with precipitation chance.")
     }
 }
+
+/// The panel's Weather section: current conditions, the next six hours and
+/// the next four days, in the forecast location's time zone.
+@MainActor
+struct CoveWeatherSurface: View {
+    @ObservedObject var controller: WeatherController
+    let openSettings: () -> Void
+
+    private func degrees(_ value: Double?) -> String {
+        guard let value, value.isFinite else { return "—" }
+        return value.formatted(.number.precision(.fractionLength(0))) + "°"
+    }
+
+    var body: some View {
+        let state = controller.state
+        if !state.available {
+            CoveEmptySurface(symbol: "cloud.sun", title: controller.isLoading ? "Loading weather…" : "No weather yet",
+                             message: "Choose a location in Weather settings.",
+                             actionTitle: controller.isLoading ? nil : "Weather Settings",
+                             action: controller.isLoading ? nil : openSettings)
+        } else {
+            let now = Date()
+            let hours = Array(state.hourly.filter { $0.date > now.addingTimeInterval(-3600) }.prefix(6))
+            let days = Array(state.daily.filter { $0.date > now.addingTimeInterval(-12 * 3600) }.dropFirst().prefix(4))
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Image(systemName: state.symbol).symbolRenderingMode(.multicolor).font(.system(size: 30))
+                        Text(degrees(state.temperature)).font(.system(size: 38, weight: .light, design: .rounded))
+                    }
+                    Text(state.condition).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                    if let today = state.today {
+                        Text("H \(degrees(today.maximum))  L \(degrees(today.minimum))")
+                            .font(.system(size: 11)).monospacedDigit().foregroundStyle(CoveNotchStyle.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    Label(state.locationName.isEmpty ? "Saved location" : state.locationName, systemImage: "location.fill")
+                        .font(.system(size: 10)).foregroundStyle(CoveNotchStyle.secondary).lineLimit(1)
+                }
+                .frame(width: 140, alignment: .leading)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 0) {
+                        ForEach(hours) { hour in
+                            VStack(spacing: 5) {
+                                Text(hour.date, format: Date.FormatStyle(timeZone: state.timeZone).hour())
+                                    .font(.system(size: 9)).foregroundStyle(CoveNotchStyle.secondary)
+                                Image(systemName: hour.symbol).symbolRenderingMode(.multicolor).font(.system(size: 14))
+                                    .frame(height: 16)
+                                Text(degrees(hour.temperature)).font(.system(size: 11, weight: .medium)).monospacedDigit()
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    VStack(spacing: 5) {
+                        ForEach(days) { day in
+                            HStack(spacing: 8) {
+                                Text(day.date, format: Date.FormatStyle(timeZone: state.timeZone).weekday(.abbreviated))
+                                    .frame(width: 34, alignment: .leading)
+                                Image(systemName: day.symbol).symbolRenderingMode(.multicolor).frame(width: 20)
+                                if let rain = day.precipitationProbability, rain >= 20 {
+                                    Text("\(Int(rain.rounded()))%").font(.system(size: 9)).foregroundStyle(.cyan)
+                                }
+                                Spacer(minLength: 4)
+                                Text(degrees(day.minimum)).foregroundStyle(CoveNotchStyle.secondary)
+                                Text(degrees(day.maximum)).frame(width: 30, alignment: .trailing)
+                            }
+                            .font(.system(size: 11)).monospacedDigit()
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .padding(.top, 2)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+    }
+}
