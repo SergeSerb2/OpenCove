@@ -720,6 +720,12 @@ struct SettingsView: View {
 
             Section("Open source") {
                 LabeledContent("License", value: "MIT")
+                HStack(spacing: 14) {
+                    Link("Source code", destination: URL(string: "https://github.com/SergeSerb2/OpenCove")!)
+                    Link("Report a bug", destination: URL(string: "https://github.com/SergeSerb2/OpenCove/issues/new/choose")!)
+                    Link("Changes", destination: URL(string: "https://github.com/SergeSerb2/OpenCove/blob/main/CHANGELOG.md")!)
+                }
+                .font(.callout)
                 CoveSettingsNote("Independently authored. OpenCove is not affiliated with or endorsed by Alcove. It contains no Alcove code or artwork.")
             }
 
