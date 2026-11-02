@@ -389,6 +389,20 @@ struct CoveWeatherSurface: View {
                         Text("H \(degrees(today.maximum))  L \(degrees(today.minimum))")
                             .font(.system(size: 11)).monospacedDigit().foregroundStyle(CoveNotchStyle.secondary)
                     }
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let feels = state.apparentTemperature, feels.isFinite {
+                            Label("Feels like \(degrees(feels))", systemImage: "thermometer.medium")
+                        }
+                        if let humidity = state.humidity, humidity.isFinite {
+                            Label("\(Int(humidity.rounded()))% humidity", systemImage: "humidity")
+                        }
+                        if let wind = state.windSpeed, wind.isFinite {
+                            Label("\(Int(wind.rounded())) km/h wind", systemImage: "wind")
+                        }
+                    }
+                    .font(.system(size: 10)).monospacedDigit()
+                    .foregroundStyle(CoveNotchStyle.secondary)
+                    .padding(.top, 6)
                     Spacer(minLength: 0)
                     Label(state.locationName.isEmpty ? "Saved location" : state.locationName, systemImage: "location.fill")
                         .font(.system(size: 10)).foregroundStyle(CoveNotchStyle.secondary).lineLimit(1)
