@@ -181,6 +181,9 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         let timer = menu.addItem(withTitle: "Start Timer", action: nil, keyEquivalent: "")
         timer.submenu = NSMenu(title: "Start Timer")
         timer.tag = Self.timerMenuTag
+        let awake = menu.addItem(withTitle: "Stay Awake", action: nil, keyEquivalent: "")
+        awake.submenu = NSMenu(title: "Stay Awake")
+        awake.tag = Self.stayAwakeMenuTag
         menu.addItem(.separator())
         menu.addItem(withTitle: "Previous Track", action: #selector(statusMediaPrevious), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Play/Pause", action: #selector(statusMediaPlayPause), keyEquivalent: "").target = self
@@ -197,6 +200,7 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     private static let sectionsMenuTag = 7_101
     private static let timerMenuTag = 7_102
+    private static let stayAwakeMenuTag = 7_103
 
     /// Rebuilds the Sections and Start Timer submenus from current settings each time the menu opens.
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -214,6 +218,23 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 sections.submenu?.addItem(item)
             }
         }
+        if let awake = menu.item(withTag: Self.stayAwakeMenuTag) {
+            awake.title = store.stayAwake.isActive ? "Stay Awake (\(store.stayAwake.statusText.replacingOccurrences(of: "On ", with: "")))" : "Stay Awake"
+            awake.submenu?.removeAllItems()
+            for choice in CoveStayAwake.choices {
+                let item = NSMenuItem(title: choice.title, action: #selector(stayAwakeFromMenu(_:)), keyEquivalent: "")
+                item.target = self
+                item.tag = choice.minutes ?? 0
+                awake.submenu?.addItem(item)
+            }
+            if store.stayAwake.isActive {
+                awake.submenu?.addItem(.separator())
+                let off = NSMenuItem(title: "Turn Off", action: #selector(stayAwakeFromMenu(_:)), keyEquivalent: "")
+                off.target = self
+                off.tag = -1
+                awake.submenu?.addItem(off)
+            }
+        }
         if let timer = menu.item(withTag: Self.timerMenuTag) {
             timer.isHidden = !store.preferences.enableTimer
             timer.submenu?.removeAllItems()
@@ -224,6 +245,11 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 timer.submenu?.addItem(item)
             }
         }
+    }
+
+    @objc private func stayAwakeFromMenu(_ sender: NSMenuItem) {
+        guard !startupFailed else { return }
+        if sender.tag < 0 { store.stayAwake.stop() } else { store.stayAwake.start(minutes: sender.tag == 0 ? nil : sender.tag) }
     }
 
     @objc private func openSectionFromMenu(_ sender: NSMenuItem) {

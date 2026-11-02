@@ -54,6 +54,7 @@ final class CoveStore: ObservableObject {
     let notes = CoveNotesStore()
     let clipboard = ClipboardHistory()
     let stopwatch = CoveStopwatch()
+    let stayAwake = CoveStayAwake()
     private var hourlyChimeTask: Task<Void, Never>?
     /// The identity of a break timer that OpenCove started, so a finished break does not start another.
     @Published private(set) var breakTimerIdentifier: UUID?
@@ -691,6 +692,7 @@ final class CoveStore: ObservableObject {
         hotKey.unregister()
         notes.flush()
         clipboard.setEnabled(false)
+        stayAwake.stop()
         waveform.setEnabled(false); travel.stop(); hardwareKeys.stop()
         reconcileMirroring()
         hud = nil

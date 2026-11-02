@@ -199,6 +199,7 @@ struct CoveNothingPlaying: View {
 @MainActor
 struct CoveSystemStatsSurface: View {
     @ObservedObject var controller: SystemStatsController
+    @ObservedObject var stayAwake: CoveStayAwake
     let accent: Color
 
     private static func bytes(_ value: Double?, style: ByteCountFormatter.CountStyle = .memory) -> String {
@@ -211,14 +212,16 @@ struct CoveSystemStatsSurface: View {
     }
 
     private static func rate(_ value: Double?) -> String {
-        guard let value else { return "—" }
-        return bytes(value, style: .binary) + "/s"
+        guard let value, value.isFinite, value >= 0 else { return "—" }
+        if value < 1_024 * 1_024 { return "\(Int((value / 1_024).rounded())) KB/s" }
+        return String(format: "%.1f MB/s", value / (1_024 * 1_024))
     }
 
     var body: some View {
         let stats = controller.snapshot
         let memory = stats.memoryUsed.map { $0 / max(1, stats.memoryTotal) }
         let disk = stats.diskFree.flatMap { free in stats.diskTotal.map { 1 - free / max(1, $0) } }
+        VStack(spacing: 10) {
         HStack(spacing: 10) {
             ring("CPU", value: stats.cpu, detail: stats.cpu.map { "\(Int(($0 * 100).rounded()))%" } ?? "—", symbol: "cpu")
             ring("Memory", value: memory, detail: Self.bytes(stats.memoryUsed), symbol: "memorychip")
@@ -249,9 +252,36 @@ struct CoveSystemStatsSurface: View {
             }
         }
         .frame(maxHeight: 112)
+            stayAwakeRow
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear(perform: controller.acquire)
         .onDisappear(perform: controller.release)
+    }
+
+    private var stayAwakeRow: some View {
+        HStack(spacing: 8) {
+            Text(Image(systemName: stayAwake.isActive ? "cup.and.saucer.fill" : "cup.and.saucer"))
+                .foregroundStyle(stayAwake.isActive ? accent : CoveNotchStyle.secondary)
+            Text("Stay Awake").font(.system(size: 11, weight: .medium))
+            Text(stayAwake.statusText).font(.system(size: 10)).foregroundStyle(CoveNotchStyle.secondary)
+            Spacer()
+            Menu(stayAwake.isActive ? "Change" : "Start") {
+                ForEach(CoveStayAwake.choices, id: \.title) { choice in
+                    Button(choice.title) { stayAwake.start(minutes: choice.minutes) }
+                }
+                if stayAwake.isActive {
+                    Divider()
+                    Button("Turn Off", action: stayAwake.stop)
+                }
+            }
+            .menuStyle(.borderlessButton).fixedSize()
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .help("Keeps your Mac and display awake. Closing the lid or choosing Sleep still works.")
     }
 
     private func ring(_ title: String, value: Double?, detail: String, symbol: String) -> some View {

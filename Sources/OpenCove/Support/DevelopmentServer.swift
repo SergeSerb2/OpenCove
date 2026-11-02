@@ -641,6 +641,10 @@ final class DevelopmentServer {
             try requireCapability(store.activities.timer.remaining > 0, "There is no paused timer to resume.")
             try activity { store.activities.resumeTimer() }
         case "timer.cancel": try activity { store.activities.cancelTimer() }
+        case "stayAwake.start":
+            let minutes = values["minutes"] as? Int
+            guard store.stayAwake.start(minutes: minutes) else { throw ControlError.failed("Stay Awake could not start.") }
+        case "stayAwake.stop": store.stayAwake.stop()
         case "stopwatch.start": store.stopwatch.start()
         case "stopwatch.pause": store.stopwatch.pause()
         case "stopwatch.reset": store.stopwatch.reset()
@@ -764,6 +768,8 @@ final class DevelopmentServer {
                             "hourlyChimeScheduled": store.hourlyChimeScheduled]
         result["toggleShortcut"] = store.hotKey.status.description
         result["timerBreak"] = store.breakTimerIdentifier != nil
+        result["stayAwake"] = ["active": store.stayAwake.isActive,
+                               "endsAt": store.stayAwake.endsAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull()] as [String: Any]
         result["stopwatch"] = ["running": store.stopwatch.isRunning, "elapsed": store.stopwatch.elapsed()] as [String: Any]
         result["clipboard"] = ["watching": store.clipboard.isWatching, "count": store.clipboard.items.count,
                                "newestLength": store.clipboard.items.first?.text.count ?? 0] as [String: Any]

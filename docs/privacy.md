@@ -137,6 +137,7 @@ All of these are off by default except the timer-finished sound.
 - **Notes** are saved as plain text in `notes.txt` in the private data directory, with owner-only permissions (0600). They are not synced or uploaded.
 - **Shortcuts** lists your shortcuts with the system `shortcuts` command, which needs no permission. A shortcut runs only when you tap its pinned tile. The shortcut itself may ask for its own permissions or contact services.
 - **System stats** reads CPU, memory, network byte counters, disk free space and battery health from public system interfaces, every two seconds and only while the section is open. Nothing is stored.
+- **Stay Awake** holds one standard power assertion ("OpenCove Stay Awake", visible in `pmset -g assertions`) that prevents idle display sleep until it ends or you turn it off. Quitting releases it.
 - **Sounds** play built-in macOS sounds from `/System/Library/Sounds`. OpenCove ships no audio.
 - **Global shortcut** registers one hot key with the system. It does not monitor other key presses and needs no Accessibility access.
 - **Hide from screenshots and recordings** asks macOS to exclude OpenCove's panels from capture. Some capture tools may still record them.

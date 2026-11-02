@@ -636,6 +636,12 @@ struct NotchView: View {
                             .accessibilityElement(children: .combine)
                             .accessibilityLabel("\(weather.condition), \(weather.temperatureText)")
                         }
+                        if store.stayAwake.isActive {
+                            Text(Image(systemName: "cup.and.saucer.fill"))
+                                .font(.system(size: 9))
+                                .foregroundStyle(CoveNotchStyle.accent(store.preferences.accent))
+                                .accessibilityLabel("Stay Awake is on")
+                        }
                         Text(context.date, format: .dateTime.weekday(.abbreviated).day())
                             .font(.system(size: 9, weight: .medium))
                             .foregroundStyle(CoveNotchStyle.secondary)
@@ -819,7 +825,7 @@ struct NotchView: View {
         case .weather:
             CoveWeatherSurface(controller: store.weather, openSettings: store.openSettings)
         case .system:
-            CoveSystemStatsSurface(controller: store.systemStats, accent: CoveNotchStyle.accent(store.preferences.accent))
+            CoveSystemStatsSurface(controller: store.systemStats, stayAwake: store.stayAwake, accent: CoveNotchStyle.accent(store.preferences.accent))
         case .shortcuts:
             CoveShortcutsSurface(controller: store.shortcuts, pinned: store.preferences.pinnedShortcutNames,
                                  accent: CoveNotchStyle.accent(store.preferences.accent), openSettings: store.openSettings)

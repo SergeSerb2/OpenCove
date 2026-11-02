@@ -12,6 +12,7 @@
 - **Shortcuts:** pin up to eight macOS Shortcuts as one-tap tiles in a new panel section. Each shows progress, and the result appears as an overlay.
 - **Clipboard history:** an optional section with the last 20 copied texts, kept in memory only. Concealed and transient items (such as passwords) are skipped. Click to copy again.
 - **Notes:** an optional scratchpad section, saved as a private text file on this Mac.
+- **Stay Awake:** keep the Mac and display awake for 30 minutes to 4 hours or until turned off, from the System section or the menu bar. A cup shows in the idle clock while it is on.
 - **System stats:** an optional section with CPU, memory, network and disk, sampled only while it is open.
 - **General:** a global open/close shortcut, hide menu bar icon (open the app again to reach Settings), hide from screenshots and recordings, dropping files on the notch opens the file tray (now with image, PDF and video thumbnails plus kind and size), and the right-click menu gains playback controls and Quit.
 - **Lock screen:** a simpler Keep Awake card with duration presets.
