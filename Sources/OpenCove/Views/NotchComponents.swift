@@ -547,7 +547,9 @@ struct CoveSystemIndicators: View {
                     .help("Focus is on")
             }
             if preferences.enableBluetooth && !system.state.bluetoothDevices.isEmpty {
-                Image(systemName: system.state.audioOutputIsBluetooth ? "headphones" : "dot.radiowaves.left.and.right")
+                Image(systemName: system.state.audioOutputIsBluetooth
+                      ? CoveDeviceSymbol.symbol(forName: system.state.outputDevice, fallback: "headphones")
+                      : "dot.radiowaves.left.and.right")
                     .accessibilityLabel("Connected: \(system.state.bluetoothDevices.joined(separator: ", "))")
                     .help(system.state.bluetoothDevices.joined(separator: ", "))
             }

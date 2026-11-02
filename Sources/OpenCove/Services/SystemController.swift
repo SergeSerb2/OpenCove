@@ -619,7 +619,9 @@ final class SystemController: NSObject, ObservableObject {
                 emit(CoveHUD(kind: .volume, title: "Audio output disconnected", subtitle: old.outputDevice, symbol: "speaker.slash"))
             } else {
                 emit(CoveHUD(kind: new.audioOutputIsBluetooth ? .bluetooth : .volume,
-                             title: new.outputDevice, subtitle: "Audio output", symbol: new.audioOutputIsBluetooth ? "headphones" : "speaker.wave.2.fill"))
+                             title: new.outputDevice, subtitle: "Audio output",
+                             symbol: new.audioOutputIsBluetooth ? CoveDeviceSymbol.symbol(forName: new.outputDevice, fallback: "headphones")
+                                : "speaker.wave.2.fill"))
             }
         } else if (old.volumeAvailable && new.volumeAvailable && abs(new.volume - old.volume) > 0.001) ||
                     (old.muteAvailable && new.muteAvailable && new.isMuted != old.isMuted) {
@@ -647,7 +649,11 @@ final class SystemController: NSObject, ObservableObject {
         if old.bluetoothAvailable, new.bluetoothAvailable {
             for identifier in connectedBluetooth.keys.sorted() where previousBluetooth[identifier] == nil {
                 if !(routeChanged && new.audioOutputIsBluetooth && connectedBluetooth[identifier] == new.outputDevice) {
-                    emit(CoveHUD(kind: .bluetooth, title: connectedBluetooth[identifier] ?? "Bluetooth device", subtitle: "Connected", symbol: "antenna.radiowaves.left.and.right"))
+                    let name = connectedBluetooth[identifier] ?? "Bluetooth device"
+                    let battery = new.accessoryBatteries.first { $0.label == name }?.summaryPercentage
+                    emit(CoveHUD(kind: .bluetooth, title: name, subtitle: battery.map { "Connected · \($0)%" } ?? "Connected",
+                                 symbol: CoveDeviceSymbol.symbol(forName: name, fallback: "antenna.radiowaves.left.and.right"),
+                                 value: battery.map { Double($0) / 100 }))
                 }
             }
             for identifier in previousBluetooth.keys.sorted() where connectedBluetooth[identifier] == nil {
