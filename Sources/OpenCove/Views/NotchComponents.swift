@@ -1323,3 +1323,27 @@ struct CoveArtworkGlow: View {
         }
     }
 }
+
+/// A hairline of playback progress along the bottom of the compact media pill.
+/// It redraws once a second only while playback advances.
+@MainActor
+struct CoveCompactProgressLine: View {
+    @ObservedObject var clock: CovePlaybackClock
+    let duration: Double
+    let color: Color
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: clock.isAdvancing ? 1 : 3600)) { _ in
+            GeometryReader { geometry in
+                let fraction = CoveNotchStyle.fraction(clock.elapsed / max(1, duration))
+                Capsule().fill(.white.opacity(0.1))
+                    .overlay(alignment: .leading) {
+                        Capsule().fill(color.opacity(0.85)).frame(width: geometry.size.width * fraction)
+                    }
+            }
+        }
+        .frame(height: 2)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}

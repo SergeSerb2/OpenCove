@@ -369,6 +369,7 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 Toggle("Use artwork colors", isOn: preference(\.musicColorAccent))
                 Toggle("Show total duration", isOn: preference(\.showMediaTotalDuration))
+                Toggle("Progress line in compact view", isOn: preference(\.showCompactProgress))
                 Toggle("Artwork glow", isOn: preference(\.mediaArtworkGlow))
                     .help("Casts a soft light from the album artwork into the expanded panel.")
                 Toggle("Hide title extras", isOn: preference(\.hideMediaTitleExtras))

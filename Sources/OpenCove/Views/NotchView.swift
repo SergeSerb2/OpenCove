@@ -551,6 +551,14 @@ struct NotchView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.horizontal, 15)
+            .overlay(alignment: .bottom) {
+                if store.preferences.showCompactProgress, media.state.duration > 0 {
+                    CoveCompactProgressLine(clock: media.playback, duration: media.state.duration,
+                                            color: mediaAccent(artwork: artwork))
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 1.5)
+                }
+            }
             .modifier(CoveMediaSkipRegionGate(context: CoveMediaSkipContext.current(in: store),
                 kind: .compact, mode: .compact(.activity(.media))))
         } else if mode == .activity(.timer) && store.preferences.enableTimer && activities.timer.remaining > 0 {
