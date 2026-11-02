@@ -503,7 +503,7 @@ struct NotchView: View {
                            showLabels: store.preferences.showHUDLabels, showPercentage: store.preferences.showHUDPercentage,
                            brightnessHUDGlow: store.preferences.brightnessHUDGlow,
                            barStyle: CoveHUDBarStyle(rawValue: store.preferences.hudProgressStyle) ?? .accent,
-                           reduceMotion: store.preferences.reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+                           reduceMotion: store.preferences.reduceMotion || systemReduceMotion)
                 .padding(.horizontal, 18)
         } else if mode == .peek && store.preferences.enableMedia && media.state.available {
             mediaPeek(artwork: artwork)
@@ -566,7 +566,7 @@ struct NotchView: View {
                 ZStack {
                     Circle().stroke(.white.opacity(0.14), lineWidth: 2.2).padding(1.1)
                     CoveTimerRing(timer: activities.timer, clockRevision: activities.timerClockRevision,
-                                  reduceMotion: store.preferences.reduceMotion,
+                                  reduceMotion: store.preferences.reduceMotion || systemReduceMotion,
                                   color: CoveNotchStyle.accent(store.preferences.accent), lineWidth: 2.2)
                     if !activities.timer.running {
                         Image(systemName: "pause.fill").font(.system(size: 6, weight: .bold))
