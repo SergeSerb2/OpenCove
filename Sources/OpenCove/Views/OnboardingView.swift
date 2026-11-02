@@ -13,7 +13,9 @@ struct OnboardingView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var step: CoveOnboardingStep = .welcome
 
-    init(store: CoveStore) {
+    /// `finalPage` opens on the last step; used for development renders.
+    init(store: CoveStore, finalPage: Bool = false) {
+        if finalPage { _step = State(initialValue: .ready) }
         self.store = store
         self.activities = store.activities
         self.notificationMirror = store.notificationMirror
@@ -233,6 +235,29 @@ struct OnboardingView: View {
                 .disabled(CovePaths.isDevelopment)
             if CovePaths.isDevelopment {
                 CoveSettingsNote("Launch at login is available in the release app.")
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Sections")
+                HStack(spacing: 6) {
+                    ForEach([CoveTab.timer, .files, .notes, .clipboard, .system], id: \.self) { tab in
+                        let on = store.preferences[keyPath: tab.enabledKey]
+                        Button {
+                            store.updatePreferences { $0[keyPath: tab.enabledKey] = !on }
+                        } label: {
+                            Label(tab.title, systemImage: tab.symbol)
+                                .font(.callout)
+                                .padding(.horizontal, 10).padding(.vertical, 5)
+                                .foregroundStyle(on ? Color.black.opacity(0.85) : Color.primary)
+                                .background(on ? CovePreferenceAccent.color(for: store.preferences.accent) : Color.secondary.opacity(0.15),
+                                            in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(tab.title)
+                        .accessibilityValue(on ? "On" : "Off")
+                        .help(tab.settingsHelp)
+                    }
+                }
+                CoveSettingsNote("You can change sections and their order later in Settings → Activities.")
             }
             Picker("Expanded layout", selection: preference(\.expandedLayout)) {
                 Text("Automatic").tag("automatic")

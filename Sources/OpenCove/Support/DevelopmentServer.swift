@@ -920,6 +920,9 @@ final class DevelopmentServer {
         case "onboarding":
             size = CGSize(width: 700, height: 550)
             content = AnyView(OnboardingView(store: store))
+        case "onboarding-ready":
+            size = CGSize(width: 700, height: 600)
+            content = AnyView(OnboardingView(store: store, finalPage: true))
         case "settings":
             size = CGSize(width: 760, height: 550)
             content = AnyView(SettingsView(store: store))
@@ -972,7 +975,7 @@ final class DevelopmentServer {
         // becomes visible/key, reads the desktop, or receives user input.
         // Settings and onboarding are ordinary windows; draw their window background,
         // which an offscreen borderless window otherwise leaves blank.
-        let windowed = surface.hasPrefix("settings") || surface == "onboarding"
+        let windowed = surface.hasPrefix("settings") || surface.hasPrefix("onboarding")
         let backed = windowed ? AnyView(content.background(Color(nsColor: .windowBackgroundColor))) : content
         let hosting = NSHostingView(rootView: backed.frame(width: size.width, height: size.height)
             .transaction { transaction in
