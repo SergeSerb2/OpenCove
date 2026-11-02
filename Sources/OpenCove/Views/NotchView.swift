@@ -736,7 +736,8 @@ struct NotchView: View {
         case .calendar:
             CoveCalendarView(activities: activities, showCalendarList: store.preferences.showCalendarList,
                              showCalendarEventIndicators: store.preferences.showCalendarEventIndicators,
-                             useCalendarViewSourceColors: store.preferences.useCalendarViewSourceColors)
+                             useCalendarViewSourceColors: store.preferences.useCalendarViewSourceColors,
+                                     weather: store.preferences.enableWeather ? store.weather : nil)
         case .files:
             CoveFileSurface(activities: activities)
         case .timer:

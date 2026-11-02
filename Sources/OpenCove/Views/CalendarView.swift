@@ -13,8 +13,12 @@ struct CoveCalendarView: View {
     @State private var showsCondensedSchedule = false
     @State private var showsCalendarStatus = false
 
+    /// Present only when weather is on. An empty day then shows its forecast.
+    private let weather: WeatherController?
+
     init(activities: ActivityController, showCalendarList: Bool, showCalendarEventIndicators: Bool,
-         useCalendarViewSourceColors: Bool = true, condensed: Bool = false) {
+         useCalendarViewSourceColors: Bool = true, condensed: Bool = false, weather: WeatherController? = nil) {
+        self.weather = weather
         self.activities = activities
         self.showCalendarList = showCalendarList
         self.showCalendarEventIndicators = showCalendarEventIndicators
@@ -193,6 +197,8 @@ struct CoveCalendarView: View {
     private var schedule: some View {
         if needsCalendarStatus {
             calendarStatus
+        } else if dayEvents.isEmpty, let weather, !activities.calendarSources.isEmpty {
+            CoveClearDayWeather(controller: weather, date: selectedDate)
         } else if dayEvents.isEmpty {
             emptySchedule("No events", symbol: "calendar", detail: activities.calendarSources.isEmpty ? "No calendars are available." : "Nothing scheduled for this day.")
         } else {
@@ -437,5 +443,63 @@ private struct CoveCalendarScheduleRow: View {
 
     private var helpText: String {
         "\(event.title)\n\(timeText)\n\(event.calendarName) · \(event.timeZoneIdentifier)"
+    }
+}
+
+/// An empty day becomes a small forecast: "Your day is clear" with the day's
+/// conditions, high and low, and chance of rain when the forecast covers it.
+@MainActor
+struct CoveClearDayWeather: View {
+    @ObservedObject var controller: WeatherController
+    let date: Date
+
+    private var forecast: WeatherDay? {
+        let state = controller.state
+        guard state.available else { return nil }
+        let local = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        var remote = Calendar(identifier: .gregorian)
+        remote.timeZone = state.timeZone
+        return state.daily.first { remote.dateComponents([.year, .month, .day], from: $0.date) == local }
+    }
+
+    private var title: String {
+        Calendar.current.isDateInToday(date) ? "Your day is clear" : "Nothing scheduled"
+    }
+
+    private func degrees(_ value: Double?) -> String {
+        guard let value, value.isFinite else { return "—" }
+        return value.formatted(.number.precision(.fractionLength(0))) + "°"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: "sparkles").font(.system(size: 11, weight: .medium))
+            if let forecast {
+                HStack(spacing: 10) {
+                    Image(systemName: forecast.symbol)
+                        .symbolRenderingMode(.multicolor)
+                        .font(.system(size: 22))
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(forecast.condition).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                        HStack(spacing: 6) {
+                            Text("H \(degrees(forecast.maximum))  L \(degrees(forecast.minimum))")
+                            if let rain = forecast.precipitationProbability, rain.isFinite, rain >= 10 {
+                                Label("\(Int(rain.rounded()))%", systemImage: "drop.fill").labelStyle(.titleAndIcon)
+                            }
+                        }
+                        .font(.system(size: 10)).monospacedDigit()
+                        .foregroundStyle(.white.opacity(0.55))
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                if !controller.state.locationName.isEmpty {
+                    Text(controller.state.locationName).font(.system(size: 9)).foregroundStyle(.white.opacity(0.4)).lineLimit(1)
+                }
+            } else {
+                Text("Nothing scheduled for this day.").font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 }
