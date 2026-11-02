@@ -43,7 +43,11 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         store = CoveStore()
         updater = CoveUpdater()
         store.onOpenSettings = { [weak self] in self?.showSettings() }
-        store.onPreferencesChange = { [weak self] in self?.notch?.refreshLayout(); self?.lockWidgets?.refreshLayout() }
+        store.onPreferencesChange = { [weak self] in
+            self?.notch?.refreshLayout()
+            self?.lockWidgets?.refreshLayout()
+            self?.statusItem?.isVisible = !(self?.store.preferences.hideMenuBarIcon ?? false)
+        }
         configureStatusItem()
         store.start()
         notch = NotchPanelController(store: store)
@@ -68,6 +72,14 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         pendingURLOverflow = false
         handleIncomingURLs(incoming, overflow: overflow)
         if !store.preferences.completedOnboarding && !arguments.contains("--no-onboarding") { showSettings() }
+    }
+
+    /// Opening the app again (for example from Finder or Spotlight) shows
+    /// Settings. This keeps Settings reachable when the menu bar icon is hidden.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !startupFailed, store != nil else { return false }
+        showSettings()
+        return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -171,6 +183,7 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit OpenCove", action: #selector(quit), keyEquivalent: "q").target = self
         item.menu = menu
+        item.isVisible = !store.preferences.hideMenuBarIcon
         statusItem = item
     }
 

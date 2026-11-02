@@ -733,6 +733,8 @@ final class NotchPanelController: NSObject {
         let behavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle,
             store.preferences.hideInMissionControl ? .transient : .stationary]
         if panel.collectionBehavior != behavior { panel.collectionBehavior = behavior }
+        let sharing: NSWindow.SharingType = store.preferences.hideFromScreenCapture ? .none : .readOnly
+        if panel.sharingType != sharing { panel.sharingType = sharing }
     }
 
     static func contentIsHidden(in window: NSWindow) -> Bool? {

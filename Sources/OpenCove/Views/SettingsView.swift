@@ -135,6 +135,8 @@ struct SettingsView: View {
                 Toggle("Hide when idle", isOn: preference(\.hideWhenIdle))
                 Toggle("Hide in full-screen apps", isOn: preference(\.hideInFullscreen))
                 Toggle("Hide in Mission Control", isOn: preference(\.hideInMissionControl))
+                Toggle("Hide from screenshots and recordings", isOn: preference(\.hideFromScreenCapture))
+                    .help("Some capture tools can still record the panel.")
                 Toggle("Hide while the Now Playing app is active", isOn: preference(\.hideWhenMediaAppActive))
                 CoveSettingsNote("Hides the panel while the app providing Now Playing is frontmost. Temporary alerts still appear. This choice applies to this Mac.")
                 Toggle("Hide for apps in the Games category", isOn: preference(\.hideForGamesCategory))
@@ -212,6 +214,10 @@ struct SettingsView: View {
                     .disabled(CovePaths.isDevelopment)
                 LabeledContent("Login item", value: store.loginItemStatus)
                 CoveSettingsNote("macOS manages login access in System Settings → General → Login Items.")
+                Toggle("Hide menu bar icon", isOn: preference(\.hideMenuBarIcon))
+                if store.preferences.hideMenuBarIcon {
+                    CoveSettingsNote("To return here, open OpenCove again from Finder or Spotlight, or use the panel's menu.")
+                }
                 HStack {
                     Text("Setup")
                     Spacer()

@@ -233,6 +233,8 @@ struct CovePreferences: Codable, Equatable {
     var showDeclinedCalendarEvents: Bool = false
     var excludeSubscribedCalendars: Bool = false
     var hideInFullscreen = false
+    var hideMenuBarIcon = false
+    var hideFromScreenCapture = false
     // AppKit window presentation only. Device-local, outside cloud settings.
     var hideInMissionControl = false
     // Local presentation choice; never starts a media reader.

@@ -678,7 +678,8 @@ final class DevelopmentServer {
     private func snapshot() throws -> [String: Any] {
         let windows = NSApp.windows.filter { $0.isVisible && ($0.title == "OpenCove" || $0.identifier != nil) }.map { window in
             var value: [String: Any] = ["title": window.title, "width": window.frame.width, "height": window.frame.height,
-                                       "x": window.frame.origin.x, "y": window.frame.origin.y]
+                                       "x": window.frame.origin.x, "y": window.frame.origin.y,
+                                       "sharingType": window.sharingType == .none ? "none" : "readOnly"]
             if let hidden = NotchPanelController.contentIsHidden(in: window) {
                 value["contentHidden"] = hidden
                 value["missionControlPolicy"] = [

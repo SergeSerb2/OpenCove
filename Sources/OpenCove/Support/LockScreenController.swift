@@ -475,6 +475,7 @@ final class LockScreenController {
                                   styleMask: [.borderless, .nonactivatingPanel],
                                   backing: .buffered, defer: false)
         panel.title = "OpenCove widgets"
+        panel.sharingType = store.preferences.hideFromScreenCapture ? .none : .readOnly
         panel.isReleasedWhenClosed = false
         panel.canBecomeVisibleWithoutLogin = true
         panel.level = .screenSaver
