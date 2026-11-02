@@ -607,9 +607,10 @@ struct NotchView: View {
                                 .font(.system(size: 9))
                                 .foregroundStyle(.indigo)
                         } else if store.preferences.enableBattery && system.state.hasBattery && system.state.batteryAvailable {
+                            // The compact clock has no room for a percentage beside the date.
                             CoveBatteryMark(percent: system.state.batteryPercent, charging: system.state.isCharging,
-                                            showPercent: store.preferences.showBatteryPercentage,
-                                            warningLevel: store.preferences.lowBatteryWarningThreshold ?? 20)
+                                            warningLevel: store.preferences.lowBatteryWarningThreshold ?? 20,
+                                            minutesToFull: system.state.batteryTimeToFullMinutes)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .trailing)

@@ -528,6 +528,8 @@ struct CoveBatteryMark: View {
                 Text("\(min(100, max(0, percent)))%")
                     .font(.system(size: 9, weight: .medium, design: .rounded))
                     .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
             }
             Image(systemName: symbol).font(.system(size: 13))
         }
