@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased — next
+## 0.1.0-beta.3 — November 2, 2026
+
+Build 3. A universal, Developer ID signed and notarized beta, delivered through the existing Sparkle feed. It updates 0.1.0-beta.2.
 
 - **Sounds:** a timer-finished sound (on by default) and optional lock, unlock, charger, low-battery, calendar-start and hourly-chime (daytime only by default) sounds, using built-in macOS sounds, with previews and a volume level.
 - **Battery:** configurable low-battery warning level, an optional percentage beside the battery mark, and time until full charge.
@@ -19,6 +21,15 @@
 - **Settings:** search, reorderable panel sections, a new Overlays page, a live Appearance preview with color swatches, and shorter, plainer descriptions.
 - **Keyboard:** ← → switch sections and Space plays or pauses while the panel has focus.
 - **Polish:** an option to hide the compact playback indicator, no more "-0°", player launchers when nothing is playing, Clear All in notification history, and gestures explained in onboarding.
+
+Also new since beta.2:
+
+- **Panel:** middle click cycles Media and Calendar, downward swipes cycle the enabled sections, Duo is chosen automatically for two activities at once, an optional idle-hover expansion, and optional hiding in Mission Control, in games and while the media app is in front.
+- **Media:** optional swipe to skip tracks, a total-duration time choice, dimmed artwork while paused, and playback controls in the menu bar menu.
+- **Calendar:** better grid and Today contrast, optional event dots, source colors, a hidden event list, and filters for declined events and subscriptions.
+- **Overlays:** separate label and percentage choices, accent outlines and a brightness glow, optional Low Power Mode overlays, and brightness feedback from BetterDisplay.
+- **Lock screen:** finite Keep Awake sessions, battery time remaining, and explicit consent for lock-screen widgets.
+- **Setup and reliability:** an optional Bluetooth step, Focus and Bluetooth monitoring that stays off when disabled, optional integrations that stay off after damaged preferences, and less audio and Calendar work in the background.
 
 ## Unreleased — 0.1.0-beta.1
 
