@@ -642,6 +642,7 @@ struct CoveMediaSurface: View {
     var reduceMotion = false
     var cleanTitles = false
     var artworkGlow = false
+    var showsLockVolume = false
     @State private var scrubbing = false
     @State private var scrubTime = 0.0
     @State private var scrubIdentity: CoveMediaScrubIdentity?
@@ -674,6 +675,9 @@ struct CoveMediaSurface: View {
                                 }
                                 .background(CoveMediaRegionMarker(blocksInput: true))
                         }
+                    }
+                    .overlay(alignment: .trailing) {
+                        if locked && showsLockVolume { CoveLockVolumeControl(system: system) }
                     }
                 }
                 .tint(musicColorAccent ? artwork?.tint : nil)
@@ -1345,5 +1349,27 @@ struct CoveCompactProgressLine: View {
         .frame(height: 2)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+/// A small volume slider for the lock-screen media widget.
+@MainActor
+struct CoveLockVolumeControl: View {
+    @ObservedObject var system: SystemController
+
+    var body: some View {
+        if system.state.volumeAvailable {
+            HStack(spacing: 6) {
+                Image(systemName: system.state.isMuted || system.state.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 14)
+                Slider(value: Binding(get: { CoveNotchStyle.fraction(system.state.volume) }, set: { system.setVolume($0) }), in: 0...1)
+                    .controlSize(.mini)
+                    .frame(width: 90)
+                    .disabled(!system.state.canSetVolume)
+                    .accessibilityLabel("Volume")
+                    .accessibilityValue("\(Int((CoveNotchStyle.fraction(system.state.volume) * 100).rounded())) percent")
+            }
+            .background(CoveMediaRegionMarker(blocksInput: true))
+        }
     }
 }
