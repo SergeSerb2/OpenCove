@@ -878,7 +878,7 @@ struct CoveMediaSurface: View {
         HStack(spacing: condensed ? 15 : 18) {
             if media.state.supportsShuffle && !condensed {
                 CoveIconButton(symbol: "shuffle", label: "Toggle shuffle", allowsKeyboardFocus: !locked, action: media.toggleShuffle)
-                    .foregroundStyle(media.state.isShuffling == true ? Color.mint : Color.white.opacity(0.5))
+                    .foregroundStyle(media.state.isShuffling == true ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.white.opacity(0.5)))
             }
             CoveIconButton(symbol: "backward.fill", label: "Previous track", size: 15,
                            allowsKeyboardFocus: !locked,
@@ -899,7 +899,7 @@ struct CoveMediaSurface: View {
                 .disabled(!media.state.supportsNext)
             if media.state.supportsRepeat && !condensed {
                 CoveIconButton(symbol: media.state.repeatMode == "one" ? "repeat.1" : "repeat", label: "Cycle repeat mode", allowsKeyboardFocus: !locked, action: media.cycleRepeat)
-                    .foregroundStyle(media.state.isRepeating == true ? Color.mint : Color.white.opacity(0.5))
+                    .foregroundStyle(media.state.isRepeating == true ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.white.opacity(0.5)))
             }
         }
         .background(CoveMediaRegionMarker(blocksInput: true))
