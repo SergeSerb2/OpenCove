@@ -1272,7 +1272,14 @@ struct CoveNotificationButton: View {
                        label: "Notifications, \(activities.notifications.count)") { presented.toggle() }
             .popover(isPresented: $presented, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Notifications").font(.system(size: 13, weight: .semibold))
+                    HStack {
+                        Text("Notifications").font(.system(size: 13, weight: .semibold))
+                        Spacer()
+                        if !activities.notifications.isEmpty {
+                            Button("Clear All", action: activities.clearNotifications)
+                                .buttonStyle(.borderless).font(.system(size: 11))
+                        }
+                    }
                     if activities.notifications.isEmpty {
                         Text("You’re all caught up.")
                             .font(.system(size: 12)).foregroundStyle(.secondary)
@@ -1287,6 +1294,12 @@ struct CoveNotificationButton: View {
                                             Spacer()
                                             Text(notification.date, style: .relative)
                                                 .font(.system(size: 9)).foregroundStyle(.secondary)
+                                            Button { activities.removeNotification(notification.id) } label: {
+                                                Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .foregroundStyle(.secondary)
+                                            .accessibilityLabel("Remove notification")
                                         }
                                         Text(notification.body).font(.system(size: 11)).foregroundStyle(.secondary)
                                     }
