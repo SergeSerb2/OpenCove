@@ -1154,7 +1154,7 @@ struct CoveTimerSurface: View {
     var reduceMotion = false
     private let presets: [Double] = [60, 300, 900, 1500]
     @State private var choosingCustom = false
-    @AppStorage("OpenCove.customTimerMinutes") private var customMinutes = 45
+    @State private var customMinutes = 45
 
     var body: some View {
         if activities.timer.remaining > 0 {

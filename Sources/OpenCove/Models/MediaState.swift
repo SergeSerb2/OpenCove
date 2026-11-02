@@ -136,7 +136,7 @@ extension MediaState {
 enum CoveMediaTitle {
     private static let extraPatterns: [NSRegularExpression] = [
         #"\bremaster(ed)?\b"#,
-        #"^(\d{4}\s+)?(single|album|radio|original|extended|mono|stereo|deluxe|explicit|clean)(\s+(version|edit|mix|cut))?(\s+\d{4})?$"#,
+        #"^(\d{4}\s+)?(single|album|radio|original|extended|mono|stereo|deluxe|explicit|clean)(\s+(version|edit|edition|mix|cut))?(\s+\d{4})?$"#,
         #"^\d{4}(\s+(version|mix|edit))?$"#,
         #"\bbonus\s+track\b"#,
         #"\banniversary\b"#,
