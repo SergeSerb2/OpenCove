@@ -5,7 +5,7 @@ import AppKit
 /// /System/Library/Sounds. Sounds play through the current output device and
 /// follow its volume and mute state.
 enum CoveSoundEvent: String, CaseIterable {
-    case lock, unlock, lowBattery, hourlyChime, eventStart
+    case lock, unlock, lowBattery, hourlyChime, eventStart, powerConnected
 
     var systemSoundName: NSSound.Name {
         switch self {
@@ -14,6 +14,7 @@ enum CoveSoundEvent: String, CaseIterable {
         case .lowBattery: return "Submarine"
         case .hourlyChime: return "Glass"
         case .eventStart: return "Ping"
+        case .powerConnected: return "Purr"
         }
     }
 
@@ -26,6 +27,7 @@ enum CoveSoundEvent: String, CaseIterable {
         case .lowBattery: return \.playSoundOnLowBattery
         case .hourlyChime: return \.playHourlyChime
         case .eventStart: return \.playSoundOnEventStart
+        case .powerConnected: return \.playSoundOnPowerConnected
         }
     }
 }

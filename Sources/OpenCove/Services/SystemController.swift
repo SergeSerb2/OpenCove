@@ -30,6 +30,8 @@ final class SystemController: NSObject, ObservableObject {
     var onLockTransition: ((Bool) -> Void)?
     /// Called when the internal battery falls to a warning level while on battery power.
     var onLowBattery: ((Int) -> Void)?
+    /// Called when a charger connects to a Mac with an internal battery.
+    var onPowerConnected: (() -> Void)?
     /// The configured warning level. A nil value turns low-battery warnings off.
     var lowBatteryThreshold: Int? = 20
     var onLockChange: ((Bool) -> Void)?
@@ -637,6 +639,7 @@ final class SystemController: NSObject, ObservableObject {
         if old.batteryAvailable, new.batteryAvailable, old.hasBattery, new.hasBattery {
             if old.isOnACPower != new.isOnACPower || old.isCharging != new.isCharging {
                 let title = new.isCharging ? "Charging" : (new.isOnACPower ? "Power connected" : "On battery")
+                if !old.isOnACPower && new.isOnACPower { onPowerConnected?() }
                 emit(CoveHUD(kind: .battery, title: title, subtitle: "\(new.batteryPercent)%",
                              symbol: new.isOnACPower ? "battery.100percent.bolt" : "battery.100percent", value: Double(new.batteryPercent) / 100))
             } else if !new.isOnACPower, let threshold = lowBatteryThreshold,
