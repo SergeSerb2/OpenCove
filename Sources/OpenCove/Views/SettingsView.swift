@@ -23,9 +23,11 @@ struct SettingsView: View {
     @State private var showsOnboarding = false
     @State private var selectedHUD: HUDKind = .volume
     @State private var hudPreviewMessage: String?
+    @State private var search = ""
 
     init(store: CoveStore, initialPage: CoveSettingsPage = .general, updater: CoveUpdater? = nil,
-         keepAwakeStatus: LockScreenKeepAwakeStatus? = nil) {
+         keepAwakeStatus: LockScreenKeepAwakeStatus? = nil, initialSearch: String = "") {
+        self._search = State(initialValue: initialSearch)
         self.store = store
         self.updater = updater
         self.keepAwakeStatus = keepAwakeStatus ?? LockScreenKeepAwakeStatus()
@@ -54,12 +56,26 @@ struct SettingsView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 20)
 
-                List(CoveSettingsPage.allCases, selection: $selection) { page in
-                    Label(page.rawValue, systemImage: page.symbol)
-                        .padding(.vertical, 3)
-                        .tag(page)
+                List(CoveSettingsPage.matching(search), selection: $selection) { page in
+                    VStack(alignment: .leading, spacing: 1) {
+                        Label(page.rawValue, systemImage: page.symbol)
+                        if let hint = page.matchHint(search) {
+                            Text(hint).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                .padding(.leading, 26)
+                        }
+                    }
+                    .padding(.vertical, 3)
+                    .tag(page)
                 }
                 .listStyle(.sidebar)
+                .searchable(text: $search, placement: .sidebar, prompt: "Search")
+                .onChange(of: search) { _, _ in
+                    let matches = CoveSettingsPage.matching(search)
+                    if let first = matches.first, !matches.contains(selection ?? .general) { selection = first }
+                }
+                if CoveSettingsPage.matching(search).isEmpty {
+                    Text("No matching settings").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 16)
+                }
             }
             .navigationSplitViewColumnWidth(min: 172, ideal: 172, max: 190)
         } detail: {
@@ -1142,5 +1158,41 @@ struct CoveSectionOrderList: View {
         guard next.indices.contains(target) else { return }
         next.swapAt(index, target)
         store.updatePreferences { $0.sectionOrder = CoveTab.normalizedOrder(next.map(\.rawValue).joined(separator: ",")) }
+    }
+}
+
+extension CoveSettingsPage {
+    /// Words people may search for, mapped to the page that holds them.
+    private var keywords: [String] {
+        switch self {
+        case .general: return ["display", "monitor", "hide", "full screen", "mission control", "screenshot", "recording",
+                               "lock screen", "widget", "keep awake", "swipe", "gesture", "hover", "shortcut", "hotkey",
+                               "keyboard", "login", "startup", "menu bar", "icon", "icloud", "sync", "layout", "games"]
+        case .appearance: return ["accent", "color", "colour", "outline", "contrast", "notch", "width", "height", "corner",
+                                  "size", "motion", "animation", "haptic", "theme"]
+        case .media: return ["music", "spotify", "player", "now playing", "artwork", "glow", "title", "peek", "duration",
+                             "progress", "waveform", "audio", "applescript", "lock screen volume"]
+        case .activities: return ["timer", "break", "file", "tray", "clipboard", "notes", "shortcuts", "system", "cpu",
+                                  "memory", "network", "disk", "calendar", "event", "meeting", "bluetooth", "device",
+                                  "notification", "travel", "leave", "sound", "chime", "section", "order"]
+        case .overlays: return ["hud", "overlay", "volume", "brightness", "battery", "low battery", "charging",
+                                "low power", "betterdisplay", "focus", "level", "bar", "percentage"]
+        case .weather: return ["weather", "forecast", "temperature", "location", "rain"]
+        case .permissions: return ["permission", "access", "privacy", "accessibility", "private"]
+        case .about: return ["update", "version", "license", "source", "bug", "setup", "onboarding", "reset"]
+        }
+    }
+
+    static func matching(_ query: String) -> [CoveSettingsPage] {
+        let text = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !text.isEmpty else { return allCases }
+        return allCases.filter { $0.rawValue.lowercased().contains(text) || $0.keywords.contains { $0.contains(text) } }
+    }
+
+    /// The first keyword that matched, shown under the page name while searching.
+    func matchHint(_ query: String) -> String? {
+        let text = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !text.isEmpty, !rawValue.lowercased().contains(text) else { return nil }
+        return keywords.first { $0.contains(text) }.map { $0.prefix(1).uppercased() + $0.dropFirst() }
     }
 }

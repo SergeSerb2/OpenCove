@@ -927,6 +927,9 @@ final class DevelopmentServer {
         case "settings-activities":
             size = CGSize(width: 760, height: 900)
             content = AnyView(SettingsView(store: store, initialPage: .activities))
+        case "settings-search":
+            size = CGSize(width: 760, height: 550)
+            content = AnyView(SettingsView(store: store, initialPage: .overlays, initialSearch: "batt"))
         case "settings-permissions":
             size = CGSize(width: 760, height: 1400)
             content = AnyView(SettingsView(store: store, initialPage: .permissions))

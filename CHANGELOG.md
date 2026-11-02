@@ -15,7 +15,7 @@
 - **System stats:** an optional section with CPU, memory, network and disk, sampled only while it is open.
 - **General:** a global open/close shortcut, hide menu bar icon (open the app again to reach Settings), hide from screenshots and recordings, dropping files on the notch opens the file tray (now with image, PDF and video thumbnails plus kind and size), and the right-click menu gains playback controls and Quit.
 - **Lock screen:** a simpler Keep Awake card with duration presets.
-- **Settings:** reorderable panel sections, a new Overlays page, a live Appearance preview with color swatches, and shorter, plainer descriptions.
+- **Settings:** search, reorderable panel sections, a new Overlays page, a live Appearance preview with color swatches, and shorter, plainer descriptions.
 - **Polish:** player launchers when nothing is playing, Clear All in notification history, and gestures explained in onboarding.
 
 ## Unreleased — 0.1.0-beta.1
