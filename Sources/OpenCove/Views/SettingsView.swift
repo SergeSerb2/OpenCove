@@ -403,6 +403,7 @@ struct SettingsView: View {
                     .help("Shows the track length instead of the time remaining.")
                 Toggle("Progress line in compact view", isOn: preference(\.showCompactProgress))
                 Toggle("Volume control on the lock screen", isOn: preference(\.showLockScreenVolume))
+                Toggle("Show the playing app on artwork", isOn: preference(\.showMediaSourceBadge))
                 Toggle("Artwork glow", isOn: preference(\.mediaArtworkGlow))
                     .help("Casts a soft light from the album artwork into the expanded panel.")
                 Toggle("Hide title extras", isOn: preference(\.hideMediaTitleExtras))

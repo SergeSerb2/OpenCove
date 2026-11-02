@@ -6,7 +6,7 @@
 - **Battery:** configurable low-battery warning level, an optional percentage beside the battery mark, and time until full charge.
 - **Overlays:** Accent, White, Segmented and Gradient level bars that animate between values; the volume symbol fills with the level.
 - **Bluetooth:** device symbols for AirPods, Beats, HomePod, keyboards, mice and controllers, with battery level when the accessory reports one.
-- **Media:** artwork glow, hide title extras (Remastered, Bonus Track, feat.), Back 15 / Forward 30 seconds, an optional compact progress line and a lock-screen volume slider.
+- **Media:** the playing app's icon on the artwork, artwork glow, hide title extras (Remastered, Bonus Track, feat.), Back 15 / Forward 30 seconds, an optional compact progress line and a lock-screen volume slider.
 - **Timer:** an optional automatic break (1–30 minutes) after each timer, +1 minute while running, custom durations up to 12 hours and a live progress ring in the compact view.
 - **Calendar and weather:** an optional Weather section (now, next six hours, next four days), an empty calendar day shows its forecast, and the idle compact clock shows the current temperature.
 - **Shortcuts:** pin up to eight macOS Shortcuts as one-tap tiles in a new panel section. Each shows progress, and the result appears as an overlay.

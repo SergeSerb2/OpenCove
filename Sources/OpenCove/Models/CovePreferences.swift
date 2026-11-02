@@ -242,6 +242,7 @@ struct CovePreferences: Codable, Equatable {
     var showMediaTotalDuration: Bool = false
     var hideMediaTitleExtras = false
     var mediaArtworkGlow = true
+    var showMediaSourceBadge = true
     var showCompactProgress = false
     var showLockScreenVolume = false
     var preferredMusicApp = "system"

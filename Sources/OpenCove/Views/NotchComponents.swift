@@ -644,6 +644,7 @@ struct CoveMediaSurface: View {
     var cleanTitles = false
     var artworkGlow = false
     var showsLockVolume = false
+    var showsSourceBadge = false
     @State private var scrubbing = false
     @State private var scrubTime = 0.0
     @State private var scrubIdentity: CoveMediaScrubIdentity?
@@ -721,6 +722,14 @@ struct CoveMediaSurface: View {
                                 radius: condensed ? 9 : 12,
                                 sourceIdentifier: media.state.sourceBundleIdentifier,
                                 isPlaying: media.state.isPlaying, reduceMotion: reduceMotion)
+                        .overlay(alignment: .bottomTrailing) {
+                            if showsSourceBadge, let icon = CoveSourceIcon.icon(for: media.state.sourceBundleIdentifier) {
+                                Image(nsImage: icon).resizable().frame(width: 18, height: 18)
+                                    .shadow(color: .black.opacity(0.5), radius: 2, y: 1)
+                                    .offset(x: 5, y: 5)
+                                    .accessibilityHidden(true)
+                            }
+                        }
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open media player")
@@ -1720,5 +1729,20 @@ struct CoveClipboardSurface: View {
         .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
             .strokeBorder(accent.opacity(copied == item.id ? 0.6 : 0), lineWidth: 1))
+    }
+}
+
+/// App icons for media sources, looked up once per bundle identifier.
+@MainActor
+enum CoveSourceIcon {
+    private static var cache: [String: NSImage?] = [:]
+
+    static func icon(for bundleIdentifier: String) -> NSImage? {
+        guard !bundleIdentifier.isEmpty else { return nil }
+        if let cached = cache[bundleIdentifier] { return cached }
+        let icon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
+            .map { NSWorkspace.shared.icon(forFile: $0.path) }
+        cache[bundleIdentifier] = icon
+        return icon
     }
 }

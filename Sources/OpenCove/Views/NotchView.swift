@@ -779,7 +779,8 @@ struct NotchView: View {
                                      showLiveWaveform: store.preferences.showLiveWaveform, condensed: true,
                                      musicColorAccent: store.preferences.musicColorAccent,
                                      reduceMotion: store.preferences.reduceMotion, cleanTitles: store.preferences.hideMediaTitleExtras,
-                                     artworkGlow: store.preferences.mediaArtworkGlow)
+                                     artworkGlow: store.preferences.mediaArtworkGlow,
+                                     showsSourceBadge: store.preferences.showMediaSourceBadge)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .modifier(CoveMediaSkipRegionGate(context: CoveMediaSkipContext.current(in: store),
                             kind: .duo, mode: .expanded, section: identity))
@@ -797,7 +798,8 @@ struct NotchView: View {
                                  showLiveWaveform: store.preferences.showLiveWaveform,
                                  musicColorAccent: store.preferences.musicColorAccent,
                                  reduceMotion: store.preferences.reduceMotion, cleanTitles: store.preferences.hideMediaTitleExtras,
-                                     artworkGlow: store.preferences.mediaArtworkGlow)
+                                     artworkGlow: store.preferences.mediaArtworkGlow,
+                                     showsSourceBadge: store.preferences.showMediaSourceBadge)
                     .modifier(CoveMediaSkipRegionGate(context: CoveMediaSkipContext.current(in: store),
                         kind: .expanded, mode: .expanded, section: identity))
             }
