@@ -1116,11 +1116,11 @@ final class NotchPanelController: NSObject {
             surface.panel.resignKey()
             return true
         }
-        // Arrow keys switch sections and Space plays or pauses media, unless a
-        // text field or other editor has focus, or a modifier key is held.
+        // Arrow keys switch sections and Space plays or pauses media only while
+        // no control has keyboard focus, so sliders and editors keep their keys.
         if event.type == .keyDown, store.isExpanded,
            event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
-           !(surface.panel.firstResponder is NSText) {
+           surface.panel.firstResponder == nil || surface.panel.firstResponder === surface.panel {
             switch event.keyCode {
             case 123: changeTab(forward: false); return true   // left arrow
             case 124: changeTab(forward: true); return true    // right arrow
