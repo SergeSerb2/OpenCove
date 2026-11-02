@@ -10,9 +10,11 @@
 - **Timer:** +1 minute while running, custom durations up to 12 hours and a live progress ring in the compact view.
 - **Calendar and weather:** an empty day shows its forecast, and the idle compact clock shows the current temperature.
 - **Shortcuts:** pin up to eight macOS Shortcuts as one-tap tiles in a new panel section. Each shows progress, and the result appears as an overlay.
+- **System stats:** an optional section with CPU, memory, network and disk, sampled only while it is open.
 - **General:** a global open/close shortcut, hide menu bar icon (open the app again to reach Settings), hide from screenshots and recordings, dropping files on the notch opens the file tray, and the right-click menu gains playback controls and Quit.
 - **Lock screen:** a simpler Keep Awake card with duration presets.
-- Shorter, plainer Settings descriptions.
+- **Settings:** a new Overlays page, a live Appearance preview with color swatches, and shorter, plainer descriptions.
+- **Polish:** player launchers when nothing is playing, Clear All in notification history, and gestures explained in onboarding.
 
 ## Unreleased — 0.1.0-beta.1
 
