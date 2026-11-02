@@ -909,8 +909,10 @@ final class DevelopmentServer {
             size = CGSize(width: 760, height: 550)
             content = AnyView(SettingsView(store: store, initialPage: .weather))
         case "lock":
-            size = CGSize(width: 460, height: 250)
-            content = AnyView(LockScreenView(store: store, weather: store.weather).environment(\.colorScheme, .dark))
+            size = CGSize(width: 460, height: 360)
+            // Offscreen drawing cannot show system glass; a dark backdrop stands in for the lock screen.
+            content = AnyView(LockScreenView(store: store, weather: store.weather).environment(\.colorScheme, .dark)
+                .background(LinearGradient(colors: [Color(white: 0.22), Color(white: 0.1)], startPoint: .top, endPoint: .bottom)))
         case "weather":
             size = CGSize(width: 560, height: 760)
             content = AnyView(ScrollView { WeatherView(controller: store.weather,
