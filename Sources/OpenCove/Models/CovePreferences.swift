@@ -200,6 +200,7 @@ struct CovePreferences: Codable, Equatable {
     var playHourlyChime = false
     var playSoundOnEventStart = false
     var playSoundOnPowerConnected = false
+    var playSoundOnTimerFinished = true
     var soundVolume = 0.6
     // Separate native, save-first consent on this Mac. Never synced or granted by widgets.
     var enableLowPowerModeAlerts = false

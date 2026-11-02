@@ -512,6 +512,7 @@ struct SettingsView: View {
             Section("Sounds") {
                 soundToggle("Lock", .lock)
                 soundToggle("Unlock", .unlock)
+                soundToggle("Timer finished", .timerFinished)
                 soundToggle("Charger connected", .powerConnected)
                 soundToggle("Low battery", .lowBattery)
                 soundToggle("Calendar event starts", .eventStart)

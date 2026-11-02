@@ -79,6 +79,8 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
     @Published private(set) var nativeNotificationsEnabled = false
     @Published private(set) var incomingURLAuthorization = "Disabled"
     var onHUD: ((CoveHUD) -> Void)?
+    /// Called once when a running timer reaches zero.
+    var onTimerFinished: (() -> Void)?
     // Internal route consumers receive filtered source events, independent of UI redaction.
     var onRoutingEvents: (([CoveEvent]) -> Void)?
     var routingEvents: [CoveEvent] {
@@ -1312,6 +1314,7 @@ final class ActivityController: NSObject, ObservableObject, @preconcurrency NSSh
         save(timer, as: "activity-timer.json")
         updateCountdown()
         enqueueNotification(title: "Timer finished", body: "Your OpenCove timer has finished.", source: "Timer", symbol: "timer")
+        onTimerFinished?()
     }
 
     private func handleClockChange() {

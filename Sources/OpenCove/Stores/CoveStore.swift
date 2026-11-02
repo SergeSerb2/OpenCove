@@ -488,6 +488,10 @@ final class CoveStore: ObservableObject {
             guard let self, self.started, self.sessionActive else { return }
             self.sounds.play(locked ? .lock : .unlock, preferences: self.preferences)
         }
+        activities.onTimerFinished = { [weak self] in
+            guard let self, self.started, self.sessionActive, self.preferences.enableTimer else { return }
+            self.sounds.play(.timerFinished, preferences: self.preferences)
+        }
         system.onPowerConnected = { [weak self] in
             guard let self, self.started, self.sessionActive, !self.system.state.isLocked else { return }
             self.sounds.play(.powerConnected, preferences: self.preferences)

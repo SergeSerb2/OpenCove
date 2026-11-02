@@ -2,7 +2,7 @@
 
 ## Unreleased — next
 
-- **Sounds:** optional lock, unlock, charger, low-battery, calendar-start and hourly-chime sounds, using built-in macOS sounds, with previews and a volume level.
+- **Sounds:** a timer-finished sound (on by default) and optional lock, unlock, charger, low-battery, calendar-start and hourly-chime sounds, using built-in macOS sounds, with previews and a volume level.
 - **Battery:** configurable low-battery warning level, an optional percentage beside the battery mark, and time until full charge.
 - **Overlays:** Accent, White, Segmented and Gradient level bars that animate between values; the volume symbol fills with the level.
 - **Bluetooth:** device symbols for AirPods, Beats, HomePod, keyboards, mice and controllers, with battery level when the accessory reports one.
