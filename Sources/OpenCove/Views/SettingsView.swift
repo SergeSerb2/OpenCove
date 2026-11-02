@@ -138,9 +138,9 @@ struct SettingsView: View {
                 Toggle("Hide from screenshots and recordings", isOn: preference(\.hideFromScreenCapture))
                     .help("Some capture tools can still record the panel.")
                 Toggle("Hide while the Now Playing app is active", isOn: preference(\.hideWhenMediaAppActive))
-                CoveSettingsNote("Hides the panel while the app providing Now Playing is frontmost. Temporary alerts still appear. This choice applies to this Mac.")
+                CoveSettingsNote("Hides the panel while you use the music app itself. Alerts still appear.")
                 Toggle("Hide for apps in the Games category", isOn: preference(\.hideForGamesCategory))
-                CoveSettingsNote("Uses only the frontmost app’s declared Games category or an Apple-documented game subcategory. Apps without a supported declaration do not hide the panel. This does not detect Game Mode or actual play. Temporary alerts still appear. Off by default and local to this Mac.")
+                CoveSettingsNote("Works with apps that macOS lists as games. Alerts still appear.")
             }
 
             Section("Lock-screen widgets") {
@@ -149,20 +149,20 @@ struct SettingsView: View {
                 if let outcome = keepAwakeStatus.projection.lastOutcome {
                     LabeledContent("Last Keep Awake outcome", value: outcome.resultCode)
                 }
-                CoveSettingsNote("Start a finite 1–120 minute session from an available lock-screen card. The default is 5 minutes. Stop ends it; Restart starts a new finite session. This affects automatic display sleep on this Mac. Closing the lid or choosing Sleep still works. Activity and duration are never saved. Settings cannot start a session.")
+                CoveSettingsNote("Keeps the display awake for 1–120 minutes (5 by default). Start it from the lock-screen card. Closing the lid or choosing Sleep still works.")
                 Toggle("Show widgets on the lock screen", isOn: preference(\.showOnLockScreen))
                 Toggle("Use the same widgets as activities", isOn: preference(\.lockWidgetsFollowActivities))
                 CoveSettingsNote("These choices apply only to this Mac. Changing mode clears independent choices.")
                 Toggle("Show event details while locked", isOn: preference(\.showLockScreenPrivateContent))
                     .disabled(!store.preferences.showOnLockScreen)
-                CoveSettingsNote("Lock-screen visibility depends on macOS security policy. Widgets appear only in an app-confirmed locked, active session with displays awake.")
+                CoveSettingsNote("Widgets appear while your Mac is locked and the display is on. macOS can limit what shows.")
                 if !store.preferences.enablePrivateAPIs {
-                    CoveSettingsNote("Widgets stay hidden and independent readers stay off while private integrations are off. Enable this prerequisite separately; widget choices do not enable it.")
+                    CoveSettingsNote("Turn on private macOS integrations in Permissions to use lock-screen widgets.")
                 } else if !system.state.lockStateKnown {
                     CoveSettingsNote(system.state.capabilityMessages["lock"] ?? "Waiting for a confirmed session lock state.")
                 }
                 if !store.preferences.lockWidgetsFollowActivities {
-                    CoveSettingsNote("Each widget you enable can keep its existing data reader running while this app session is active and lock-screen widgets are on, including while your Mac is unlocked. Existing permissions and source choices still apply. Widget choices do not request access.")
+                    CoveSettingsNote("Each widget reads its data even when the matching activity is off. Widgets never ask for new access.")
                     ForEach(CoveLockWidget.allCases) { widget in
                         Toggle("Enable \(widget.title) widget and reading", isOn: Binding(
                             get: { store.preferences[keyPath: widget.selectionKey] },
@@ -170,8 +170,8 @@ struct SettingsView: View {
                             .disabled(!store.preferences.showOnLockScreen || !store.preferences.enablePrivateAPIs)
                         CoveSettingsNote(widget.disclosure)
                     }
-                    CoveSettingsNote("Turning an activity off also turns its independent widget off. Enable that widget in a separate action if you still want it. Turning widgets, private integrations, or event details off clears independent choices.")
-                    CoveSettingsNote("If saving an off choice fails, it stops extra reading for this session. The previous saved choice may return after restart. Check any save error shown above.")
+                    CoveSettingsNote("Turning an activity off also turns off its widget.")
+                    CoveSettingsNote("If a change cannot be saved, it applies until OpenCove restarts.")
                 }
             }
 
@@ -182,22 +182,22 @@ struct SettingsView: View {
                     Text("Calendar").tag("calendar")
                     Text("Timer").tag("timer")
                 }
-                CoveSettingsNote("Prefer this activity while it is available. Otherwise use automatic switching: media, timer, then calendar. Temporary alerts still appear. Opening the compact panel shows its activity.")
+                CoveSettingsNote("Shows this activity first when available. Automatic picks media, then timer, then calendar.")
                 Picker("Expanded layout", selection: preference(\.expandedLayout)) {
                     Text("Automatic").tag("automatic")
                     Text("Now Playing").tag("media")
                     Text("Calendar").tag("calendar")
                     Text("Media & Calendar").tag("duo")
                 }
-                CoveSettingsNote("Automatic pairs playing media with a current or starting-soon calendar activity. Otherwise it shows Now Playing. Explicit layouts stay selected until you choose another section.")
+                CoveSettingsNote("Automatic shows media and calendar side by side when music plays during or before an event.")
                 Toggle("Swipe to skip media", isOn: preference(\.swipeToSkip))
                 Toggle("Reverse skip swipe direction", isOn: preference(\.reverseSkipSwipe))
                     .disabled(!store.preferences.swipeToSkip)
-                CoveSettingsNote("Swipe left over media for Next, or right for Previous. Direction follows device movement regardless of Natural Scrolling. Reverse changes skipping only. The top edge still changes sections. Some players support buttons only. These choices apply to this Mac.")
+                CoveSettingsNote("Swipe left on media for the next track and right for the previous one. Swipe at the top edge to change sections.")
                 Toggle("Expand on hover", isOn: preference(\.expandOnHover))
                 Toggle("Don't expand on hover when idle", isOn: preference(\.disableIdleHoverExpansion))
                     .disabled(!store.preferences.expandOnHover)
-                CoveSettingsNote("When only the idle clock is available, hover will not open controls. Use Open OpenCove in the menu to open them. This choice applies to this Mac.")
+                CoveSettingsNote("When nothing is playing, hovering does not open the panel. Click it or use the menu instead.")
                 CovePreferenceSlider(
                     title: "Hover delay", value: preference(\.hoverDelay),
                     range: 0...2, step: 0.05, format: "%.2f s"
@@ -231,7 +231,7 @@ struct SettingsView: View {
                 Toggle("Sync settings with iCloud on this Mac", isOn: preference(\.syncSettingsWithiCloud))
                 LabeledContent("Status", value: settingsSync.status)
                 CoveSettingsNote(settingsSync.detail)
-                CoveSettingsNote("Shares appearance, interaction, media presentation, and alert timing. Display selection, app access, permissions, files, calendar data, and other device choices stay local. Enable this separately on each Mac.")
+                CoveSettingsNote("Syncs appearance and behavior across your Macs. Displays, permissions, files and calendar data stay on this Mac.")
                 if settingsSync.canChooseLocal {
                     HStack {
                         if settingsSync.canChooseCloud {
@@ -239,7 +239,7 @@ struct SettingsView: View {
                         }
                         Button("Use This Mac's Settings") { settingsSync.useThisMacSettings() }
                     }
-                    CoveSettingsNote("Using this Mac's settings replaces the shared snapshot. Using iCloud settings replaces only the shared appearance and behavior settings on this Mac.")
+                    CoveSettingsNote("Choose which copy to keep. Only appearance and behavior settings change.")
                 }
                 if settingsSync.canCheck {
                     Button("Check for Changes") { settingsSync.checkForChanges() }
@@ -279,7 +279,7 @@ struct SettingsView: View {
                 }
                 CoveSettingsNote("Add a thin outline around the panel. Increase Contrast always uses opaque white.")
                 Toggle("Simulate a notch", isOn: preference(\.simulateNotch))
-                CoveSettingsNote("Use an attached notch with center space from Width and Height. A real camera housing always sets the minimum. Hide when idle still applies.")
+                CoveSettingsNote("Draws a notch-shaped panel on displays without a notch. Width and Height set its size.")
             }
 
             Section("Compact size") {
@@ -331,7 +331,7 @@ struct SettingsView: View {
                 if store.preferences.peekOnSongChange {
                     CovePreferenceSlider(title: "Peek duration", value: preference(\.mediaPeekDuration),
                                          range: 1...10, step: 0.5, format: "%.1f sec")
-                    CoveSettingsNote("Briefly show the new playing item, then return to your compact activity. Opening controls, pausing or an alert dismisses it. Duration changes apply to the next peek.")
+                    CoveSettingsNote("Briefly shows the new track, then returns to the compact view.")
                 }
                 Toggle("Hide paused media from compact view", isOn: preference(\.hidePausedMedia))
                 if store.preferences.hidePausedMedia {
@@ -365,7 +365,7 @@ struct SettingsView: View {
                 Toggle("Show total duration", isOn: preference(\.showMediaTotalDuration))
                 Toggle("Hide title extras", isOn: preference(\.hideMediaTitleExtras))
                     .help("Hides tags such as Remastered, Bonus Track, feat. and Single Version. Remix, Live and Acoustic stay visible.")
-                CoveSettingsNote("When a media progress slider is shown and duration is known, replace the time remaining on the right with total duration. Applies to expanded media, Duo, and the media lock widget. This choice stays on this Mac and does not enable media reading.")
+                CoveSettingsNote("Shows the track length instead of the time remaining.")
                 Picker("Playback indicator", selection: Binding(get: {
                     !store.preferences.showPlaybackIndicator ? "none" : store.preferences.showLiveWaveform ? "live" : "decorative"
                 }, set: { mode in
@@ -417,12 +417,12 @@ struct SettingsView: View {
                     get: { store.preferences.enableBetterDisplayFeedback },
                     set: { store.setBetterDisplayFeedback(enabled: $0) }))
                     .disabled(!store.preferences.enableBrightnessHUD && !store.preferences.enableBetterDisplayFeedback)
-                CoveSettingsNote("Off by default on this Mac; never synced. Receives local, unauthenticated BetterDisplay reports for one explicitly selected, unique external display. Requires overlay labels. Reports do not prove physical brightness or allow OpenCove to control that display.")
-                CoveSettingsNote("BetterDisplay must already be running with Dispatch OSD notifications enabled in its Integration settings. Configure its overlays yourself to avoid duplicates. OpenCove does not launch or configure BetterDisplay, send requests, change brightness, take over keys, request access, or play haptics for these reports.")
+                CoveSettingsNote("Shows brightness changes that BetterDisplay reports for an external display you select. Needs overlay labels.")
+                CoveSettingsNote("In BetterDisplay, turn on Integration → Dispatch OSD notifications. Turn off BetterDisplay's own overlay to avoid duplicates.")
                 Text(store.betterDisplayFeedbackStatus).font(.caption).foregroundStyle(.secondary)
                 Button("Preview BetterDisplay feedback") { hudPreviewMessage = store.previewBetterDisplayFeedback() }
                     .disabled(store.isExpanded || !store.preferences.enableBetterDisplayFeedback)
-                CoveSettingsNote("This separate preview uses only the last eligible cached report. A 5-second receipt limit is an OpenCove policy, not a physical freshness guarantee. Missing data stays unavailable. The ordinary overlay preview keeps its native source.")
+                CoveSettingsNote("The preview uses the last report from the past 5 seconds.")
                 Picker("Level bar style", selection: preference(\.hudProgressStyle)) {
                     ForEach(CoveHUDBarStyle.allCases) { style in Text(style.title).tag(style.rawValue) }
                 }
@@ -434,8 +434,8 @@ struct SettingsView: View {
                     get: { store.preferences.enableLowPowerModeAlerts },
                     set: { store.setLowPowerModeAlerts(enabled: $0) }))
                     .disabled(!store.preferences.enableBattery && !store.preferences.enableLowPowerModeAlerts)
-                CoveSettingsNote("Off by default on this Mac; never synced. After consent is saved, reads the public Low Power Mode Boolean and receives its change notifications. Shows an OpenCove overlay for observed on/off changes, with the existing battery timing, motion, labels and haptics settings. The first reading is silent.")
-                CoveSettingsNote("Does not change Low Power Mode or send a Notification Center alert. A false reading can mean off, unknown or unsupported hardware. Battery & charging is the master: turning it off clears this choice. Battery widgets grant no mode reading or alerts. The existing charge monitor keeps its current behavior.")
+                CoveSettingsNote("Shows an overlay when Low Power Mode turns on or off.")
+                CoveSettingsNote("Needs Battery & charging. Turning that off also turns this off.")
                 Text(store.lowPowerModeAlertsStatus).font(.caption).foregroundStyle(.secondary)
                 Toggle("Bluetooth & audio devices", isOn: preference(\.enableBluetooth))
                 Toggle("Focus status", isOn: preference(\.enableFocus))
@@ -570,7 +570,7 @@ struct SettingsView: View {
             Section("Notifications") {
                 Toggle("Show OpenCove notification overlays", isOn: preference(\.enableNotifications))
                 Toggle("Mirror system notification banners", isOn: preference(\.mirrorSystemNotifications))
-                CoveSettingsNote("Mirroring reads new, readable Notification Center banners with Accessibility access. Banner text can appear in OpenCove. Support varies by macOS version; past notifications are not imported.")
+                CoveSettingsNote("Shows new notification banners in the panel. Needs Accessibility access. Older notifications are not shown.")
                 CoveSettingsNote(store.mirroringStatus, symbol: "info.circle")
                 Button("Review Permissions…") { selection = .permissions }
             }
@@ -645,7 +645,7 @@ struct SettingsView: View {
 
             Section("System integrations") {
                 Toggle("Enable private macOS integrations", isOn: preference(\.enablePrivateAPIs))
-                CoveSettingsNote("Uses undocumented system interfaces for features such as Now Playing, brightness, and Focus. Support varies by Mac and macOS version. An update can disable these features.", symbol: "info.circle")
+                CoveSettingsNote("Now Playing, brightness and Focus use private macOS interfaces. A macOS update can break them.", symbol: "info.circle")
                 CoveSettingsNote("This switch does not bypass macOS permissions or lock-screen security.")
             }
         }
