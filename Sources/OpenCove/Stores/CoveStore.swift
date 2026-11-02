@@ -49,6 +49,7 @@ final class CoveStore: ObservableObject {
     private let betterDisplayFeedback = BetterDisplayFeedbackController()
     let sounds = CoveSoundPlayer()
     let hotKey = CoveHotKey()
+    let shortcuts = ShortcutsController()
     private var hourlyChimeTask: Task<Void, Never>?
     var hourlyChimeScheduled: Bool { hourlyChimeTask != nil }
     private var betterDisplaySnapshotCurrent = false
@@ -67,6 +68,7 @@ final class CoveStore: ObservableObject {
             case .media: return preferences.enableMedia
             case .calendar: return preferences.enableCalendar
             case .files: return preferences.enableFileTray
+            case .shortcuts: return preferences.enableShortcuts
             case .timer: return preferences.enableTimer
             }
         }
@@ -469,6 +471,13 @@ final class CoveStore: ObservableObject {
                 self.sounds.play(.eventStart, preferences: self.preferences)
             }
             self.showHUD(value)
+        }
+        shortcuts.onFinish = { [weak self] outcome in
+            guard let self else { return }
+            self.showHUD(CoveHUD(kind: .notification, title: outcome.name,
+                                 subtitle: outcome.succeeded ? "Shortcut finished" : "Shortcut did not finish",
+                                 symbol: outcome.succeeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+                                 origin: "shortcuts"))
         }
         system.onLockTransition = { [weak self] locked in
             guard let self, self.started, self.sessionActive else { return }

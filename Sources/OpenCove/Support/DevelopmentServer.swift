@@ -648,6 +648,14 @@ final class DevelopmentServer {
             guard let title = values["title"] as? String, title.count <= 200, let body = values["body"] as? String, body.count <= 2_000 else { throw ControlError.invalid("A short title and body are required.") }
             guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !body.isEmpty else { throw ControlError.invalid("Enter a notification title or message.") }
             try activity { store.activities.postNotification(title: title, body: body) }
+        case "shortcuts.refresh":
+            store.shortcuts.refreshList()
+        case "shortcuts.run":
+            guard let name = values["name"] as? String, store.preferences.enableShortcuts,
+                  store.preferences.pinnedShortcutNames.contains(name) else {
+                throw ControlError.invalid("Only a pinned shortcut can run, with Shortcuts on.")
+            }
+            guard store.shortcuts.run(name) else { throw ControlError.rejected("The shortcut is already running or unavailable.") }
         case "sound.preview":
             guard let name = values["event"] as? String, let event = CoveSoundEvent(rawValue: name) else {
                 throw ControlError.invalid("Choose a sound event: \(CoveSoundEvent.allCases.map(\.rawValue).joined(separator: ", ")).")
@@ -743,6 +751,12 @@ final class DevelopmentServer {
                             "lastEvent": store.sounds.lastPlayed?.event.rawValue ?? NSNull(),
                             "hourlyChimeScheduled": store.hourlyChimeScheduled]
         result["toggleShortcut"] = store.hotKey.status.description
+        result["shortcuts"] = ["availableCount": store.shortcuts.available.count,
+                               "listing": store.shortcuts.isListing,
+                               "listError": store.shortcuts.listError ?? NSNull(),
+                               "pinned": store.preferences.pinnedShortcutNames,
+                               "running": Array(store.shortcuts.running).sorted(),
+                               "lastOutcome": store.shortcuts.lastOutcome.map { ["name": $0.name, "succeeded": $0.succeeded] as [String: Any] } ?? NSNull()] as [String: Any]
         result["mediaPeekRemaining"] = store.mediaPeekRemaining.map { $0 as Any } ?? NSNull()
         result["hudRemaining"] = store.hudRemaining.map { $0 as Any } ?? NSNull()
         result["playbackClock"] = ["receivedSamples": store.media.playback.receivedSamples,
@@ -900,7 +914,7 @@ final class DevelopmentServer {
         case "settings-calendar":
             // The same real Activities form at a taller bounded size exposes
             // its Calendar section without desktop input or a test-only view.
-            size = CGSize(width: 760, height: 2400)
+            size = CGSize(width: 760, height: 3200)
             content = AnyView(SettingsView(store: store, initialPage: .activities))
         case "settings-updates":
             size = CGSize(width: 760, height: 760)

@@ -9,7 +9,8 @@
 - **Media:** artwork glow, hide title extras (Remastered, Bonus Track, feat.), Back 15 / Forward 30 seconds, an optional compact progress line and a lock-screen volume slider.
 - **Timer:** +1 minute while running, custom durations up to 12 hours and a live progress ring in the compact view.
 - **Calendar and weather:** an empty day shows its forecast, and the idle compact clock shows the current temperature.
-- **General:** a global open/close shortcut, hide menu bar icon (open the app again to reach Settings), hide from screenshots and recordings, and dropping files on the notch opens the file tray.
+- **Shortcuts:** pin up to eight macOS Shortcuts as one-tap tiles in a new panel section. Each shows progress, and the result appears as an overlay.
+- **General:** a global open/close shortcut, hide menu bar icon (open the app again to reach Settings), hide from screenshots and recordings, dropping files on the notch opens the file tray, and the right-click menu gains playback controls and Quit.
 - **Lock screen:** a simpler Keep Awake card with duration presets.
 - Shorter, plainer Settings descriptions.
 

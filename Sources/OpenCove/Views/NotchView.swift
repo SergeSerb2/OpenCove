@@ -105,6 +105,7 @@ private struct CoveExpandedSectionPermissions {
     var calendarDetailsVisible = false
     var filesEnabled = false
     var timerEnabled = false
+    var shortcutsEnabled = false
 
     func permits(_ section: CoveExpandedSection, outgoing: Bool) -> Bool {
         switch section.tab {
@@ -114,6 +115,7 @@ private struct CoveExpandedSectionPermissions {
         case .calendar: return calendarEnabled && (!outgoing || calendarDetailsVisible)
         case .files: return filesEnabled
         case .timer: return timerEnabled
+        case .shortcuts: return shortcutsEnabled
         case nil: return true
         }
     }
@@ -331,7 +333,8 @@ struct NotchView: View {
             calendarEnabled: store.preferences.enableCalendar && activities.calendarEnabled,
             calendarDetailsVisible: !activities.calendarDetailsHidden,
             filesEnabled: store.preferences.enableFileTray,
-            timerEnabled: store.preferences.enableTimer)
+            timerEnabled: store.preferences.enableTimer,
+            shortcutsEnabled: store.preferences.enableShortcuts)
     }
 
     private var expandedSectionPresentation: CoveExpandedSectionPresentation {
@@ -765,6 +768,9 @@ struct NotchView: View {
                                      weather: store.preferences.enableWeather ? store.weather : nil)
         case .files:
             CoveFileSurface(activities: activities)
+        case .shortcuts:
+            CoveShortcutsSurface(controller: store.shortcuts, pinned: store.preferences.pinnedShortcutNames,
+                                 accent: CoveNotchStyle.accent(store.preferences.accent), openSettings: store.openSettings)
         case .timer:
             CoveTimerSurface(activities: activities, color: CoveNotchStyle.accent(store.preferences.accent),
                              reduceMotion: systemReduceMotion || store.preferences.reduceMotion)

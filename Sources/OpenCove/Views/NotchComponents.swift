@@ -1373,3 +1373,60 @@ struct CoveLockVolumeControl: View {
         }
     }
 }
+
+/// Pinned macOS Shortcuts as one-tap tiles. A tile shows progress while its
+/// shortcut runs; the result appears as an overlay after the panel closes.
+@MainActor
+struct CoveShortcutsSurface: View {
+    @ObservedObject var controller: ShortcutsController
+    let pinned: [String]
+    let accent: Color
+    let openSettings: () -> Void
+
+    private let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8),
+                           GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
+
+    var body: some View {
+        if pinned.isEmpty {
+            CoveEmptySurface(symbol: "square.grid.2x2", title: "Pin your shortcuts",
+                             message: "Choose up to eight macOS Shortcuts to run from here.",
+                             actionTitle: "Choose Shortcuts", action: openSettings)
+        } else {
+            LazyVGrid(columns: columns, spacing: 8) {
+                ForEach(pinned, id: \.self) { name in tile(name) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        }
+    }
+
+    private func tile(_ name: String) -> some View {
+        let running = controller.running.contains(name)
+        let failed = controller.lastOutcome.map { $0.name == name && !$0.succeeded } ?? false
+        return Button { controller.run(name) } label: {
+            VStack(spacing: 7) {
+                ZStack {
+                    Circle().fill(accent.opacity(0.18)).frame(width: 30, height: 30)
+                    if running {
+                        ProgressView().controlSize(.small).tint(accent)
+                    } else {
+                        Image(systemName: failed ? "exclamationmark.triangle.fill" : "bolt.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(failed ? Color.orange : accent)
+                    }
+                }
+                Text(name)
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: 26, alignment: .top)
+            }
+            .padding(.vertical, 10).padding(.horizontal, 4)
+            .frame(maxWidth: .infinity)
+            .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(CoveQuietButtonStyle())
+        .disabled(running)
+        .help("Run \(name)")
+        .accessibilityLabel(running ? "\(name), running" : "Run \(name)")
+    }
+}

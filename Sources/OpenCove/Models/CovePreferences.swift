@@ -141,6 +141,7 @@ struct CovePreferences: Codable, Equatable {
         if !["automatic", "media", "calendar", "duo"].contains(expandedLayout) { expandedLayout = defaults.expandedLayout }
         if !["glass", "clear", "frosted"].contains(nowPlayingStyle) { nowPlayingStyle = defaults.nowPlayingStyle }
         if !["smooth", "fast", "instant"].contains(hudSpeed) { hudSpeed = defaults.hudSpeed }
+        pinnedShortcuts = Self.normalizedShortcutList(pinnedShortcuts.split(separator: "\n").map(String.init))
         if CoveHotKeyChoice(rawValue: toggleShortcut) == nil { toggleShortcut = defaults.toggleShortcut }
         if CoveHUDBarStyle(rawValue: hudProgressStyle) == nil { hudProgressStyle = defaults.hudProgressStyle }
         if !["system", "music", "spotify"].contains(preferredMusicApp) { preferredMusicApp = defaults.preferredMusicApp }
@@ -207,6 +208,9 @@ struct CovePreferences: Codable, Equatable {
     var mirrorSystemNotifications = false
     var enableFileTray = false
     var enableTimer = false
+    var enableShortcuts = false
+    /// Pinned shortcut names, one per line, in tile order.
+    var pinnedShortcuts = ""
     var enableFocus = true
     var enableWeather = false
     var weatherStyle = "conditions"
@@ -299,6 +303,18 @@ struct CovePreferences: Codable, Equatable {
         lockWidgetsFollowActivities ? self[keyPath: widget.activityKey] : permitsExtraLockWidgetReader(widget)
     }
 
+    static let shortcutNameLimit = 80
+    static let pinnedShortcutLimit = 8
+
+    var pinnedShortcutNames: [String] { pinnedShortcuts.split(separator: "\n").map(String.init) }
+
+    static func normalizedShortcutList(_ names: [String]) -> String {
+        var seen = Set<String>()
+        let kept = names.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0.count <= shortcutNameLimit && seen.insert($0).inserted }
+        return kept.prefix(pinnedShortcutLimit).joined(separator: "\n")
+    }
+
     /// The battery percentage that starts a low-battery warning, or nil when warnings are off.
     var lowBatteryWarningThreshold: Int? {
         enableBattery && warnOnLowBattery ? Int(lowBatteryThreshold) : nil
@@ -321,7 +337,7 @@ enum CoveCompactActivity: String {
 }
 
 enum CoveTab: String, Codable, CaseIterable, Identifiable {
-    case media, calendar, files, timer
+    case media, calendar, files, timer, shortcuts
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
     var symbol: String {
@@ -330,6 +346,7 @@ enum CoveTab: String, Codable, CaseIterable, Identifiable {
         case .calendar: return "calendar"
         case .files: return "tray"
         case .timer: return "timer"
+        case .shortcuts: return "square.grid.2x2"
         }
     }
 }

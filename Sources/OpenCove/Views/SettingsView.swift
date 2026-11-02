@@ -535,6 +535,10 @@ struct SettingsView: View {
             Section("Activities") {
                 Toggle("Timer", isOn: preference(\.enableTimer))
                 Toggle("File tray", isOn: preference(\.enableFileTray))
+                Toggle("Shortcuts", isOn: preference(\.enableShortcuts))
+                if store.preferences.enableShortcuts {
+                    CoveShortcutPinList(store: store, controller: store.shortcuts)
+                }
                 CoveSettingsNote("The file tray holds files you add. It does not scan your folders.")
             }
 
@@ -999,5 +1003,44 @@ struct CoveAppearancePreview: View {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Panel preview")
+    }
+}
+
+/// Pins macOS Shortcuts to the panel, up to eight, in the order chosen.
+@MainActor
+struct CoveShortcutPinList: View {
+    @ObservedObject var store: CoveStore
+    @ObservedObject var controller: ShortcutsController
+
+    var body: some View {
+        let pinned = store.preferences.pinnedShortcutNames
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Pinned \(pinned.count) of \(CovePreferences.pinnedShortcutLimit)")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(controller.isListing ? "Loading…" : "Refresh") { controller.refreshList() }
+                    .disabled(controller.isListing)
+            }
+            if let error = controller.listError {
+                CoveSettingsNote(error, symbol: "exclamationmark.triangle")
+            } else if controller.available.isEmpty && !controller.isListing {
+                CoveSettingsNote("No shortcuts found. Create one in the Shortcuts app, then refresh.")
+            }
+            // Pinned names that no longer exist stay listed, so they can be unpinned.
+            let missing = controller.isListing || controller.listError != nil ? [] : pinned.filter { !controller.available.contains($0) }
+            ForEach(controller.available + missing, id: \.self) { name in
+                Toggle(missing.contains(name) ? "\(name) (not found)" : name, isOn: Binding(
+                    get: { pinned.contains(name) },
+                    set: { pin in
+                        var names = store.preferences.pinnedShortcutNames
+                        if pin { names.append(name) } else { names.removeAll { $0 == name } }
+                        store.updatePreferences { $0.pinnedShortcuts = CovePreferences.normalizedShortcutList(names) }
+                    }))
+                .disabled(!pinned.contains(name) && pinned.count >= CovePreferences.pinnedShortcutLimit)
+            }
+            CoveSettingsNote("A shortcut runs only when you tap its tile. Shortcuts may ask for their own permissions.")
+        }
+        .onAppear { if controller.available.isEmpty { controller.refreshList() } }
     }
 }
