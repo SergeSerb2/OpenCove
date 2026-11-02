@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — next
+
+- **Sounds:** optional lock, unlock, charger, low-battery, calendar-start and hourly-chime sounds, using built-in macOS sounds, with previews and a volume level.
+- **Battery:** configurable low-battery warning level, an optional percentage beside the battery mark, and time until full charge.
+- **Overlays:** Accent, White, Segmented and Gradient level bars that animate between values; the volume symbol fills with the level.
+- **Bluetooth:** device symbols for AirPods, Beats, HomePod, keyboards, mice and controllers, with battery level when the accessory reports one.
+- **Media:** artwork glow, hide title extras (Remastered, Bonus Track, feat.), Back 15 / Forward 30 seconds, an optional compact progress line and a lock-screen volume slider.
+- **Timer:** +1 minute while running, custom durations up to 12 hours and a live progress ring in the compact view.
+- **Calendar and weather:** an empty day shows its forecast, and the idle compact clock shows the current temperature.
+- **General:** a global open/close shortcut, hide menu bar icon (open the app again to reach Settings), hide from screenshots and recordings, and dropping files on the notch opens the file tray.
+- **Lock screen:** a simpler Keep Awake card with duration presets.
+- Shorter, plainer Settings descriptions.
+
 ## Unreleased — 0.1.0-beta.1
 
 Initial independent MIT implementation of a native macOS notch app:
