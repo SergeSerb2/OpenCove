@@ -701,10 +701,12 @@ struct NotchView: View {
                 ForEach(tabs) { tab in
                     let selected = store.visibleTab == tab
                     Button { store.selectTab(tab) } label: {
-                        Image(systemName: tab.symbol)
+                        // Some symbols ignore an image foreground color in this panel; text-embedded
+                        // symbols reliably take the text color.
+                        Text(Image(systemName: tab.symbol))
                             .font(.system(size: 10, weight: selected ? .semibold : .regular))
+                            .foregroundColor(selected ? accent : CoveNotchStyle.secondary)
                             .frame(width: 24, height: 18)
-                            .foregroundStyle(selected ? accent : CoveNotchStyle.secondary)
                             .background(selected ? accent.opacity(0.16) : .clear, in: Capsule())
                             .contentShape(Capsule())
                     }
@@ -822,7 +824,7 @@ struct NotchView: View {
             CoveShortcutsSurface(controller: store.shortcuts, pinned: store.preferences.pinnedShortcutNames,
                                  accent: CoveNotchStyle.accent(store.preferences.accent), openSettings: store.openSettings)
         case .timer:
-            CoveTimerSurface(activities: activities, color: store.timerIsBreak ? .green : CoveNotchStyle.accent(store.preferences.accent),
+            CoveTimerSurface(activities: activities, stopwatch: store.stopwatch, color: store.timerIsBreak ? .green : CoveNotchStyle.accent(store.preferences.accent),
                              reduceMotion: systemReduceMotion || store.preferences.reduceMotion, isBreak: store.timerIsBreak)
         case nil:
             CoveEmptySurface(symbol: "sparkle", title: "Your quiet space",

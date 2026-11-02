@@ -641,6 +641,9 @@ final class DevelopmentServer {
             try requireCapability(store.activities.timer.remaining > 0, "There is no paused timer to resume.")
             try activity { store.activities.resumeTimer() }
         case "timer.cancel": try activity { store.activities.cancelTimer() }
+        case "stopwatch.start": store.stopwatch.start()
+        case "stopwatch.pause": store.stopwatch.pause()
+        case "stopwatch.reset": store.stopwatch.reset()
         case "timer.extend":
             let seconds = try number("seconds")
             try activity { store.activities.extendTimer(seconds: seconds) }
@@ -761,6 +764,7 @@ final class DevelopmentServer {
                             "hourlyChimeScheduled": store.hourlyChimeScheduled]
         result["toggleShortcut"] = store.hotKey.status.description
         result["timerBreak"] = store.breakTimerIdentifier != nil
+        result["stopwatch"] = ["running": store.stopwatch.isRunning, "elapsed": store.stopwatch.elapsed()] as [String: Any]
         result["clipboard"] = ["watching": store.clipboard.isWatching, "count": store.clipboard.items.count,
                                "newestLength": store.clipboard.items.first?.text.count ?? 0] as [String: Any]
         result["notes"] = ["length": store.notes.text.count, "unsaved": store.notes.hasUnsavedChanges,

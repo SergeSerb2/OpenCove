@@ -1164,6 +1164,7 @@ struct CoveTrayFileRow: View {
 @MainActor
 struct CoveTimerSurface: View {
     @ObservedObject var activities: ActivityController
+    @ObservedObject var stopwatch: CoveStopwatch
     var color: Color = .accentColor
     var reduceMotion = false
     var isBreak = false
@@ -1172,13 +1173,15 @@ struct CoveTimerSurface: View {
     @State private var customMinutes = 45
 
     var body: some View {
-        if activities.timer.remaining > 0 {
+        if activities.timer.remaining <= 0 && stopwatch.isActive {
+            stopwatchView
+        } else if activities.timer.remaining > 0 {
             HStack(spacing: 23) {
                 ZStack {
                     Circle().stroke(.white.opacity(0.08), lineWidth: 5)
                     CoveTimerRing(timer: activities.timer, clockRevision: activities.timerClockRevision,
                                   reduceMotion: reduceMotion, color: color)
-                    Image(systemName: !activities.timer.running ? "pause.fill" : isBreak ? "cup.and.saucer" : "timer")
+                    Text(Image(systemName: !activities.timer.running ? "pause.fill" : isBreak ? "cup.and.saucer" : "timer"))
                         .font(.system(size: 28, weight: .light))
                         .foregroundStyle(color)
                 }
@@ -1212,9 +1215,9 @@ struct CoveTimerSurface: View {
         } else {
             VStack(spacing: 13) {
                 HStack(spacing: 10) {
-                    Image(systemName: "timer")
+                    Text(Image(systemName: "timer"))
                         .font(.system(size: 30, weight: .ultraLight))
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(color)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Start a timer").font(.system(size: 15, weight: .semibold))
                         Text("A moment to focus. A reminder to pause.")
@@ -1238,6 +1241,21 @@ struct CoveTimerSurface: View {
                         .buttonStyle(CoveQuietButtonStyle())
                         .accessibilityLabel("Start \(Int(seconds / 60)) minute timer")
                     }
+                    Button { stopwatch.start() } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: "stopwatch")
+                                .font(.system(size: 17, weight: .light))
+                                .frame(height: 26)
+                            Text("STOPWATCH").font(.system(size: 8, weight: .semibold)).tracking(0.5)
+                                .lineLimit(1).minimumScaleFactor(0.7)
+                                .foregroundStyle(CoveNotchStyle.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 63)
+                        .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(CoveQuietButtonStyle())
+                    .accessibilityLabel("Start stopwatch")
                     Button { choosingCustom = true } label: {
                         VStack(spacing: 4) {
                             Image(systemName: "slider.horizontal.3")
@@ -1271,6 +1289,45 @@ struct CoveTimerSurface: View {
                 }
             }
         }
+    }
+}
+
+extension CoveTimerSurface {
+    @ViewBuilder var stopwatchView: some View {
+        HStack(spacing: 23) {
+            ZStack {
+                Circle().stroke(.white.opacity(0.08), lineWidth: 5)
+                Text(Image(systemName: stopwatch.isRunning ? "stopwatch" : "pause.fill"))
+                    .font(.system(size: 28, weight: .light))
+                    .foregroundStyle(color)
+            }
+            .frame(width: 93, height: 93)
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 9) {
+                Text(stopwatch.isRunning ? "Stopwatch" : "Stopwatch paused")
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(CoveNotchStyle.secondary)
+                Group {
+                    if let anchor = stopwatch.anchor {
+                        Text(anchor, style: .timer)
+                    } else {
+                        Text(CoveNotchStyle.duration(stopwatch.pausedTotal))
+                    }
+                }
+                .font(.system(size: 36, weight: .light, design: .rounded))
+                .monospacedDigit()
+                HStack(spacing: 8) {
+                    Button(stopwatch.isRunning ? "Pause" : "Resume",
+                           systemImage: stopwatch.isRunning ? "pause.fill" : "play.fill") {
+                        if stopwatch.isRunning { stopwatch.pause() } else { stopwatch.start() }
+                    }
+                    .buttonStyle(CovePillButtonStyle()).fixedSize()
+                    Button("Reset", action: stopwatch.reset)
+                        .buttonStyle(CovePillButtonStyle()).fixedSize()
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 9)
     }
 }
 

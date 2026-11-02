@@ -53,6 +53,7 @@ final class CoveStore: ObservableObject {
     let systemStats = SystemStatsController()
     let notes = CoveNotesStore()
     let clipboard = ClipboardHistory()
+    let stopwatch = CoveStopwatch()
     private var hourlyChimeTask: Task<Void, Never>?
     /// The identity of a break timer that OpenCove started, so a finished break does not start another.
     @Published private(set) var breakTimerIdentifier: UUID?
