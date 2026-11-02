@@ -10,6 +10,7 @@
 - **Timer:** +1 minute while running, custom durations up to 12 hours and a live progress ring in the compact view.
 - **Calendar and weather:** an optional Weather section (now, next six hours, next four days), an empty calendar day shows its forecast, and the idle compact clock shows the current temperature.
 - **Shortcuts:** pin up to eight macOS Shortcuts as one-tap tiles in a new panel section. Each shows progress, and the result appears as an overlay.
+- **Notes:** an optional scratchpad section, saved as a private text file on this Mac.
 - **System stats:** an optional section with CPU, memory, network and disk, sampled only while it is open.
 - **General:** a global open/close shortcut, hide menu bar icon (open the app again to reach Settings), hide from screenshots and recordings, dropping files on the notch opens the file tray, and the right-click menu gains playback controls and Quit.
 - **Lock screen:** a simpler Keep Awake card with duration presets.

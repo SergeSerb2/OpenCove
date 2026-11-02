@@ -431,6 +431,8 @@ struct SettingsView: View {
             Section("Activities") {
                 Toggle("Timer", isOn: preference(\.enableTimer))
                 Toggle("File tray", isOn: preference(\.enableFileTray))
+                Toggle("Notes", isOn: preference(\.enableNotes))
+                    .help("A small scratchpad, saved on this Mac.")
                 Toggle("System stats", isOn: preference(\.enableSystemStats))
                     .help("CPU, memory, network and disk. Readings update only while the section is open.")
                 Toggle("Shortcuts", isOn: preference(\.enableShortcuts))

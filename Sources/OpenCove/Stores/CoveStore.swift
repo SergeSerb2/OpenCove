@@ -51,6 +51,7 @@ final class CoveStore: ObservableObject {
     let hotKey = CoveHotKey()
     let shortcuts = ShortcutsController()
     let systemStats = SystemStatsController()
+    let notes = CoveNotesStore()
     private var hourlyChimeTask: Task<Void, Never>?
     var hourlyChimeScheduled: Bool { hourlyChimeTask != nil }
     private var betterDisplaySnapshotCurrent = false
@@ -72,6 +73,7 @@ final class CoveStore: ObservableObject {
             case .shortcuts: return preferences.enableShortcuts
             case .system: return preferences.enableSystemStats
             case .weather: return preferences.enableWeather && preferences.showWeatherSection
+            case .notes: return preferences.enableNotes
             case .timer: return preferences.enableTimer
             }
         }
@@ -667,6 +669,7 @@ final class CoveStore: ObservableObject {
         media.stop(); system.stop(); activities.stop(); weather.stop()
         reconcileHourlyChime()
         hotKey.unregister()
+        notes.flush()
         waveform.setEnabled(false); travel.stop(); hardwareKeys.stop()
         reconcileMirroring()
         hud = nil

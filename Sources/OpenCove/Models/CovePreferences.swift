@@ -211,6 +211,7 @@ struct CovePreferences: Codable, Equatable {
     var enableShortcuts = false
     var enableSystemStats = false
     var showWeatherSection = false
+    var enableNotes = false
     /// Pinned shortcut names, one per line, in tile order.
     var pinnedShortcuts = ""
     var enableFocus = true
@@ -339,7 +340,7 @@ enum CoveCompactActivity: String {
 }
 
 enum CoveTab: String, Codable, CaseIterable, Identifiable {
-    case media, calendar, weather, files, timer, shortcuts, system
+    case media, calendar, weather, files, notes, timer, shortcuts, system
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
     var symbol: String {
@@ -351,6 +352,7 @@ enum CoveTab: String, Codable, CaseIterable, Identifiable {
         case .shortcuts: return "square.grid.2x2"
         case .system: return "gauge.with.dots.needle.33percent"
         case .weather: return "cloud.sun"
+        case .notes: return "note.text"
         }
     }
 }

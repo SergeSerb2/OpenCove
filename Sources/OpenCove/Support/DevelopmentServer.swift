@@ -648,6 +648,12 @@ final class DevelopmentServer {
             guard let title = values["title"] as? String, title.count <= 200, let body = values["body"] as? String, body.count <= 2_000 else { throw ControlError.invalid("A short title and body are required.") }
             guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !body.isEmpty else { throw ControlError.invalid("Enter a notification title or message.") }
             try activity { store.activities.postNotification(title: title, body: body) }
+        case "notes.set":
+            guard let text = values["text"] as? String, text.utf8.count <= 4_096 else { throw ControlError.invalid("Provide note text of at most 4096 bytes.") }
+            store.notes.update(text)
+        case "notes.flush":
+            store.notes.flush()
+            if let error = store.notes.lastError { throw ControlError.failed(error) }
         case "shortcuts.refresh":
             store.shortcuts.refreshList()
         case "shortcuts.run":
@@ -751,6 +757,8 @@ final class DevelopmentServer {
                             "lastEvent": store.sounds.lastPlayed?.event.rawValue ?? NSNull(),
                             "hourlyChimeScheduled": store.hourlyChimeScheduled]
         result["toggleShortcut"] = store.hotKey.status.description
+        result["notes"] = ["length": store.notes.text.count, "unsaved": store.notes.hasUnsavedChanges,
+                           "error": store.notes.lastError ?? NSNull()] as [String: Any]
         let stats = store.systemStats.snapshot
         result["systemStats"] = ["sampling": store.systemStats.isSampling,
                                  "cpu": stats.cpu ?? NSNull(), "memoryUsed": stats.memoryUsed ?? NSNull(),

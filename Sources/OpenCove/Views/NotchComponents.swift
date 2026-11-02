@@ -1566,3 +1566,42 @@ struct CoveSystemStatsSurface: View {
         .accessibilityLabel("\(title), \(detail)")
     }
 }
+
+/// A scratchpad for quick thoughts. It saves on this Mac as you type.
+@MainActor
+struct CoveNotesSurface: View {
+    @ObservedObject var notes: CoveNotesStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: Binding(get: { notes.text }, set: { notes.update($0) }))
+                    .font(.system(size: 12))
+                    .scrollContentBackground(.hidden)
+                    .padding(6)
+                    .accessibilityLabel("Notes")
+                if notes.text.isEmpty {
+                    Text("Jot something down…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.3))
+                        .padding(.horizontal, 11).padding(.vertical, 6)
+                        .allowsHitTesting(false)
+                }
+            }
+            .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            HStack {
+                if let error = notes.lastError {
+                    Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                } else {
+                    Text(notes.hasUnsavedChanges ? "Saving…" : "Saved on this Mac")
+                }
+                Spacer()
+                Text("\(notes.text.count) characters").monospacedDigit()
+            }
+            .font(.system(size: 9))
+            .foregroundStyle(CoveNotchStyle.secondary)
+            .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
