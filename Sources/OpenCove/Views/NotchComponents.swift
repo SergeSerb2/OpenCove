@@ -628,6 +628,7 @@ struct CoveMediaSurface: View {
     var musicColorAccent = true
     var reduceMotion = false
     var cleanTitles = false
+    var artworkGlow = false
     @State private var scrubbing = false
     @State private var scrubTime = 0.0
     @State private var scrubIdentity: CoveMediaScrubIdentity?
@@ -663,6 +664,9 @@ struct CoveMediaSurface: View {
                     }
                 }
                 .tint(musicColorAccent ? artwork?.tint : nil)
+                .background(alignment: .topLeading) {
+                    if artworkGlow, !locked, let artwork { CoveArtworkGlow(artwork: artwork, condensed: condensed) }
+                }
                 .background(CoveMediaRegionMarker(blocksInput: scrubbing || showsOutput))
             }
             .onAppear {
@@ -733,6 +737,10 @@ struct CoveMediaSurface: View {
                                 }
                             }
                         }
+                    }
+                    if media.canSkipWithinItem {
+                        Button("Back 15 Seconds", systemImage: "gobackward.15") { media.skip(by: -15) }
+                        Button("Forward 30 Seconds", systemImage: "goforward.30") { media.skip(by: 30) }
                     }
                     Button("Open Player", action: media.openPlayer)
                 } label: { Image(systemName: "ellipsis.circle").font(.system(size: 13)) }
@@ -1277,5 +1285,28 @@ struct CoveNotificationButton: View {
                 .frame(width: 300)
                 .preferredColorScheme(.dark)
             }
+    }
+}
+
+/// A soft light cast by the artwork into the panel. It draws a small,
+/// pre-blurred image made once per cover, so it costs nothing while playing.
+struct CoveArtworkGlow: View {
+    let artwork: CoveArtworkThumbnail
+    var condensed = false
+
+    var body: some View {
+        if let glow = artwork.glow {
+            let size: Double = condensed ? 230 : 330
+            Image(decorative: glow, scale: 1)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: size, height: size)
+                .opacity(0.5)
+                .offset(x: -size * 0.36, y: -size * 0.4)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .id(ObjectIdentifier(glow))
+                .transition(.opacity)
+        }
     }
 }

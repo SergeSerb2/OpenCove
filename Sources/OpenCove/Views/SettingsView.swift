@@ -363,6 +363,8 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 Toggle("Use artwork colors", isOn: preference(\.musicColorAccent))
                 Toggle("Show total duration", isOn: preference(\.showMediaTotalDuration))
+                Toggle("Artwork glow", isOn: preference(\.mediaArtworkGlow))
+                    .help("Casts a soft light from the album artwork into the expanded panel.")
                 Toggle("Hide title extras", isOn: preference(\.hideMediaTitleExtras))
                     .help("Hides tags such as Remastered, Bonus Track, feat. and Single Version. Remix, Live and Acoustic stay visible.")
                 CoveSettingsNote("Shows the track length instead of the time remaining.")

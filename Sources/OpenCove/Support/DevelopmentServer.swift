@@ -543,6 +543,13 @@ final class DevelopmentServer {
             guard store.media.setPlaybackSpeed(speed, source: source, itemID: item) else {
                 throw ControlError.rejected(store.media.lastError ?? "Playback speed could not be submitted.")
             }
+        case "media.skipBy":
+            let seconds = try number("seconds")
+            guard abs(seconds) <= 600 else { throw ControlError.invalid("Skip at most 600 seconds at a time.") }
+            guard store.media.canSkipWithinItem else { throw ControlError.rejected("No seekable media item is available.") }
+            guard store.media.skip(by: seconds) else {
+                throw ControlError.rejected(store.media.lastError ?? "The skip could not be submitted.")
+            }
         case "media.seek":
             let seconds = try number("seconds")
             guard store.media.state.available, store.media.state.supportsSeek else { throw ControlError.rejected("No seekable media source is available.") }

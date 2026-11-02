@@ -224,6 +224,7 @@ struct CovePreferences: Codable, Equatable {
     var musicColorAccent = true
     var showMediaTotalDuration: Bool = false
     var hideMediaTitleExtras = false
+    var mediaArtworkGlow = true
     var preferredMusicApp = "system"
     var preferredCalendarApp = "calendar"
     // Local layout only; never changes Calendar reader demand or cloud settings.
