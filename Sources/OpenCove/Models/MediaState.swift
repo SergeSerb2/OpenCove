@@ -129,3 +129,53 @@ extension MediaState {
         sourceDiagnostic = try c.decodeIfPresent(String.self, forKey: .sourceDiagnostic)
     }
 }
+
+/// Removes release clutter from track titles, such as "(Remastered 2011)",
+/// "[Bonus Track]", "(feat. Name)" or " - Single Version". Musical variants
+/// that change what you hear, such as Remix, Live or Acoustic, stay visible.
+enum CoveMediaTitle {
+    private static let extraPatterns: [NSRegularExpression] = [
+        #"\bremaster(ed)?\b"#,
+        #"^(\d{4}\s+)?(single|album|radio|original|extended|mono|stereo|deluxe|explicit|clean)(\s+(version|edit|mix|cut))?(\s+\d{4})?$"#,
+        #"^\d{4}(\s+(version|mix|edit))?$"#,
+        #"\bbonus\s+track\b"#,
+        #"\banniversary\b"#,
+        #"^(feat\.?|ft\.?|featuring|with)\s+\S"#,
+        #"^from\s+\S"#
+    ].compactMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
+
+    private static let groupPattern = try? NSRegularExpression(pattern: #"\s*[\(\[]([^\(\)\[\]]*)[\)\]]"#)
+
+    static func isExtra(_ segment: String) -> Bool {
+        let text = segment.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return false }
+        let range = NSRange(text.startIndex..., in: text)
+        return extraPatterns.contains { $0.firstMatch(in: text, range: range) != nil }
+    }
+
+    static func clean(_ title: String) -> String {
+        var result = title
+        // Remove bracketed extras, last first, so earlier ranges stay valid.
+        if let groupPattern {
+            let matches = groupPattern.matches(in: result, range: NSRange(result.startIndex..., in: result))
+            for match in matches.reversed() {
+                guard let whole = Range(match.range, in: result), let inner = Range(match.range(at: 1), in: result),
+                      isExtra(String(result[inner])) else { continue }
+                result.removeSubrange(whole)
+            }
+        }
+        // Then remove trailing " - Extra" segments in Spotify style.
+        while let dash = result.range(of: " - ", options: .backwards), isExtra(String(result[dash.upperBound...])) {
+            result = String(result[..<dash.lowerBound])
+        }
+        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? title : trimmed
+    }
+}
+
+extension MediaState {
+    func displayTitle(clean: Bool) -> String {
+        guard !title.isEmpty else { return "Untitled" }
+        return clean ? CoveMediaTitle.clean(title) : title
+    }
+}

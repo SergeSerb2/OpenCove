@@ -616,7 +616,7 @@ struct NotchView: View {
                         isPlaying: media.state.isPlaying,
                         reduceMotion: store.preferences.reduceMotion)
             VStack(alignment: .leading, spacing: 3) {
-                Text(CoveNotchStyle.metadataLabel(media.state.title.isEmpty ? "Untitled" : media.state.title, limit: 96))
+                Text(CoveNotchStyle.metadataLabel(media.state.displayTitle(clean: store.preferences.hideMediaTitleExtras), limit: 96))
                     .font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Text(CoveNotchStyle.metadataLabel(media.state.artist.isEmpty ? media.state.source : media.state.artist, limit: 96))
                     .font(.system(size: 10, weight: .medium)).foregroundStyle(CoveNotchStyle.secondary).lineLimit(1)
@@ -697,7 +697,7 @@ struct NotchView: View {
                                      showPlaybackIndicator: store.preferences.showPlaybackIndicator,
                                      showLiveWaveform: store.preferences.showLiveWaveform, condensed: true,
                                      musicColorAccent: store.preferences.musicColorAccent,
-                                     reduceMotion: store.preferences.reduceMotion)
+                                     reduceMotion: store.preferences.reduceMotion, cleanTitles: store.preferences.hideMediaTitleExtras)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .modifier(CoveMediaSkipRegionGate(context: CoveMediaSkipContext.current(in: store),
                             kind: .duo, mode: .expanded, section: identity))
@@ -714,7 +714,7 @@ struct NotchView: View {
                                  showPlaybackIndicator: store.preferences.showPlaybackIndicator,
                                  showLiveWaveform: store.preferences.showLiveWaveform,
                                  musicColorAccent: store.preferences.musicColorAccent,
-                                 reduceMotion: store.preferences.reduceMotion)
+                                 reduceMotion: store.preferences.reduceMotion, cleanTitles: store.preferences.hideMediaTitleExtras)
                     .modifier(CoveMediaSkipRegionGate(context: CoveMediaSkipContext.current(in: store),
                         kind: .expanded, mode: .expanded, section: identity))
             }

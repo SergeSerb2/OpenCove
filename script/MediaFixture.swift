@@ -11,7 +11,7 @@ enum MediaFixture {
     @MainActor static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
         if args == ["--help"] {
-            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration NONNEGATIVE_SECONDS] [--metadata-style normal|long|oversized|identical] [--artwork-style shared|alternate|none|missing-second|triple] [--rate-controls] [--live-metadata] [--explicit-metadata] [--native-artwork] [--stdin-control]")
+            print("Usage: MediaFixture --state /absolute/private/state.json [--metadata-duration NONNEGATIVE_SECONDS] [--metadata-style normal|long|oversized|identical|extras] [--artwork-style shared|alternate|none|missing-second|triple] [--rate-controls] [--live-metadata] [--explicit-metadata] [--native-artwork] [--stdin-control]")
             print("Plays only its own two silent tracks (three with triple) for at most 90 seconds. No arguments and missing/unsafe state paths fail before playback. OPENCOVE_FIXTURE_STATE can supply --state.")
             print("--artwork-style defaults to shared (the original cover on both tracks); alternate uses a second original cover on track 2; none omits artwork; missing-second omits artwork only on track 2; triple cycles three tracks with distinct original covers. State reports artworkStyle and artworkVariant (original|alternate|third|none).")
             print("--live-metadata advertises this local fixture's public live flag on its first item; it does not start a network stream. Zero metadata duration represents unavailable timing.")
@@ -43,7 +43,7 @@ enum MediaFixture {
                 guard let value = Double(args[index + 1]), value.isFinite, value >= 0 else { fail() }
                 duration = value
             case "--metadata-style":
-                guard ["normal", "long", "oversized", "identical"].contains(args[index + 1]) else { fail() }
+                guard ["normal", "long", "oversized", "identical", "extras"].contains(args[index + 1]) else { fail() }
                 metadataStyle = args[index + 1]
             case "--artwork-style":
                 guard ["shared", "alternate", "none", "missing-second", "triple"].contains(args[index + 1]) else { fail() }
@@ -299,6 +299,11 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         if metadataStyle == "oversized" {
             title = "OpenCove oversized verification \(track) — " + String(repeating: "Original 🔹 title text. ", count: 600)
             artist = String(repeating: "Original 🔹 artist credit. ", count: 600)
+        } else if metadataStyle == "extras" {
+            // Release clutter that the "Hide title extras" choice removes, plus a Remix it keeps.
+            title = track == 1 ? "OpenCove verification (Remastered 2011) [Bonus Track] - Single Version"
+                : "OpenCove verification (Night Remix) (feat. Local Fixture)"
+            artist = "Local silent playback"
         } else if metadataStyle == "identical" {
             title = "OpenCove identical metadata verification"
             artist = "Local silent playback"

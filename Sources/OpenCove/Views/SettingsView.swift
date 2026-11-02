@@ -363,6 +363,8 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 Toggle("Use artwork colors", isOn: preference(\.musicColorAccent))
                 Toggle("Show total duration", isOn: preference(\.showMediaTotalDuration))
+                Toggle("Hide title extras", isOn: preference(\.hideMediaTitleExtras))
+                    .help("Hides tags such as Remastered, Bonus Track, feat. and Single Version. Remix, Live and Acoustic stay visible.")
                 CoveSettingsNote("When a media progress slider is shown and duration is known, replace the time remaining on the right with total duration. Applies to expanded media, Duo, and the media lock widget. This choice stays on this Mac and does not enable media reading.")
                 Picker("Playback indicator", selection: Binding(get: {
                     !store.preferences.showPlaybackIndicator ? "none" : store.preferences.showLiveWaveform ? "live" : "decorative"

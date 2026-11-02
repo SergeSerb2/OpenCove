@@ -563,6 +563,7 @@ struct CoveMediaSurface: View {
     var locked = false
     var musicColorAccent = true
     var reduceMotion = false
+    var cleanTitles = false
     @State private var scrubbing = false
     @State private var scrubTime = 0.0
     @State private var scrubIdentity: CoveMediaScrubIdentity?
@@ -681,7 +682,7 @@ struct CoveMediaSurface: View {
 
     private var metadata: some View {
         VStack(alignment: .leading, spacing: 5) {
-            CoveScrollingMediaText(text: media.state.title.isEmpty ? "Untitled" : media.state.title,
+            CoveScrollingMediaText(text: media.state.displayTitle(clean: cleanTitles),
                                    size: condensed ? 12 : 15, weight: .semibold,
                                    reduceMotion: reduceMotion || systemReduceMotion)
             CoveScrollingMediaText(text: media.lastError != nil ? (locked ? "Playback controls unavailable" : "Open player to retry controls") : (media.state.artist.isEmpty ? media.state.source : media.state.artist),

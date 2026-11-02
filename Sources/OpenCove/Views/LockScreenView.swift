@@ -35,7 +35,7 @@ struct LockScreenView: View {
                                      showPlaybackIndicator: store.preferences.showPlaybackIndicator,
                                      showLiveWaveform: store.preferences.usesLiveWaveform, locked: true,
                                      musicColorAccent: store.preferences.musicColorAccent,
-                                     reduceMotion: store.preferences.reduceMotion)
+                                     reduceMotion: store.preferences.reduceMotion, cleanTitles: store.preferences.hideMediaTitleExtras)
                 }
                 if store.preferences.showsLockWidget(.calendar) || store.preferences.showsLockWidget(.weather) {
                     HStack(alignment: .top, spacing: 18) {
