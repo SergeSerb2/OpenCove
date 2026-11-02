@@ -130,6 +130,10 @@ struct OnboardingView: View {
                 symbol: "slider.horizontal.3", title: "Your Mac, at a glance",
                 detail: "Choose overlays for volume, brightness, battery, audio devices, and Focus."
             )
+            CoveOnboardingFeature(
+                symbol: "hand.draw", title: "Hover, click or swipe",
+                detail: "Swipe down on the panel to open it and up to close it. Swipe sideways to change sections. Press Esc to close."
+            )
             Divider()
             CoveSettingsNote("An independent app under the MIT license. Not affiliated with or endorsed by Alcove.")
         }
@@ -231,14 +235,15 @@ struct OnboardingView: View {
                 CoveSettingsNote("Launch at login is available in the release app.")
             }
             Picker("Expanded layout", selection: preference(\.expandedLayout)) {
+                Text("Automatic").tag("automatic")
                 Text("Now Playing").tag("media")
                 Text("Calendar").tag("calendar")
                 Text("Media & Calendar").tag("duo")
             }
             Divider()
             Toggle("Enable private macOS integrations", isOn: preference(\.enablePrivateAPIs))
-            CoveSettingsNote("Now Playing, brightness, and Focus can use undocumented system interfaces. Support varies by Mac and macOS version, and an update can disable these features. This does not bypass system permissions.", symbol: "info.circle")
-            CoveSettingsNote("Settings includes opt-in weather, notification mirroring, and live system audio levels. Live levels need Screen & System Audio Recording access. Automatic audio mixing is controlled by your player.")
+            CoveSettingsNote("Now Playing, brightness and Focus use private macOS interfaces. A macOS update can break them. They never bypass system permissions.", symbol: "info.circle")
+            CoveSettingsNote("More in Settings: weather, sounds, notification mirroring and live audio levels.")
         }
     }
 
