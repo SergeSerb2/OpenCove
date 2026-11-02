@@ -236,6 +236,8 @@ struct CoveSystemStatsSurface: View {
             .padding(.horizontal, 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Network, download \(Self.rate(stats.downloadRate)), upload \(Self.rate(stats.uploadRate))")
             ring("Disk", value: disk, detail: Self.bytes(stats.diskFree, style: .file) + " free", symbol: "internaldrive")
             if let health = stats.batteryHealth {
                 VStack(spacing: 6) {
