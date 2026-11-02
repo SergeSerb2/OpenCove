@@ -929,6 +929,15 @@ struct CovePermissionRow<Actions: View>: View {
     let status: String
     @ViewBuilder var actions: () -> Actions
 
+    /// Green when granted, orange when refused, gray when not yet decided.
+    private var statusColor: Color {
+        let text = status.lowercased()
+        if text.contains("denied") || text.contains("restricted") { return .orange }
+        if !text.contains("not") && (text.contains("allowed") || text.contains("authorized") || text.contains("full access")
+                                     || text.contains("granted")) { return .green }
+        return .gray
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
@@ -940,10 +949,13 @@ struct CovePermissionRow<Actions: View>: View {
                     HStack(alignment: .firstTextBaseline) {
                         Text(title).fontWeight(.medium)
                         Spacer(minLength: 8)
-                        Text(status)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
+                        HStack(spacing: 5) {
+                            Circle().fill(statusColor).frame(width: 6, height: 6)
+                            Text(status)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.trailing)
+                        }
                     }
                     Text(detail)
                         .font(.caption)
