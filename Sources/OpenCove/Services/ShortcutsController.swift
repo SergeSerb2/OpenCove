@@ -18,8 +18,8 @@ final class ShortcutsController: ObservableObject {
     @Published private(set) var lastOutcome: Outcome?
     var onFinish: ((Outcome) -> Void)?
 
-    private static let tool = URL(fileURLWithPath: "/usr/bin/shortcuts")
-    private static let runLimit: TimeInterval = 120
+    nonisolated private static let tool = URL(fileURLWithPath: "/usr/bin/shortcuts")
+    nonisolated private static let runLimit: TimeInterval = 120
 
     var isSupported: Bool { FileManager.default.isExecutableFile(atPath: Self.tool.path) }
 
