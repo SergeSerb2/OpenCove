@@ -1502,3 +1502,67 @@ struct CoveNothingPlaying: View {
         }
     }
 }
+
+/// CPU, memory, network and disk at a glance. The view holds a sampling lease
+/// while it is on screen, so nothing is measured while the section is closed.
+@MainActor
+struct CoveSystemStatsSurface: View {
+    @ObservedObject var controller: SystemStatsController
+    let accent: Color
+
+    private static func bytes(_ value: Double?, style: ByteCountFormatter.CountStyle = .memory) -> String {
+        guard let value, value.isFinite, value >= 0 else { return "—" }
+        return ByteCountFormatter.string(fromByteCount: Int64(value), countStyle: style)
+    }
+
+    private static func rate(_ value: Double?) -> String {
+        guard let value else { return "—" }
+        return bytes(value, style: .binary) + "/s"
+    }
+
+    var body: some View {
+        let stats = controller.snapshot
+        let memory = stats.memoryUsed.map { $0 / max(1, stats.memoryTotal) }
+        let disk = stats.diskFree.flatMap { free in stats.diskTotal.map { 1 - free / max(1, $0) } }
+        HStack(spacing: 10) {
+            ring("CPU", value: stats.cpu, detail: stats.cpu.map { "\(Int(($0 * 100).rounded()))%" } ?? "—", symbol: "cpu")
+            ring("Memory", value: memory, detail: Self.bytes(stats.memoryUsed), symbol: "memorychip")
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Network", systemImage: "network").font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(CoveNotchStyle.secondary)
+                Label(Self.rate(stats.downloadRate), systemImage: "arrow.down")
+                Label(Self.rate(stats.uploadRate), systemImage: "arrow.up")
+            }
+            .font(.system(size: 11, weight: .medium, design: .rounded)).monospacedDigit()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            ring("Disk", value: disk, detail: Self.bytes(stats.diskFree, style: .file) + " free", symbol: "internaldrive")
+        }
+        .frame(maxHeight: 112)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear(perform: controller.acquire)
+        .onDisappear(perform: controller.release)
+    }
+
+    private func ring(_ title: String, value: Double?, detail: String, symbol: String) -> some View {
+        let level = CoveNotchStyle.fraction(value ?? 0)
+        let color = level > 0.9 ? Color.red : level > 0.75 ? Color.orange : accent
+        return VStack(spacing: 6) {
+            ZStack {
+                Circle().stroke(.white.opacity(0.1), lineWidth: 5)
+                Circle().trim(from: 0, to: level)
+                    .stroke(color, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeOut(duration: 0.4), value: level)
+                Image(systemName: symbol).font(.system(size: 13, weight: .medium)).foregroundStyle(color)
+            }
+            .frame(width: 44, height: 44)
+            Text(detail).font(.system(size: 10, weight: .semibold, design: .rounded)).monospacedDigit().lineLimit(1)
+            Text(title).font(.system(size: 9)).foregroundStyle(CoveNotchStyle.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title), \(detail)")
+    }
+}

@@ -97,6 +97,7 @@ struct SettingsView: View {
                     case .appearance: appearanceSettings
                     case .media: mediaSettings
                     case .activities: activitySettings
+                    case .overlays: overlaySettings
                     case .weather: weatherSettings
                     case .permissions: permissionSettings
                     case .about: aboutSettings
@@ -424,117 +425,11 @@ struct SettingsView: View {
 
     private var activitySettings: some View {
         Group {
-            Section("System overlays") {
-                Toggle("Replace hardware-key HUDs", isOn: preference(\.replaceSystemHUDs))
-                    .disabled(!store.preferences.enablePrivateAPIs)
-                if store.preferences.replaceSystemHUDs {
-                    Text(hardwareKeys.status).font(.caption).foregroundStyle(.secondary)
-                    Button("Allow Hardware-Key Access") { hardwareKeys.requestAccessAndStart() }
-                        .disabled(!store.preferences.enablePrivateAPIs)
-                }
-                Toggle("Volume", isOn: preference(\.enableVolumeHUD))
-                Toggle("Display brightness", isOn: preference(\.enableBrightnessHUD))
-                Toggle("Show BetterDisplay brightness feedback", isOn: Binding(
-                    get: { store.preferences.enableBetterDisplayFeedback },
-                    set: { store.setBetterDisplayFeedback(enabled: $0) }))
-                    .disabled(!store.preferences.enableBrightnessHUD && !store.preferences.enableBetterDisplayFeedback)
-                CoveSettingsNote("Shows brightness changes that BetterDisplay reports for an external display you select. Needs overlay labels.")
-                CoveSettingsNote("In BetterDisplay, turn on Integration → Dispatch OSD notifications. Turn off BetterDisplay's own overlay to avoid duplicates.")
-                Text(store.betterDisplayFeedbackStatus).font(.caption).foregroundStyle(.secondary)
-                Button("Preview BetterDisplay feedback") { hudPreviewMessage = store.previewBetterDisplayFeedback() }
-                    .disabled(store.isExpanded || !store.preferences.enableBetterDisplayFeedback)
-                CoveSettingsNote("The preview uses the last report from the past 5 seconds.")
-                Picker("Level bar style", selection: preference(\.hudProgressStyle)) {
-                    ForEach(CoveHUDBarStyle.allCases) { style in Text(style.title).tag(style.rawValue) }
-                }
-                Toggle("Brightness symbol glow", isOn: preference(\.brightnessHUDGlow))
-                    .disabled(!store.preferences.enableBrightnessHUD)
-                    .help("Add a soft glow to the sun symbol on display brightness overlays.")
-                Toggle("Battery & charging", isOn: preference(\.enableBattery))
-                Toggle("Low Power Mode changes", isOn: Binding(
-                    get: { store.preferences.enableLowPowerModeAlerts },
-                    set: { store.setLowPowerModeAlerts(enabled: $0) }))
-                    .disabled(!store.preferences.enableBattery && !store.preferences.enableLowPowerModeAlerts)
-                CoveSettingsNote("Shows an overlay when Low Power Mode turns on or off.")
-                CoveSettingsNote("Needs Battery & charging. Turning that off also turns this off.")
-                Text(store.lowPowerModeAlertsStatus).font(.caption).foregroundStyle(.secondary)
-                Toggle("Bluetooth & audio devices", isOn: preference(\.enableBluetooth))
-                Toggle("Focus status", isOn: preference(\.enableFocus))
-                Toggle("Show overlay labels", isOn: preference(\.showHUDLabels))
-                    .help("Show titles and subtitles on compact overlays.")
-                Toggle("Show overlay percentage", isOn: preference(\.showHUDPercentage))
-                    .help("Show a percentage when a compact overlay has a numeric reading.")
-                CovePreferenceSlider(
-                    title: "Default overlay duration", value: preference(\.hudDuration),
-                    range: 0.5...10, step: 0.5, format: "%.1f s"
-                )
-            }
-
-            Section("Battery") {
-                Toggle("Show battery percentage", isOn: preference(\.showBatteryPercentage))
-                    .disabled(!store.preferences.enableBattery)
-                Toggle("Warn on low battery", isOn: preference(\.warnOnLowBattery))
-                    .disabled(!store.preferences.enableBattery)
-                CovePreferenceSlider(title: "Low battery level", value: preference(\.lowBatteryThreshold),
-                                     range: 5...50, step: 5, format: "%.0f%%")
-                    .disabled(!store.preferences.enableBattery || !store.preferences.warnOnLowBattery)
-                CoveSettingsNote("A warning also appears at 5%. Warnings appear only on battery power.")
-            }
-
-            Section("Sounds") {
-                soundToggle("Lock", .lock)
-                soundToggle("Unlock", .unlock)
-                soundToggle("Charger connected", .powerConnected)
-                soundToggle("Low battery", .lowBattery)
-                soundToggle("Calendar event starts", .eventStart)
-                soundToggle("Hourly chime", .hourlyChime)
-                CovePreferenceSlider(title: "Sound volume", value: preference(\.soundVolume),
-                                     range: 0.05...1, step: 0.05, format: "%.0f%%", displayScale: 100)
-                CoveSettingsNote("Uses built-in macOS sounds and follows your output volume.")
-            }
-
-            Section("Overlay timing") {
-                Picker("Category", selection: $selectedHUD) {
-                    ForEach(HUDKind.allCases) { kind in Text(kind.title).tag(kind) }
-                }
-                .onChange(of: selectedHUD) { _, _ in hudPreviewMessage = nil }
-                Toggle("Use default duration", isOn: Binding(
-                    get: { store.preferences[keyPath: selectedHUD.durationKey] == 0 },
-                    set: { useGlobal in
-                        store.updatePreferences { $0[keyPath: selectedHUD.durationKey] = useGlobal ? 0 : $0.hudDuration }
-                    }))
-                CovePreferenceSlider(title: "Duration", value: Binding(
-                    get: { store.preferences.duration(for: selectedHUD) },
-                    set: { value in
-                        store.updatePreferences { $0[keyPath: selectedHUD.durationKey] = value }
-                    }), range: 0.5...10, step: 0.5, format: "%.1f s")
-                    .disabled(store.preferences[keyPath: selectedHUD.durationKey] == 0)
-                Picker("Appearance animation", selection: preference(selectedHUD.speedKey)) {
-                    Text("Use default").tag("global")
-                    Text("Smooth").tag("smooth")
-                    Text("Fast").tag("fast")
-                    Text("Instant").tag("instant")
-                }
-                .disabled(store.preferences.reduceMotion || systemReduceMotion)
-                HStack {
-                    Button("Preview overlay") { hudPreviewMessage = store.previewHUD(selectedHUD) }
-                        .disabled(store.isExpanded)
-                    Button("Reset category timing") {
-                        store.updatePreferences {
-                            $0[keyPath: selectedHUD.durationKey] = 0
-                            $0[keyPath: selectedHUD.speedKey] = "global"
-                        }
-                    }
-                }
-                CoveSettingsNote(store.isExpanded ? "Collapse the panel to preview an overlay."
-                    : "Preview uses available readings. It does not change volume or brightness, or post a system notification.")
-                CoveSettingsNote("Duration changes apply to the next overlay. Repeated events restart its duration.")
-                if let hudPreviewMessage { Text(hudPreviewMessage).font(.caption).foregroundStyle(.secondary) }
-            }
-
             Section("Activities") {
                 Toggle("Timer", isOn: preference(\.enableTimer))
                 Toggle("File tray", isOn: preference(\.enableFileTray))
+                Toggle("System stats", isOn: preference(\.enableSystemStats))
+                    .help("CPU, memory, network and disk. Readings update only while the section is open.")
                 Toggle("Shortcuts", isOn: preference(\.enableShortcuts))
                 if store.preferences.enableShortcuts {
                     CoveShortcutPinList(store: store, controller: store.shortcuts)
@@ -605,6 +500,122 @@ struct SettingsView: View {
                 Button("Weather settings…") { selection = .weather }
                 CoveSettingsNote("Choose a weather widget style and location.")
             }
+            Section("Sounds") {
+                soundToggle("Lock", .lock)
+                soundToggle("Unlock", .unlock)
+                soundToggle("Charger connected", .powerConnected)
+                soundToggle("Low battery", .lowBattery)
+                soundToggle("Calendar event starts", .eventStart)
+                soundToggle("Hourly chime", .hourlyChime)
+                CovePreferenceSlider(title: "Sound volume", value: preference(\.soundVolume),
+                                     range: 0.05...1, step: 0.05, format: "%.0f%%", displayScale: 100)
+                CoveSettingsNote("Uses built-in macOS sounds and follows your output volume.")
+            }
+
+        }
+    }
+
+    private var overlaySettings: some View {
+        Group {
+            Section("System overlays") {
+                Toggle("Replace hardware-key HUDs", isOn: preference(\.replaceSystemHUDs))
+                    .disabled(!store.preferences.enablePrivateAPIs)
+                if store.preferences.replaceSystemHUDs {
+                    Text(hardwareKeys.status).font(.caption).foregroundStyle(.secondary)
+                    Button("Allow Hardware-Key Access") { hardwareKeys.requestAccessAndStart() }
+                        .disabled(!store.preferences.enablePrivateAPIs)
+                }
+                Toggle("Volume", isOn: preference(\.enableVolumeHUD))
+                Toggle("Display brightness", isOn: preference(\.enableBrightnessHUD))
+                Toggle("Show BetterDisplay brightness feedback", isOn: Binding(
+                    get: { store.preferences.enableBetterDisplayFeedback },
+                    set: { store.setBetterDisplayFeedback(enabled: $0) }))
+                    .disabled(!store.preferences.enableBrightnessHUD && !store.preferences.enableBetterDisplayFeedback)
+                    .help("Shows brightness changes that BetterDisplay reports for an external display you select. Needs overlay labels.")
+                if store.preferences.enableBetterDisplayFeedback {
+                    CoveSettingsNote("In BetterDisplay, turn on Integration → Dispatch OSD notifications. Turn off BetterDisplay's own overlay to avoid duplicates.")
+                    Text(store.betterDisplayFeedbackStatus).font(.caption).foregroundStyle(.secondary)
+                    Button("Preview BetterDisplay feedback") { hudPreviewMessage = store.previewBetterDisplayFeedback() }
+                        .disabled(store.isExpanded)
+                        .help("The preview uses the last report from the past 5 seconds.")
+                }
+                Picker("Level bar style", selection: preference(\.hudProgressStyle)) {
+                    ForEach(CoveHUDBarStyle.allCases) { style in Text(style.title).tag(style.rawValue) }
+                }
+                Toggle("Brightness symbol glow", isOn: preference(\.brightnessHUDGlow))
+                    .disabled(!store.preferences.enableBrightnessHUD)
+                    .help("Add a soft glow to the sun symbol on display brightness overlays.")
+                Toggle("Battery & charging", isOn: preference(\.enableBattery))
+                Toggle("Low Power Mode changes", isOn: Binding(
+                    get: { store.preferences.enableLowPowerModeAlerts },
+                    set: { store.setLowPowerModeAlerts(enabled: $0) }))
+                    .disabled(!store.preferences.enableBattery && !store.preferences.enableLowPowerModeAlerts)
+                    .help("Shows an overlay when Low Power Mode turns on or off. Needs Battery & charging.")
+                if store.preferences.enableLowPowerModeAlerts {
+                    Text(store.lowPowerModeAlertsStatus).font(.caption).foregroundStyle(.secondary)
+                }
+                Toggle("Bluetooth & audio devices", isOn: preference(\.enableBluetooth))
+                Toggle("Focus status", isOn: preference(\.enableFocus))
+                Toggle("Show overlay labels", isOn: preference(\.showHUDLabels))
+                    .help("Show titles and subtitles on compact overlays.")
+                Toggle("Show overlay percentage", isOn: preference(\.showHUDPercentage))
+                    .help("Show a percentage when a compact overlay has a numeric reading.")
+                CovePreferenceSlider(
+                    title: "Default overlay duration", value: preference(\.hudDuration),
+                    range: 0.5...10, step: 0.5, format: "%.1f s"
+                )
+            }
+
+            Section("Overlay timing") {
+                Picker("Category", selection: $selectedHUD) {
+                    ForEach(HUDKind.allCases) { kind in Text(kind.title).tag(kind) }
+                }
+                .onChange(of: selectedHUD) { _, _ in hudPreviewMessage = nil }
+                Toggle("Use default duration", isOn: Binding(
+                    get: { store.preferences[keyPath: selectedHUD.durationKey] == 0 },
+                    set: { useGlobal in
+                        store.updatePreferences { $0[keyPath: selectedHUD.durationKey] = useGlobal ? 0 : $0.hudDuration }
+                    }))
+                CovePreferenceSlider(title: "Duration", value: Binding(
+                    get: { store.preferences.duration(for: selectedHUD) },
+                    set: { value in
+                        store.updatePreferences { $0[keyPath: selectedHUD.durationKey] = value }
+                    }), range: 0.5...10, step: 0.5, format: "%.1f s")
+                    .disabled(store.preferences[keyPath: selectedHUD.durationKey] == 0)
+                Picker("Appearance animation", selection: preference(selectedHUD.speedKey)) {
+                    Text("Use default").tag("global")
+                    Text("Smooth").tag("smooth")
+                    Text("Fast").tag("fast")
+                    Text("Instant").tag("instant")
+                }
+                .disabled(store.preferences.reduceMotion || systemReduceMotion)
+                HStack {
+                    Button("Preview overlay") { hudPreviewMessage = store.previewHUD(selectedHUD) }
+                        .disabled(store.isExpanded)
+                    Button("Reset category timing") {
+                        store.updatePreferences {
+                            $0[keyPath: selectedHUD.durationKey] = 0
+                            $0[keyPath: selectedHUD.speedKey] = "global"
+                        }
+                    }
+                }
+                CoveSettingsNote(store.isExpanded ? "Collapse the panel to preview an overlay."
+                    : "Preview uses available readings. It does not change volume or brightness, or post a system notification.")
+                CoveSettingsNote("Duration changes apply to the next overlay. Repeated events restart its duration.")
+                if let hudPreviewMessage { Text(hudPreviewMessage).font(.caption).foregroundStyle(.secondary) }
+            }
+
+            Section("Battery") {
+                Toggle("Show battery percentage", isOn: preference(\.showBatteryPercentage))
+                    .disabled(!store.preferences.enableBattery)
+                Toggle("Warn on low battery", isOn: preference(\.warnOnLowBattery))
+                    .disabled(!store.preferences.enableBattery)
+                CovePreferenceSlider(title: "Low battery level", value: preference(\.lowBatteryThreshold),
+                                     range: 5...50, step: 5, format: "%.0f%%")
+                    .disabled(!store.preferences.enableBattery || !store.preferences.warnOnLowBattery)
+                CoveSettingsNote("A warning also appears at 5%. Warnings appear only on battery power.")
+            }
+
         }
     }
 
@@ -760,6 +771,7 @@ enum CoveSettingsPage: String, CaseIterable, Identifiable {
     case appearance = "Appearance"
     case media = "Media"
     case activities = "Activities"
+    case overlays = "Overlays"
     case weather = "Weather"
     case permissions = "Permissions"
     case about = "About"
@@ -772,6 +784,7 @@ enum CoveSettingsPage: String, CaseIterable, Identifiable {
         case .appearance: return "paintpalette"
         case .media: return "music.note"
         case .activities: return "square.stack.3d.up"
+        case .overlays: return "rectangle.inset.topright.filled"
         case .weather: return "cloud.sun"
         case .permissions: return "hand.raised"
         case .about: return "info.circle"
@@ -784,6 +797,7 @@ enum CoveSettingsPage: String, CaseIterable, Identifiable {
         case .appearance: return "A small space, made yours."
         case .media: return "Keep playback within reach."
         case .activities: return "Choose what appears in your panel."
+        case .overlays: return "Volume, brightness, battery and more, at a glance."
         case .weather: return "Weather for the location you choose."
         case .permissions: return "You choose which access to grant."
         case .about: return "A little more room for what matters."

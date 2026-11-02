@@ -751,6 +751,11 @@ final class DevelopmentServer {
                             "lastEvent": store.sounds.lastPlayed?.event.rawValue ?? NSNull(),
                             "hourlyChimeScheduled": store.hourlyChimeScheduled]
         result["toggleShortcut"] = store.hotKey.status.description
+        let stats = store.systemStats.snapshot
+        result["systemStats"] = ["sampling": store.systemStats.isSampling,
+                                 "cpu": stats.cpu ?? NSNull(), "memoryUsed": stats.memoryUsed ?? NSNull(),
+                                 "memoryTotal": stats.memoryTotal, "downloadRate": stats.downloadRate ?? NSNull(),
+                                 "uploadRate": stats.uploadRate ?? NSNull(), "diskFree": stats.diskFree ?? NSNull()] as [String: Any]
         result["shortcuts"] = ["availableCount": store.shortcuts.available.count,
                                "listing": store.shortcuts.isListing,
                                "listError": store.shortcuts.listError ?? NSNull(),
@@ -908,6 +913,9 @@ final class DevelopmentServer {
         case "settings-activities":
             size = CGSize(width: 760, height: 900)
             content = AnyView(SettingsView(store: store, initialPage: .activities))
+        case "settings-overlays":
+            size = CGSize(width: 760, height: 1800)
+            content = AnyView(SettingsView(store: store, initialPage: .overlays))
         case "settings-general":
             size = CGSize(width: 760, height: 1600)
             content = AnyView(SettingsView(store: store, initialPage: .general))

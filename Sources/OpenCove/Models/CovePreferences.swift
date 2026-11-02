@@ -209,6 +209,7 @@ struct CovePreferences: Codable, Equatable {
     var enableFileTray = false
     var enableTimer = false
     var enableShortcuts = false
+    var enableSystemStats = false
     /// Pinned shortcut names, one per line, in tile order.
     var pinnedShortcuts = ""
     var enableFocus = true
@@ -337,7 +338,7 @@ enum CoveCompactActivity: String {
 }
 
 enum CoveTab: String, Codable, CaseIterable, Identifiable {
-    case media, calendar, files, timer, shortcuts
+    case media, calendar, files, timer, shortcuts, system
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
     var symbol: String {
@@ -347,6 +348,7 @@ enum CoveTab: String, Codable, CaseIterable, Identifiable {
         case .files: return "tray"
         case .timer: return "timer"
         case .shortcuts: return "square.grid.2x2"
+        case .system: return "gauge.with.dots.needle.33percent"
         }
     }
 }

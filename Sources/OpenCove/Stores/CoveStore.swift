@@ -50,6 +50,7 @@ final class CoveStore: ObservableObject {
     let sounds = CoveSoundPlayer()
     let hotKey = CoveHotKey()
     let shortcuts = ShortcutsController()
+    let systemStats = SystemStatsController()
     private var hourlyChimeTask: Task<Void, Never>?
     var hourlyChimeScheduled: Bool { hourlyChimeTask != nil }
     private var betterDisplaySnapshotCurrent = false
@@ -69,6 +70,7 @@ final class CoveStore: ObservableObject {
             case .calendar: return preferences.enableCalendar
             case .files: return preferences.enableFileTray
             case .shortcuts: return preferences.enableShortcuts
+            case .system: return preferences.enableSystemStats
             case .timer: return preferences.enableTimer
             }
         }
