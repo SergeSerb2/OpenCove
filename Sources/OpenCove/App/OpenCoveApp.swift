@@ -14,7 +14,7 @@ enum OpenCoveApp {
 }
 
 @MainActor
-final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
+final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation, NSMenuDelegate {
     private var store: CoveStore!
     private var notch: NotchPanelController?
     private var lockWidgets: LockScreenController?
@@ -175,6 +175,13 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         menu.addItem(withTitle: "Settings…", action: #selector(settingsAction), keyEquivalent: ",").target = self
         menu.addItem(updater.makeMenuItem())
         menu.addItem(.separator())
+        let sections = menu.addItem(withTitle: "Sections", action: nil, keyEquivalent: "")
+        sections.submenu = NSMenu(title: "Sections")
+        sections.tag = Self.sectionsMenuTag
+        let timer = menu.addItem(withTitle: "Start Timer", action: nil, keyEquivalent: "")
+        timer.submenu = NSMenu(title: "Start Timer")
+        timer.tag = Self.timerMenuTag
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Previous Track", action: #selector(statusMediaPrevious), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Play/Pause", action: #selector(statusMediaPlayPause), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Next Track", action: #selector(statusMediaNext), keyEquivalent: "").target = self
@@ -182,9 +189,52 @@ final class OpenCoveDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         menu.addItem(withTitle: "Refresh Activities", action: #selector(refresh), keyEquivalent: "r").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit OpenCove", action: #selector(quit), keyEquivalent: "q").target = self
+        menu.delegate = self
         item.menu = menu
         item.isVisible = !store.preferences.hideMenuBarIcon
         statusItem = item
+    }
+
+    private static let sectionsMenuTag = 7_101
+    private static let timerMenuTag = 7_102
+
+    /// Rebuilds the Sections and Start Timer submenus from current settings each time the menu opens.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard !startupFailed, let store else { return }
+        if let sections = menu.item(withTag: Self.sectionsMenuTag) {
+            let tabs = store.enabledTabs
+            sections.isHidden = tabs.count < 2
+            sections.submenu?.removeAllItems()
+            for tab in tabs {
+                let item = NSMenuItem(title: tab.title, action: #selector(openSectionFromMenu(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = tab.rawValue
+                item.image = NSImage(systemSymbolName: tab.symbol, accessibilityDescription: nil)
+                item.state = store.isExpanded && store.visibleTab == tab ? .on : .off
+                sections.submenu?.addItem(item)
+            }
+        }
+        if let timer = menu.item(withTag: Self.timerMenuTag) {
+            timer.isHidden = !store.preferences.enableTimer
+            timer.submenu?.removeAllItems()
+            for minutes in [1, 5, 15, 25, 45, 60] {
+                let item = NSMenuItem(title: minutes == 60 ? "1 hour" : "\(minutes) min", action: #selector(startTimerFromMenu(_:)), keyEquivalent: "")
+                item.target = self
+                item.tag = minutes
+                timer.submenu?.addItem(item)
+            }
+        }
+    }
+
+    @objc private func openSectionFromMenu(_ sender: NSMenuItem) {
+        guard !startupFailed, let name = sender.representedObject as? String, let tab = CoveTab(rawValue: name) else { return }
+        store.selectTab(tab, expand: true)
+    }
+
+    @objc private func startTimerFromMenu(_ sender: NSMenuItem) {
+        guard !startupFailed, store.preferences.enableTimer, sender.tag > 0 else { return }
+        store.activities.startTimer(seconds: Double(sender.tag) * 60)
+        store.selectTab(.timer, expand: true)
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
