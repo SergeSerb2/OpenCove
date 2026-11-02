@@ -449,26 +449,20 @@ struct SettingsView: View {
                 CoveSectionOrderList(store: store)
             }
 
-            Section("Activities") {
-                Toggle("Timer", isOn: preference(\.enableTimer))
-                Toggle("File tray", isOn: preference(\.enableFileTray))
-                Toggle("Start a break when a timer ends", isOn: preference(\.startBreakAfterTimer))
-                    .disabled(!store.preferences.enableTimer)
-                if store.preferences.startBreakAfterTimer {
-                    CovePreferenceSlider(title: "Break length", value: preference(\.breakMinutes),
-                                         range: 1...30, step: 1, format: "%.0f min")
+            if store.preferences.enableTimer {
+                Section("Timer") {
+                    Toggle("Start a break when a timer ends", isOn: preference(\.startBreakAfterTimer))
+                    if store.preferences.startBreakAfterTimer {
+                        CovePreferenceSlider(title: "Break length", value: preference(\.breakMinutes),
+                                             range: 1...30, step: 1, format: "%.0f min")
+                    }
                 }
-                Toggle("Clipboard history", isOn: preference(\.enableClipboard))
-                    .help("Keeps the last 20 copied texts in memory only. Passwords that apps mark as concealed are skipped. Turning this off forgets the history.")
-                Toggle("Notes", isOn: preference(\.enableNotes))
-                    .help("A small scratchpad, saved on this Mac.")
-                Toggle("System stats", isOn: preference(\.enableSystemStats))
-                    .help("CPU, memory, network and disk. Readings update only while the section is open.")
-                Toggle("Shortcuts", isOn: preference(\.enableShortcuts))
-                if store.preferences.enableShortcuts {
+            }
+
+            if store.preferences.enableShortcuts {
+                Section("Pinned shortcuts") {
                     CoveShortcutPinList(store: store, controller: store.shortcuts)
                 }
-                CoveSettingsNote("The file tray holds files you add. It does not scan your folders.")
             }
 
             Section("Calendar & meetings") {
@@ -1122,16 +1116,25 @@ struct CoveSectionOrderList: View {
 
     var body: some View {
         let order = CoveTab.ordered(store.preferences.sectionOrder)
-        let enabled = Set(store.enabledTabs)
         VStack(spacing: 2) {
             ForEach(Array(order.enumerated()), id: \.element) { index, tab in
                 HStack(spacing: 10) {
                     Image(systemName: tab.symbol).frame(width: 18).foregroundStyle(.secondary)
-                    Text(tab.title)
-                    if !enabled.contains(tab) {
-                        Text("Off").font(.caption).foregroundStyle(.tertiary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(tab.title)
+                        if let detail = tab.settingsDetail(store.preferences) {
+                            Text(detail).font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     Spacer()
+                    Toggle(tab.title, isOn: Binding(
+                        get: { store.preferences[keyPath: tab.enabledKey] },
+                        set: { value in store.updatePreferences { $0[keyPath: tab.enabledKey] = value } }))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .disabled(tab == .weather && !store.preferences.enableWeather)
+                        .help(tab.settingsHelp)
                     Button { move(order, from: index, by: -1) } label: { Image(systemName: "chevron.up") }
                         .disabled(index == 0)
                         .accessibilityLabel("Move \(tab.title) up")
@@ -1140,11 +1143,10 @@ struct CoveSectionOrderList: View {
                         .accessibilityLabel("Move \(tab.title) down")
                 }
                 .buttonStyle(.borderless)
-                .opacity(enabled.contains(tab) ? 1 : 0.55)
                 .padding(.vertical, 2)
             }
             HStack {
-                CoveSettingsNote("This order sets the footer icons, swipes and the section menu.")
+                CoveSettingsNote("Turn sections on or off. The order sets the footer icons, swipes and the section menu.")
                 Spacer()
                 Button("Reset Order") { store.updatePreferences { $0.sectionOrder = "" } }
                     .disabled(store.preferences.sectionOrder.isEmpty)
@@ -1195,5 +1197,42 @@ extension CoveSettingsPage {
         let text = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard !text.isEmpty, !rawValue.lowercased().contains(text) else { return nil }
         return keywords.first { $0.contains(text) }.map { $0.prefix(1).uppercased() + $0.dropFirst() }
+    }
+}
+
+extension CoveTab {
+    /// The preference that turns this section on.
+    var enabledKey: WritableKeyPath<CovePreferences, Bool> {
+        switch self {
+        case .media: return \.enableMedia
+        case .calendar: return \.enableCalendar
+        case .weather: return \.showWeatherSection
+        case .files: return \.enableFileTray
+        case .clipboard: return \.enableClipboard
+        case .notes: return \.enableNotes
+        case .timer: return \.enableTimer
+        case .shortcuts: return \.enableShortcuts
+        case .system: return \.enableSystemStats
+        }
+    }
+
+    func settingsDetail(_ preferences: CovePreferences) -> String? {
+        switch self {
+        case .weather where !preferences.enableWeather: return "Turn on weather in Weather settings first"
+        case .clipboard: return "Recent copied text, in memory only"
+        case .shortcuts: return "Run pinned macOS Shortcuts"
+        case .system: return "CPU, memory, network and disk"
+        default: return nil
+        }
+    }
+
+    var settingsHelp: String {
+        switch self {
+        case .clipboard: return "Keeps the last 20 copied texts in memory only. Passwords that apps mark as concealed are skipped. Turning this off forgets the history."
+        case .notes: return "A small scratchpad, saved on this Mac."
+        case .system: return "Readings update only while the section is open."
+        case .files: return "Holds files you add. It does not scan your folders."
+        default: return "Show the \(title) section"
+        }
     }
 }
