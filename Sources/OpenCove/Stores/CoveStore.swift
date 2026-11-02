@@ -54,7 +54,8 @@ final class CoveStore: ObservableObject {
     let notes = CoveNotesStore()
     private var hourlyChimeTask: Task<Void, Never>?
     /// The identity of a break timer that OpenCove started, so a finished break does not start another.
-    private(set) var breakTimerIdentifier: UUID?
+    @Published private(set) var breakTimerIdentifier: UUID?
+    var timerIsBreak: Bool { breakTimerIdentifier != nil && breakTimerIdentifier == activities.timerActivityIdentifier }
     var hourlyChimeScheduled: Bool { hourlyChimeTask != nil }
     private var betterDisplaySnapshotCurrent = false
     private var systemAwake = true

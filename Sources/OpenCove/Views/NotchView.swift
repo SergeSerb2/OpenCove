@@ -579,7 +579,7 @@ struct NotchView: View {
                     Circle().stroke(.white.opacity(0.14), lineWidth: 2.2).padding(1.1)
                     CoveTimerRing(timer: activities.timer, clockRevision: activities.timerClockRevision,
                                   reduceMotion: store.preferences.reduceMotion || systemReduceMotion,
-                                  color: CoveNotchStyle.accent(store.preferences.accent), lineWidth: 2.2)
+                                  color: store.timerIsBreak ? .green : CoveNotchStyle.accent(store.preferences.accent), lineWidth: 2.2)
                     if !activities.timer.running {
                         Image(systemName: "pause.fill").font(.system(size: 6, weight: .bold))
                             .foregroundStyle(CoveNotchStyle.accent(store.preferences.accent))
@@ -815,8 +815,8 @@ struct NotchView: View {
             CoveShortcutsSurface(controller: store.shortcuts, pinned: store.preferences.pinnedShortcutNames,
                                  accent: CoveNotchStyle.accent(store.preferences.accent), openSettings: store.openSettings)
         case .timer:
-            CoveTimerSurface(activities: activities, color: CoveNotchStyle.accent(store.preferences.accent),
-                             reduceMotion: systemReduceMotion || store.preferences.reduceMotion)
+            CoveTimerSurface(activities: activities, color: store.timerIsBreak ? .green : CoveNotchStyle.accent(store.preferences.accent),
+                             reduceMotion: systemReduceMotion || store.preferences.reduceMotion, isBreak: store.timerIsBreak)
         case nil:
             CoveEmptySurface(symbol: "sparkle", title: "Your quiet space",
                              message: "Choose what appears here in Settings.",

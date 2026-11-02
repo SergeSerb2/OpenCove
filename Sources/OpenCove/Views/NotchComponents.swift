@@ -1157,6 +1157,7 @@ struct CoveTimerSurface: View {
     @ObservedObject var activities: ActivityController
     var color: Color = .accentColor
     var reduceMotion = false
+    var isBreak = false
     private let presets: [Double] = [60, 300, 900, 1500]
     @State private var choosingCustom = false
     @State private var customMinutes = 45
@@ -1168,14 +1169,14 @@ struct CoveTimerSurface: View {
                     Circle().stroke(.white.opacity(0.08), lineWidth: 5)
                     CoveTimerRing(timer: activities.timer, clockRevision: activities.timerClockRevision,
                                   reduceMotion: reduceMotion, color: color)
-                    Image(systemName: activities.timer.running ? "timer" : "pause.fill")
+                    Image(systemName: !activities.timer.running ? "pause.fill" : isBreak ? "cup.and.saucer" : "timer")
                         .font(.system(size: 28, weight: .light))
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(color)
                 }
                 .frame(width: 93, height: 93)
                 .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 9) {
-                    Text(activities.timer.running ? "Time remaining" : "Timer paused")
+                    Text(!activities.timer.running ? (isBreak ? "Break paused" : "Timer paused") : isBreak ? "Break" : "Time remaining")
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(CoveNotchStyle.secondary)
                     CoveTimerText(timer: activities.timer)
                         .font(.system(size: 36, weight: .light, design: .rounded))
