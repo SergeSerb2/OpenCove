@@ -701,9 +701,8 @@ struct CoveMediaSurface: View {
                 CoveEmptySurface(symbol: "music.note", title: "Nothing playing",
                                  message: "Start playback after unlocking.")
             } else {
-                CoveEmptySurface(symbol: "music.note", title: "Nothing playing",
-                                 message: media.lastError ?? "Play something in your favorite app.",
-                                 actionTitle: "Refresh", action: media.refreshFromUser)
+                CoveNothingPlaying(message: media.lastError ?? "Play something in your favorite app.",
+                                   refresh: media.refreshFromUser)
             }
         }
     }
@@ -1428,5 +1427,65 @@ struct CoveShortcutsSurface: View {
         .disabled(running)
         .help("Run \(name)")
         .accessibilityLabel(running ? "\(name), running" : "Run \(name)")
+    }
+}
+
+/// The empty media state, with one-click launchers for installed players.
+@MainActor
+struct CoveNothingPlaying: View {
+    let message: String
+    let refresh: () -> Void
+
+    private struct Player: Identifiable {
+        let id: String
+        let name: String
+        let url: URL
+        let icon: NSImage
+    }
+
+    private static let candidates = [("com.apple.Music", "Music"), ("com.spotify.client", "Spotify"),
+                                     ("com.apple.podcasts", "Podcasts"), ("com.apple.TV", "TV")]
+
+    @State private var players: [Player] = []
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "music.note")
+                .font(.system(size: 22, weight: .light))
+                .foregroundStyle(.white.opacity(0.35))
+            Text("Nothing playing").font(.system(size: 13, weight: .semibold))
+            Text(message)
+                .font(.system(size: 11)).foregroundStyle(CoveNotchStyle.secondary)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 12) {
+                ForEach(players) { player in
+                    Button {
+                        NSWorkspace.shared.openApplication(at: player.url, configuration: .init())
+                    } label: {
+                        Image(nsImage: player.icon).resizable().frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(CoveQuietButtonStyle())
+                    .help("Open \(player.name)")
+                    .accessibilityLabel("Open \(player.name)")
+                }
+                Button(action: refresh) {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .medium))
+                        .frame(width: 30, height: 30)
+                        .background(CoveNotchStyle.surface, in: Circle())
+                }
+                .buttonStyle(CoveQuietButtonStyle())
+                .help("Refresh")
+                .accessibilityLabel("Refresh media")
+            }
+            .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            guard players.isEmpty else { return }
+            players = Self.candidates.compactMap { identifier, name in
+                guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) else { return nil }
+                return Player(id: identifier, name: name, url: url, icon: NSWorkspace.shared.icon(forFile: url.path))
+            }
+        }
     }
 }
