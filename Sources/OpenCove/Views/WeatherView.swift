@@ -429,6 +429,8 @@ struct CoveWeatherSurface: View {
                                 Text(degrees(hour.temperature)).font(.system(size: 11, weight: .medium)).monospacedDigit()
                             }
                             .frame(maxWidth: .infinity)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("\(hour.date.formatted(Date.FormatStyle(timeZone: state.timeZone).hour())), \(hour.condition), \(degrees(hour.temperature))")
                         }
                     }
                     .padding(.vertical, 8)
@@ -449,6 +451,9 @@ struct CoveWeatherSurface: View {
                                 Text(degrees(day.maximum)).frame(width: 30, alignment: .trailing)
                             }
                             .font(.system(size: 11)).monospacedDigit()
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("\(day.date.formatted(Date.FormatStyle(timeZone: state.timeZone).weekday(.wide))), \(day.condition), high \(degrees(day.maximum)), low \(degrees(day.minimum))"
+                                + ((day.precipitationProbability ?? 0) >= 20 ? ", \(Int((day.precipitationProbability ?? 0).rounded())) percent chance of rain" : ""))
                         }
                     }
                 }
