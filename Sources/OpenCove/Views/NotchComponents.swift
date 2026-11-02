@@ -763,6 +763,8 @@ struct CoveMediaSurface: View {
                             }
                         }
                     }
+                    Button("Copy Title and Artist", systemImage: "doc.on.doc") { media.copyTitleAndArtist() }
+                        .disabled(media.state.title.isEmpty)
                     if media.canSkipWithinItem {
                         Button("Back 15 Seconds", systemImage: "gobackward.15") { media.skip(by: -15) }
                         Button("Forward 30 Seconds", systemImage: "goforward.30") { media.skip(by: 30) }

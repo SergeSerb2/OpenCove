@@ -543,6 +543,8 @@ final class DevelopmentServer {
             guard store.media.setPlaybackSpeed(speed, source: source, itemID: item) else {
                 throw ControlError.rejected(store.media.lastError ?? "Playback speed could not be submitted.")
             }
+        case "media.copyInfo":
+            guard store.media.copyTitleAndArtist() else { throw ControlError.rejected("No media title is available.") }
         case "media.skipBy":
             let seconds = try number("seconds")
             guard abs(seconds) <= 600 else { throw ControlError.invalid("Skip at most 600 seconds at a time.") }

@@ -238,6 +238,15 @@ final class MediaController: ObservableObject {
         return seek(to: position, target: state.seekTarget)
     }
 
+    /// Copies "Title — Artist" for the current item to the clipboard.
+    @discardableResult
+    func copyTitleAndArtist() -> Bool {
+        guard state.available, !state.title.isEmpty else { return false }
+        let text = state.artist.isEmpty ? state.title : "\(state.title) — \(state.artist)"
+        NSPasteboard.general.clearContents()
+        return NSPasteboard.general.setString(text, forType: .string)
+    }
+
     var canSkipWithinItem: Bool {
         state.available && state.supportsSeek && state.seekTarget != nil && state.duration > 0
     }
