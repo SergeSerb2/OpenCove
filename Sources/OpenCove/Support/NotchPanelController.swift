@@ -1224,9 +1224,27 @@ final class NotchPanelController: NSObject {
             item.target = self
             item.representedObject = target
         }
+        if store.preferences.enableMedia && store.media.state.available {
+            menu.addItem(.separator())
+            let actions: [(String, String, StatusMediaAction)] = [
+                (store.media.state.isPlaying ? "Pause" : "Play", store.media.state.isPlaying ? "pause.fill" : "play.fill", .playPause),
+                ("Next Track", "forward.fill", .next),
+                ("Previous Track", "backward.fill", .previous)
+            ]
+            for (title, symbol, action) in actions {
+                let item = menu.addItem(withTitle: title, action: #selector(mediaFromMenu(_:)), keyEquivalent: "")
+                item.target = self
+                item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+                item.representedObject = action == .playPause ? "playPause" : action == .next ? "next" : "previous"
+                item.isEnabled = canPerformStatusMediaAction(action)
+            }
+        }
         menu.addItem(.separator())
         let settings = menu.addItem(withTitle: "Settings…", action: #selector(settingsFromMenu), keyEquivalent: "")
         settings.target = self
+        // With the menu bar icon hidden, this is the quickest way to quit.
+        let quit = menu.addItem(withTitle: "Quit OpenCove", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        quit.target = NSApp
         NSMenu.popUpContextMenu(menu, with: event, for: view)
     }
 
@@ -1268,6 +1286,16 @@ final class NotchPanelController: NSObject {
         guard mayHandleMenuAction else { return }
         store.toggleExpanded()
     }
+    @objc private func mediaFromMenu(_ sender: NSMenuItem) {
+        guard mayHandleMenuAction else { return }
+        switch sender.representedObject as? String {
+        case "playPause": performStatusMediaAction(.playPause)
+        case "next": performStatusMediaAction(.next)
+        case "previous": performStatusMediaAction(.previous)
+        default: break
+        }
+    }
+
     @objc private func settingsFromMenu() {
         guard mayHandleMenuAction else { return }
         store.openSettings()
