@@ -144,6 +144,7 @@ struct CovePreferences: Codable, Equatable {
         if !["smooth", "fast", "instant"].contains(hudSpeed) { hudSpeed = defaults.hudSpeed }
         sectionOrder = CoveTab.normalizedOrder(sectionOrder)
         pinnedShortcuts = Self.normalizedShortcutList(pinnedShortcuts.split(separator: "\n").map(String.init))
+        if !["celsius", "fahrenheit"].contains(temperatureUnit) { temperatureUnit = defaults.temperatureUnit }
         if CoveHotKeyChoice(rawValue: toggleShortcut) == nil { toggleShortcut = defaults.toggleShortcut }
         if CoveHUDBarStyle(rawValue: hudProgressStyle) == nil { hudProgressStyle = defaults.hudProgressStyle }
         if !["system", "music", "spotify"].contains(preferredMusicApp) { preferredMusicApp = defaults.preferredMusicApp }
@@ -216,6 +217,7 @@ struct CovePreferences: Codable, Equatable {
     var enableShortcuts = false
     var enableSystemStats = false
     var showWeatherSection = false
+    var temperatureUnit = "celsius"
     var enableNotes = false
     var enableClipboard = false
     /// Section order as comma-separated names. Empty means the default order.

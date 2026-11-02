@@ -648,6 +648,7 @@ final class CoveStore: ObservableObject {
         }
         hotKey.apply(CoveHotKeyChoice(rawValue: preferences.toggleShortcut) ?? .off)
         clipboard.setEnabled(preferences.enableClipboard)
+        CoveTemperature.fahrenheit = preferences.temperatureUnit == "fahrenheit"
     }
 
     /// Plays one chime at the start of each hour while the preference is on,
@@ -1160,6 +1161,11 @@ final class CoveStore: ObservableObject {
         if !preferences.syncSettingsWithiCloud { settingsSync.stop() }
         system.lowBatteryThreshold = preferences.lowBatteryWarningThreshold
         reconcileHourlyChime()
+        let fahrenheit = preferences.temperatureUnit == "fahrenheit"
+        if CoveTemperature.fahrenheit != fahrenheit {
+            CoveTemperature.fahrenheit = fahrenheit
+            weather.objectWillChange.send()
+        }
         if started { hotKey.apply(CoveHotKeyChoice(rawValue: preferences.toggleShortcut) ?? .off) }
         clipboard.setEnabled(started && preferences.enableClipboard)
         if started {

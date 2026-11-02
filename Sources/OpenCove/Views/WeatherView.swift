@@ -118,7 +118,7 @@ struct WeatherView: View {
                         metric("Humidity", value: value.formatted(.number.precision(.fractionLength(0))) + "%", symbol: "humidity")
                     }
                     if let value = controller.state.windSpeed {
-                        metric("Wind", value: value.formatted(.number.precision(.fractionLength(0))) + " km/h", symbol: "wind")
+                        metric("Wind", value: CoveTemperature.wind(value), symbol: "wind")
                     }
                 }
                 if !controller.state.hourly.isEmpty || !controller.state.daily.isEmpty {
@@ -154,8 +154,7 @@ struct WeatherView: View {
     }
 
     static func degrees(_ value: Double?) -> String {
-        guard let value, value.isFinite else { return "—" }
-        return value.formatted(.number.precision(.fractionLength(0))) + "°"
+        CoveTemperature.degrees(value)
     }
 
     private var locationEditor: some View {
@@ -363,8 +362,7 @@ struct CoveWeatherSurface: View {
     let openSettings: () -> Void
 
     private func degrees(_ value: Double?) -> String {
-        guard let value, value.isFinite else { return "—" }
-        return value.formatted(.number.precision(.fractionLength(0))) + "°"
+        CoveTemperature.degrees(value)
     }
 
     var body: some View {
@@ -397,7 +395,7 @@ struct CoveWeatherSurface: View {
                             Label("\(Int(humidity.rounded()))% humidity", systemImage: "humidity")
                         }
                         if let wind = state.windSpeed, wind.isFinite {
-                            Label("\(Int(wind.rounded())) km/h wind", systemImage: "wind")
+                            Label("\(CoveTemperature.wind(wind)) wind", systemImage: "wind")
                         }
                     }
                     .font(.system(size: 10)).monospacedDigit()

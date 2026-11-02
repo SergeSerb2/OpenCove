@@ -467,8 +467,7 @@ struct CoveClearDayWeather: View {
     }
 
     private func degrees(_ value: Double?) -> String {
-        guard let value, value.isFinite else { return "—" }
-        return value.formatted(.number.precision(.fractionLength(0))) + "°"
+        CoveTemperature.degrees(value)
     }
 
     var body: some View {

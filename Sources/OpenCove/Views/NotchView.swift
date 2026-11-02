@@ -627,7 +627,7 @@ struct NotchView: View {
                         if showsWeather, let weather {
                             HStack(spacing: 3) {
                                 Image(systemName: weather.symbol).symbolRenderingMode(.multicolor)
-                                Text(weather.temperature.formatted(.number.precision(.fractionLength(0))) + "°")
+                                Text(CoveTemperature.degrees(weather.temperature))
                                     .monospacedDigit()
                             }
                             .font(.system(size: 9, weight: .medium))

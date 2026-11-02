@@ -28,7 +28,7 @@ struct WeatherState: Codable, Equatable {
 
     var temperatureText: String {
         guard available, temperature.isFinite else { return "—" }
-        return temperature.formatted(.number.precision(.fractionLength(0))) + "°C"
+        return CoveTemperature.degrees(temperature) + (CoveTemperature.fahrenheit ? "F" : "C")
     }
 
     var isStale: Bool {
@@ -135,5 +135,24 @@ struct WeatherWidgetData: Codable, Equatable {
                 isDaylight = now >= sunrise && now < sunset
             }
         }
+    }
+}
+
+/// Formats Celsius readings in the chosen unit. The store sets the unit from
+/// preferences; every weather view formats through here.
+enum CoveTemperature {
+    nonisolated(unsafe) static var fahrenheit = false
+
+    static func degrees(_ celsius: Double?) -> String {
+        guard let celsius, celsius.isFinite else { return "—" }
+        let value = fahrenheit ? celsius * 9 / 5 + 32 : celsius
+        return value.formatted(.number.precision(.fractionLength(0))) + "°"
+    }
+
+    /// Wind follows the temperature unit: km/h with Celsius, mph with Fahrenheit.
+    static func wind(_ kilometresPerHour: Double) -> String {
+        guard kilometresPerHour.isFinite else { return "—" }
+        let value = fahrenheit ? kilometresPerHour / 1.609_344 : kilometresPerHour
+        return value.formatted(.number.precision(.fractionLength(0))) + (fahrenheit ? " mph" : " km/h")
     }
 }
