@@ -109,6 +109,7 @@ private struct CoveExpandedSectionPermissions {
     var systemStatsEnabled = false
     var weatherEnabled = false
     var notesEnabled = false
+    var clipboardEnabled = false
 
     func permits(_ section: CoveExpandedSection, outgoing: Bool) -> Bool {
         switch section.tab {
@@ -122,6 +123,7 @@ private struct CoveExpandedSectionPermissions {
         case .system: return systemStatsEnabled
         case .weather: return weatherEnabled
         case .notes: return notesEnabled
+        case .clipboard: return clipboardEnabled
         case nil: return true
         }
     }
@@ -343,7 +345,8 @@ struct NotchView: View {
             shortcutsEnabled: store.preferences.enableShortcuts,
             systemStatsEnabled: store.preferences.enableSystemStats,
             weatherEnabled: store.preferences.enableWeather && store.preferences.showWeatherSection,
-            notesEnabled: store.preferences.enableNotes)
+            notesEnabled: store.preferences.enableNotes,
+            clipboardEnabled: store.preferences.enableClipboard)
     }
 
     private var expandedSectionPresentation: CoveExpandedSectionPresentation {
@@ -807,6 +810,8 @@ struct NotchView: View {
             CoveFileSurface(activities: activities)
         case .notes:
             CoveNotesSurface(notes: store.notes)
+        case .clipboard:
+            CoveClipboardSurface(history: store.clipboard, accent: CoveNotchStyle.accent(store.preferences.accent))
         case .weather:
             CoveWeatherSurface(controller: store.weather, openSettings: store.openSettings)
         case .system:

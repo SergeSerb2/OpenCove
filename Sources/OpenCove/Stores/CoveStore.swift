@@ -52,6 +52,7 @@ final class CoveStore: ObservableObject {
     let shortcuts = ShortcutsController()
     let systemStats = SystemStatsController()
     let notes = CoveNotesStore()
+    let clipboard = ClipboardHistory()
     private var hourlyChimeTask: Task<Void, Never>?
     /// The identity of a break timer that OpenCove started, so a finished break does not start another.
     @Published private(set) var breakTimerIdentifier: UUID?
@@ -77,6 +78,7 @@ final class CoveStore: ObservableObject {
             case .system: return preferences.enableSystemStats
             case .weather: return preferences.enableWeather && preferences.showWeatherSection
             case .notes: return preferences.enableNotes
+            case .clipboard: return preferences.enableClipboard
             case .timer: return preferences.enableTimer
             }
         }
@@ -644,6 +646,7 @@ final class CoveStore: ObservableObject {
             self.toggleExpanded()
         }
         hotKey.apply(CoveHotKeyChoice(rawValue: preferences.toggleShortcut) ?? .off)
+        clipboard.setEnabled(preferences.enableClipboard)
     }
 
     /// Plays one chime at the start of each hour while the preference is on,
@@ -685,6 +688,7 @@ final class CoveStore: ObservableObject {
         reconcileHourlyChime()
         hotKey.unregister()
         notes.flush()
+        clipboard.setEnabled(false)
         waveform.setEnabled(false); travel.stop(); hardwareKeys.stop()
         reconcileMirroring()
         hud = nil
@@ -1156,6 +1160,7 @@ final class CoveStore: ObservableObject {
         system.lowBatteryThreshold = preferences.lowBatteryWarningThreshold
         reconcileHourlyChime()
         if started { hotKey.apply(CoveHotKeyChoice(rawValue: preferences.toggleShortcut) ?? .off) }
+        clipboard.setEnabled(started && preferences.enableClipboard)
         if started {
             refreshSessionActivity()
             reconcileReaders()

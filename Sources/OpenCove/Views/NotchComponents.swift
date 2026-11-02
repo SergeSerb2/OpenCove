@@ -1660,3 +1660,65 @@ struct CoveFileDetail: View {
             }
     }
 }
+
+/// Recently copied text. Click an item to copy it again.
+@MainActor
+struct CoveClipboardSurface: View {
+    @ObservedObject var history: ClipboardHistory
+    let accent: Color
+    @State private var copied: UUID?
+
+    var body: some View {
+        if history.items.isEmpty {
+            CoveEmptySurface(symbol: "doc.on.clipboard", title: "Nothing copied yet",
+                             message: "Text you copy appears here. It is kept in memory only.")
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("\(history.items.count) recent").font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(CoveNotchStyle.secondary)
+                    Spacer()
+                    Button("Clear", action: history.clear).buttonStyle(.plain)
+                        .font(.system(size: 11)).foregroundStyle(CoveNotchStyle.secondary)
+                }
+                ScrollView {
+                    LazyVStack(spacing: 5) {
+                        ForEach(history.items) { item in row(item) }
+                    }
+                }
+                .scrollIndicators(.hidden)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+    }
+
+    private func row(_ item: ClipboardHistory.Item) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Button {
+                history.copy(item)
+                copied = item.id
+            } label: {
+                HStack(alignment: .top) {
+                    Text(item.text.trimmingCharacters(in: .whitespacesAndNewlines))
+                        .font(.system(size: 11)).lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(item.date, style: .relative).font(.system(size: 9))
+                        .foregroundStyle(CoveNotchStyle.secondary).lineLimit(1).fixedSize()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Copy again")
+            .accessibilityLabel("Copy: \(item.text.prefix(80))")
+            Button { history.remove(item.id) } label: {
+                Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+            }
+            .buttonStyle(.plain).foregroundStyle(CoveNotchStyle.secondary)
+            .accessibilityLabel("Remove from history")
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .strokeBorder(accent.opacity(copied == item.id ? 0.6 : 0), lineWidth: 1))
+    }
+}

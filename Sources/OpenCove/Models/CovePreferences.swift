@@ -217,6 +217,7 @@ struct CovePreferences: Codable, Equatable {
     var enableSystemStats = false
     var showWeatherSection = false
     var enableNotes = false
+    var enableClipboard = false
     /// Section order as comma-separated names. Empty means the default order.
     var sectionOrder = ""
     /// Pinned shortcut names, one per line, in tile order.
@@ -347,7 +348,7 @@ enum CoveCompactActivity: String {
 }
 
 enum CoveTab: String, Codable, CaseIterable, Identifiable {
-    case media, calendar, weather, files, notes, timer, shortcuts, system
+    case media, calendar, weather, files, clipboard, notes, timer, shortcuts, system
     var id: String { rawValue }
 
     /// All sections in the saved order; unknown names are dropped and new sections join at the end.
@@ -375,6 +376,7 @@ enum CoveTab: String, Codable, CaseIterable, Identifiable {
         case .system: return "gauge.with.dots.needle.33percent"
         case .weather: return "cloud.sun"
         case .notes: return "note.text"
+        case .clipboard: return "doc.on.clipboard"
         }
     }
 }

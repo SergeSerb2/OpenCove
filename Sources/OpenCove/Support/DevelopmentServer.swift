@@ -648,6 +648,9 @@ final class DevelopmentServer {
             guard let title = values["title"] as? String, title.count <= 200, let body = values["body"] as? String, body.count <= 2_000 else { throw ControlError.invalid("A short title and body are required.") }
             guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !body.isEmpty else { throw ControlError.invalid("Enter a notification title or message.") }
             try activity { store.activities.postNotification(title: title, body: body) }
+        case "clipboard.copyNewest":
+            guard let item = store.clipboard.items.dropFirst().first else { throw ControlError.rejected("Clipboard history needs at least two items.") }
+            store.clipboard.copy(item)
         case "notes.set":
             guard let text = values["text"] as? String, text.utf8.count <= 4_096 else { throw ControlError.invalid("Provide note text of at most 4096 bytes.") }
             store.notes.update(text)
@@ -758,6 +761,8 @@ final class DevelopmentServer {
                             "hourlyChimeScheduled": store.hourlyChimeScheduled]
         result["toggleShortcut"] = store.hotKey.status.description
         result["timerBreak"] = store.breakTimerIdentifier != nil
+        result["clipboard"] = ["watching": store.clipboard.isWatching, "count": store.clipboard.items.count,
+                               "newestLength": store.clipboard.items.first?.text.count ?? 0] as [String: Any]
         result["notes"] = ["length": store.notes.text.count, "unsaved": store.notes.hasUnsavedChanges,
                            "error": store.notes.lastError ?? NSNull()] as [String: Any]
         let stats = store.systemStats.snapshot

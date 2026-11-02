@@ -10,6 +10,7 @@
 - **Timer:** an optional automatic break (1–30 minutes) after each timer, +1 minute while running, custom durations up to 12 hours and a live progress ring in the compact view.
 - **Calendar and weather:** an optional Weather section (now, next six hours, next four days), an empty calendar day shows its forecast, and the idle compact clock shows the current temperature.
 - **Shortcuts:** pin up to eight macOS Shortcuts as one-tap tiles in a new panel section. Each shows progress, and the result appears as an overlay.
+- **Clipboard history:** an optional section with the last 20 copied texts, kept in memory only. Concealed and transient items (such as passwords) are skipped. Click to copy again.
 - **Notes:** an optional scratchpad section, saved as a private text file on this Mac.
 - **System stats:** an optional section with CPU, memory, network and disk, sampled only while it is open.
 - **General:** a global open/close shortcut, hide menu bar icon (open the app again to reach Settings), hide from screenshots and recordings, dropping files on the notch opens the file tray (now with image, PDF and video thumbnails plus kind and size), and the right-click menu gains playback controls and Quit.

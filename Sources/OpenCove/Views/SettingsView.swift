@@ -441,6 +441,8 @@ struct SettingsView: View {
                     CovePreferenceSlider(title: "Break length", value: preference(\.breakMinutes),
                                          range: 1...30, step: 1, format: "%.0f min")
                 }
+                Toggle("Clipboard history", isOn: preference(\.enableClipboard))
+                    .help("Keeps the last 20 copied texts in memory only. Passwords that apps mark as concealed are skipped. Turning this off forgets the history.")
                 Toggle("Notes", isOn: preference(\.enableNotes))
                     .help("A small scratchpad, saved on this Mac.")
                 Toggle("System stats", isOn: preference(\.enableSystemStats))
