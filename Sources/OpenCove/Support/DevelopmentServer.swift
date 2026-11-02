@@ -634,6 +634,9 @@ final class DevelopmentServer {
             try requireCapability(store.activities.timer.remaining > 0, "There is no paused timer to resume.")
             try activity { store.activities.resumeTimer() }
         case "timer.cancel": try activity { store.activities.cancelTimer() }
+        case "timer.extend":
+            let seconds = try number("seconds")
+            try activity { store.activities.extendTimer(seconds: seconds) }
         case "notification.post":
             guard let title = values["title"] as? String, title.count <= 200, let body = values["body"] as? String, body.count <= 2_000 else { throw ControlError.invalid("A short title and body are required.") }
             guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !body.isEmpty else { throw ControlError.invalid("Enter a notification title or message.") }

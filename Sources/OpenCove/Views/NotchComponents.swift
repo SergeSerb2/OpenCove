@@ -1132,6 +1132,8 @@ struct CoveTimerSurface: View {
     var color: Color = .accentColor
     var reduceMotion = false
     private let presets: [Double] = [60, 300, 900, 1500]
+    @State private var choosingCustom = false
+    @AppStorage("OpenCove.customTimerMinutes") private var customMinutes = 45
 
     var body: some View {
         if activities.timer.remaining > 0 {
@@ -1160,6 +1162,10 @@ struct CoveTimerSurface: View {
                             else { activities.resumeTimer() }
                         }
                         .buttonStyle(CovePillButtonStyle())
+                        Button("1 min", systemImage: "plus") { activities.extendTimer(seconds: 60) }
+                            .buttonStyle(CovePillButtonStyle())
+                            .fixedSize()
+                            .accessibilityLabel("Add one minute")
                         Button("Cancel", action: activities.cancelTimer)
                             .buttonStyle(CovePillButtonStyle())
                     }
@@ -1195,6 +1201,36 @@ struct CoveTimerSurface: View {
                         }
                         .buttonStyle(CoveQuietButtonStyle())
                         .accessibilityLabel("Start \(Int(seconds / 60)) minute timer")
+                    }
+                    Button { choosingCustom = true } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: "slider.horizontal.3")
+                                .font(.system(size: 17, weight: .light))
+                                .frame(height: 26)
+                            Text("CUSTOM").font(.system(size: 8, weight: .semibold)).tracking(1)
+                                .foregroundStyle(CoveNotchStyle.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 63)
+                        .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(CoveQuietButtonStyle())
+                    .accessibilityLabel("Start a custom timer")
+                    .popover(isPresented: $choosingCustom, arrowEdge: .bottom) {
+                        VStack(spacing: 12) {
+                            Text("Custom timer").font(.system(size: 13, weight: .semibold))
+                            Stepper(value: $customMinutes, in: 1...720, step: customMinutes < 10 ? 1 : 5) {
+                                Text(customMinutes >= 60 ? "\(customMinutes / 60) h \(customMinutes % 60) min" : "\(customMinutes) min")
+                                    .font(.system(size: 20, weight: .light, design: .rounded)).monospacedDigit()
+                                    .frame(minWidth: 110, alignment: .leading)
+                            }
+                            Button("Start") {
+                                choosingCustom = false
+                                activities.startTimer(seconds: Double(customMinutes) * 60)
+                            }
+                            .keyboardShortcut(.defaultAction)
+                        }
+                        .padding(16)
                     }
                 }
             }

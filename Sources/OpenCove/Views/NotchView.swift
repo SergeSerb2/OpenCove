@@ -555,9 +555,19 @@ struct NotchView: View {
                 kind: .compact, mode: .compact(.activity(.media))))
         } else if mode == .activity(.timer) && store.preferences.enableTimer && activities.timer.remaining > 0 {
             HStack(spacing: 0) {
-                Image(systemName: activities.timer.running ? "timer" : "pause.fill")
-                    .foregroundStyle(CoveNotchStyle.accent(store.preferences.accent))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                ZStack {
+                    Circle().stroke(.white.opacity(0.14), lineWidth: 2.2).padding(1.1)
+                    CoveTimerRing(timer: activities.timer, clockRevision: activities.timerClockRevision,
+                                  reduceMotion: store.preferences.reduceMotion,
+                                  color: CoveNotchStyle.accent(store.preferences.accent), lineWidth: 2.2)
+                    if !activities.timer.running {
+                        Image(systemName: "pause.fill").font(.system(size: 6, weight: .bold))
+                            .foregroundStyle(CoveNotchStyle.accent(store.preferences.accent))
+                    }
+                }
+                .frame(width: 15, height: 15)
+                .accessibilityHidden(true)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Color.clear.frame(width: compactGap)
                 CoveTimerText(timer: activities.timer)
                     .font(.system(size: 12, weight: .semibold, design: .rounded))

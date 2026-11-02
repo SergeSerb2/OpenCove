@@ -33,12 +33,13 @@ struct CoveTimerRing: View {
     var clockRevision: UInt64
     var reduceMotion: Bool
     var color: Color
+    var lineWidth: Double = 5
 
     var body: some View {
         // Normal progress runs in the render server. Reduced motion retains
         // functional whole-second progress without a continuous animation.
         TimelineView(CoveTimerSchedule(paused: !timer.running || !reduceMotion)) { _ in
-            CoveNativeTimerRing(timer: timer, clockRevision: clockRevision, reduceMotion: reduceMotion, color: color)
+            CoveNativeTimerRing(timer: timer, clockRevision: clockRevision, reduceMotion: reduceMotion, color: color, lineWidth: lineWidth)
         }
     }
 }
@@ -49,12 +50,14 @@ private struct CoveNativeTimerRing: NSViewRepresentable {
     var clockRevision: UInt64
     var reduceMotion: Bool
     var color: Color
+    var lineWidth: Double
 
     func makeNSView(context: Context) -> CoveTimerProgressView {
         CoveTimerProgressView(frame: .zero)
     }
 
     func updateNSView(_ view: CoveTimerProgressView, context: Context) {
+        view.arcLineWidth = lineWidth
         view.configure(timer: timer, clockRevision: clockRevision, reduceMotion: reduceMotion, color: NSColor(color))
     }
 
@@ -73,6 +76,9 @@ final class CoveTimerProgressView: NSView {
     private var retired = false
     private var windowObservation: NSObjectProtocol?
     private static let animationKey = "timerDeadline"
+    var arcLineWidth: Double = 5 {
+        didSet { if arcLineWidth != oldValue { arc.lineWidth = arcLineWidth; needsLayout = true } }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -132,7 +138,7 @@ final class CoveTimerProgressView: NSView {
         CATransaction.setDisableActions(true)
         arc.frame = bounds
         let path = CGMutablePath()
-        path.addArc(center: CGPoint(x: bounds.midX, y: bounds.midY), radius: min(bounds.width, bounds.height) / 2,
+        path.addArc(center: CGPoint(x: bounds.midX, y: bounds.midY), radius: max(0, min(bounds.width, bounds.height) / 2 - (arcLineWidth > 3 ? 0 : arcLineWidth / 2)),
                     startAngle: .pi / 2, endAngle: -.pi * 1.5, clockwise: true)
         arc.path = path
         arc.strokeColor = color.cgColor
