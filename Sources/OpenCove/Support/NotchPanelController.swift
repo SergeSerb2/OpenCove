@@ -1338,8 +1338,10 @@ private final class CovePanelTrackingView: NSView {
     var onHover: ((Bool) -> Void)?
     private var hoverArea: NSTrackingArea?
     private var cutout: CGSize?
+    private weak var dropStore: CoveStore?
 
     init(store: CoveStore) {
+        dropStore = store
         hosting = CovePanelHostingView(rootView: AnyView(
             NotchView(store: store)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -1350,6 +1352,35 @@ private final class CovePanelTrackingView: NSView {
         hosting.sizingOptions = []
         hosting.autoresizingMask = [.width, .height]
         addSubview(hosting)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    // Dragging files over the panel opens the file tray, so files can be dropped
+    // on the notch itself. The tray's own drop area then takes the drop; this
+    // view adds the files only if the drop lands outside it.
+    private func acceptsFileDrag(_ info: NSDraggingInfo) -> Bool {
+        guard let store = dropStore, store.preferences.enableFileTray, !store.system.state.isLocked else { return false }
+        return info.draggingPasteboard.canReadObject(forClasses: [NSURL.self],
+                                                    options: [.urlReadingFileURLsOnly: true])
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard acceptsFileDrag(sender), let store = dropStore else { return [] }
+        if !store.isExpanded || store.selectedTab != .files { store.selectTab(.files, expand: true) }
+        return .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        acceptsFileDrag(sender) ? .copy : []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard acceptsFileDrag(sender), let store = dropStore,
+              let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
+                                                               options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              !urls.isEmpty else { return false }
+        store.activities.addFiles(urls)
+        return true
     }
 
     func updateCutout(_ value: CGSize, store: CoveStore) {
