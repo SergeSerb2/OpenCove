@@ -1659,6 +1659,7 @@ struct CoveSystemStatsSurface: View {
 @MainActor
 struct CoveNotesSurface: View {
     @ObservedObject var notes: CoveNotesStore
+    @State private var confirmingClear = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1685,7 +1686,21 @@ struct CoveNotesSurface: View {
                 }
                 Spacer()
                 Text("\(notes.text.count) characters").monospacedDigit()
+                if !notes.text.isEmpty {
+                    Button("Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(notes.text, forType: .string)
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.white.opacity(0.75))
+                    .help("Copy all notes")
+                    Button(confirmingClear ? "Confirm Clear" : "Clear") {
+                        if confirmingClear { notes.update(""); confirmingClear = false } else { confirmingClear = true }
+                    }
+                    .buttonStyle(.plain).foregroundStyle(confirmingClear ? Color.orange : .white.opacity(0.75))
+                    .help("Clear all notes")
+                }
             }
+            .onChange(of: notes.text) { _, _ in confirmingClear = false }
             .font(.system(size: 9))
             .foregroundStyle(CoveNotchStyle.secondary)
             .lineLimit(1)
