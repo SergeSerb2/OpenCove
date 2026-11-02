@@ -129,6 +129,18 @@ state, setters, permission gates, key ownership and the ordinary native preview 
 their existing paths. Physical readings, completed changes, installed-vendor positive
 acceptance and runtime privacy behavior remain unverified; see [acceptance limits](hardware-huds.md#betterdisplay-acceptance--unverified).
 
+## Optional sections, sounds and shortcuts
+
+All of these are off by default except the timer-finished sound.
+
+- **Clipboard history** reads copied text from the general pasteboard only while it is on, starting from the moment you turn it on. It keeps at most 20 items in memory and never writes them to disk. Items that apps mark as concealed, transient or auto-generated (as password managers do) are skipped. Turning it off, or quitting, forgets the history.
+- **Notes** are saved as plain text in `notes.txt` in the private data directory, with owner-only permissions (0600). They are not synced or uploaded.
+- **Shortcuts** lists your shortcuts with the system `shortcuts` command, which needs no permission. A shortcut runs only when you tap its pinned tile. The shortcut itself may ask for its own permissions or contact services.
+- **System stats** reads CPU, memory, network byte counters, disk free space and battery health from public system interfaces, every two seconds and only while the section is open. Nothing is stored.
+- **Sounds** play built-in macOS sounds from `/System/Library/Sounds`. OpenCove ships no audio.
+- **Global shortcut** registers one hot key with the system. It does not monitor other key presses and needs no Accessibility access.
+- **Hide from screenshots and recordings** asks macOS to exclude OpenCove's panels from capture. Some capture tools may still record them.
+
 ## Network and external services
 
 - **Weather:** When enabled with a selected location, OpenCove sends latitude and longitude to `api.open-meteo.com` for current conditions and hourly/daily forecasts in one request. It can refresh about every 15 minutes. The provider also sees normal network metadata, including your IP address. Weather data is credited to [Open-Meteo](https://open-meteo.com/) under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The [free-service terms](https://open-meteo.com/en/terms) permit non-commercial use and set request limits; they apply separately from the data license and the app's MIT license. Commercial use needs a separately arranged provider service; OpenCove currently uses the free endpoint. No weather dataset is bundled.
