@@ -654,8 +654,9 @@ final class SystemController: NSObject, ObservableObject {
             for identifier in connectedBluetooth.keys.sorted() where previousBluetooth[identifier] == nil {
                 if !(routeChanged && new.audioOutputIsBluetooth && connectedBluetooth[identifier] == new.outputDevice) {
                     let name = connectedBluetooth[identifier] ?? "Bluetooth device"
-                    let battery = new.accessoryBatteries.first { $0.label == name }?.summaryPercentage
-                    emit(CoveHUD(kind: .bluetooth, title: name, subtitle: battery.map { "Connected · \($0)%" } ?? "Connected",
+                    let accessory = new.accessoryBatteries.first { $0.label == name }
+                    let battery = accessory?.summaryPercentage
+                    emit(CoveHUD(kind: .bluetooth, title: name, subtitle: accessory?.detailText.map { "Connected · \($0)" } ?? "Connected",
                                  symbol: CoveDeviceSymbol.symbol(forName: name, fallback: "antenna.radiowaves.left.and.right"),
                                  value: battery.map { Double($0) / 100 }))
                 }

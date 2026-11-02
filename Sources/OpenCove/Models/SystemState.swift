@@ -101,4 +101,12 @@ extension CoveAccessoryBattery {
     var summaryPercentage: Int? {
         [percentage, leftPercentage, rightPercentage].compactMap { $0 }.min()
     }
+
+    /// "L 80% · R 82% · Case 45%" for earbuds, or "80%" for a single battery.
+    var detailText: String? {
+        let parts = [("L", leftPercentage), ("R", rightPercentage), ("Case", casePercentage)]
+            .compactMap { label, value in value.map { "\(label) \($0)%" } }
+        if !parts.isEmpty { return parts.joined(separator: " · ") }
+        return percentage.map { "\($0)%" }
+    }
 }
