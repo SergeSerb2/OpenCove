@@ -742,6 +742,7 @@ final class DevelopmentServer {
         result["sounds"] = ["playCount": store.sounds.playCount,
                             "lastEvent": store.sounds.lastPlayed?.event.rawValue ?? NSNull(),
                             "hourlyChimeScheduled": store.hourlyChimeScheduled]
+        result["toggleShortcut"] = store.hotKey.status.description
         result["mediaPeekRemaining"] = store.mediaPeekRemaining.map { $0 as Any } ?? NSNull()
         result["hudRemaining"] = store.hudRemaining.map { $0 as Any } ?? NSNull()
         result["playbackClock"] = ["receivedSamples": store.media.playback.receivedSamples,

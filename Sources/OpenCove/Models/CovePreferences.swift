@@ -141,6 +141,7 @@ struct CovePreferences: Codable, Equatable {
         if !["automatic", "media", "calendar", "duo"].contains(expandedLayout) { expandedLayout = defaults.expandedLayout }
         if !["glass", "clear", "frosted"].contains(nowPlayingStyle) { nowPlayingStyle = defaults.nowPlayingStyle }
         if !["smooth", "fast", "instant"].contains(hudSpeed) { hudSpeed = defaults.hudSpeed }
+        if CoveHotKeyChoice(rawValue: toggleShortcut) == nil { toggleShortcut = defaults.toggleShortcut }
         if CoveHUDBarStyle(rawValue: hudProgressStyle) == nil { hudProgressStyle = defaults.hudProgressStyle }
         if !["system", "music", "spotify"].contains(preferredMusicApp) { preferredMusicApp = defaults.preferredMusicApp }
         if !["calendar", "fantastical", "notionCalendar"].contains(preferredCalendarApp) { preferredCalendarApp = defaults.preferredCalendarApp }
@@ -238,6 +239,7 @@ struct CovePreferences: Codable, Equatable {
     var excludeSubscribedCalendars: Bool = false
     var hideInFullscreen = false
     var hideMenuBarIcon = false
+    var toggleShortcut = "off"
     var hideFromScreenCapture = false
     // AppKit window presentation only. Device-local, outside cloud settings.
     var hideInMissionControl = false

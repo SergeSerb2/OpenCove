@@ -194,6 +194,12 @@ struct SettingsView: View {
                 Toggle("Reverse skip swipe direction", isOn: preference(\.reverseSkipSwipe))
                     .disabled(!store.preferences.swipeToSkip)
                 CoveSettingsNote("Swipe left on media for the next track and right for the previous one. Swipe at the top edge to change sections.")
+                Picker("Open and close shortcut", selection: preference(\.toggleShortcut)) {
+                    ForEach(CoveHotKeyChoice.allCases) { choice in Text(choice.title).tag(choice.rawValue) }
+                }
+                if case .unavailable = store.hotKey.status {
+                    CoveSettingsNote("Another app already uses this shortcut. Choose a different one.", symbol: "exclamationmark.triangle")
+                }
                 Toggle("Expand on hover", isOn: preference(\.expandOnHover))
                 Toggle("Don't expand on hover when idle", isOn: preference(\.disableIdleHoverExpansion))
                     .disabled(!store.preferences.expandOnHover)

@@ -48,6 +48,7 @@ final class CoveStore: ObservableObject {
     let settingsSync = CoveSettingsSyncController()
     private let betterDisplayFeedback = BetterDisplayFeedbackController()
     let sounds = CoveSoundPlayer()
+    let hotKey = CoveHotKey()
     private var hourlyChimeTask: Task<Void, Never>?
     var hourlyChimeScheduled: Bool { hourlyChimeTask != nil }
     private var betterDisplaySnapshotCurrent = false
@@ -605,6 +606,11 @@ final class CoveStore: ObservableObject {
         settingsSync.startIfEnabled(preferences)
         system.lowBatteryThreshold = preferences.lowBatteryWarningThreshold
         reconcileHourlyChime()
+        hotKey.onPress = { [weak self] in
+            guard let self, self.started, self.sessionActive, !self.system.state.isLocked else { return }
+            self.toggleExpanded()
+        }
+        hotKey.apply(CoveHotKeyChoice(rawValue: preferences.toggleShortcut) ?? .off)
     }
 
     /// Plays one chime at the start of each hour while the preference is on,
@@ -644,6 +650,7 @@ final class CoveStore: ObservableObject {
         activeReaderPolicy = nil
         media.stop(); system.stop(); activities.stop(); weather.stop()
         reconcileHourlyChime()
+        hotKey.unregister()
         waveform.setEnabled(false); travel.stop(); hardwareKeys.stop()
         reconcileMirroring()
         hud = nil
@@ -1114,6 +1121,7 @@ final class CoveStore: ObservableObject {
         if !preferences.syncSettingsWithiCloud { settingsSync.stop() }
         system.lowBatteryThreshold = preferences.lowBatteryWarningThreshold
         reconcileHourlyChime()
+        if started { hotKey.apply(CoveHotKeyChoice(rawValue: preferences.toggleShortcut) ?? .off) }
         if started {
             refreshSessionActivity()
             reconcileReaders()
