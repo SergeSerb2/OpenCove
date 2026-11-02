@@ -686,6 +686,32 @@ struct NotchView: View {
         .padding(.bottom, 12)
     }
 
+    /// One-click section switching, centered in the footer.
+    @ViewBuilder private var sectionStrip: some View {
+        let tabs = enabledTabs
+        if tabs.count >= 2 && store.hud == nil {
+            let accent = CoveNotchStyle.accent(store.preferences.accent)
+            HStack(spacing: 2) {
+                ForEach(tabs) { tab in
+                    let selected = store.visibleTab == tab
+                    Button { store.selectTab(tab) } label: {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 10, weight: selected ? .semibold : .regular))
+                            .frame(width: 24, height: 18)
+                            .foregroundStyle(selected ? accent : CoveNotchStyle.secondary)
+                            .background(selected ? accent.opacity(0.16) : .clear, in: Capsule())
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(tab.title)
+                    .accessibilityLabel(tab.title)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                }
+            }
+            .animation(.snappy(duration: 0.2), value: store.visibleTab)
+        }
+    }
+
     private var expanded: some View {
         let identity = expandedSectionPresentation.active
         return VStack(spacing: 0) {
@@ -726,7 +752,9 @@ struct NotchView: View {
                 } label: { Image(systemName: "ellipsis").frame(width: 24, height: 18) }
                 .menuStyle(.borderlessButton).fixedSize()
                 .accessibilityLabel("OpenCove sections and settings")
-            }.frame(height: 18)
+            }
+            .frame(height: 18)
+            .overlay { sectionStrip }
         }
         .padding(.horizontal, 20)
         .padding(.top, 16 + cutoutHeight)
