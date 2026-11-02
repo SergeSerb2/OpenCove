@@ -6,7 +6,7 @@
 
 An independent, MIT-licensed macOS notch app, written in SwiftUI and AppKit.
 
-**Early beta (`0.1.0-beta.2`).** [Download OpenCove for Apple Silicon and Intel](https://opencove.sergeserbinenko.com/download). The universal archive is Developer ID signed and notarized. Real app/API/CLI integration checks are provided in [the quality guide](docs/quality.md). This is not a stable release or a claim of complete hardware, macOS, or player compatibility. See [compatibility and open gaps](docs/compatibility.md).
+**Early beta (`0.1.0-beta.3`).** [Download OpenCove for Apple Silicon and Intel](https://opencove.sergeserbinenko.com/download). The universal archive is Developer ID signed and notarized. Real app/API/CLI integration checks are provided in [the quality guide](docs/quality.md). This is not a stable release or a claim of complete hardware, macOS, or player compatibility. See [compatibility and open gaps](docs/compatibility.md).
 
 ## What it does
 

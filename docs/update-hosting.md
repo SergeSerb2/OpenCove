@@ -12,8 +12,9 @@ The Sparkle feed URL is:
 https://opencove.sergeserbinenko.com/appcast.xml
 ```
 
-The host is deployed. The published `0.1.0-beta.2` universal ZIP, source ZIP,
-release metadata and checksums use immutable `/releases/0.1.0-beta.2/` paths.
+The host is deployed. The current `0.1.0-beta.3` release and the earlier
+`0.1.0-beta.2` release each have a universal ZIP, source ZIP, release metadata
+and checksums at immutable `/releases/<version>/` paths. The feed lists both.
 The home page and `/download` expose the verified app archive. See the
 [published verification record](updates.md#published-beta-verification--october-23-2026)
 for its hash and the tested Sparkle installation scope.
