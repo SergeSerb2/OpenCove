@@ -428,6 +428,10 @@ struct SettingsView: View {
 
     private var activitySettings: some View {
         Group {
+            Section("Panel sections") {
+                CoveSectionOrderList(store: store)
+            }
+
             Section("Activities") {
                 Toggle("Timer", isOn: preference(\.enableTimer))
                 Toggle("File tray", isOn: preference(\.enableFileTray))
@@ -1081,5 +1085,53 @@ struct CoveShortcutPinList: View {
             CoveSettingsNote("A shortcut runs only when you tap its tile. Shortcuts may ask for their own permissions.")
         }
         .onAppear { if controller.available.isEmpty { controller.refreshList() } }
+    }
+}
+
+/// Reorders the panel's sections. Disabled sections stay listed, dimmed, so
+/// their place is kept when they are turned on.
+@MainActor
+struct CoveSectionOrderList: View {
+    @ObservedObject var store: CoveStore
+
+    var body: some View {
+        let order = CoveTab.ordered(store.preferences.sectionOrder)
+        let enabled = Set(store.enabledTabs)
+        VStack(spacing: 2) {
+            ForEach(Array(order.enumerated()), id: \.element) { index, tab in
+                HStack(spacing: 10) {
+                    Image(systemName: tab.symbol).frame(width: 18).foregroundStyle(.secondary)
+                    Text(tab.title)
+                    if !enabled.contains(tab) {
+                        Text("Off").font(.caption).foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    Button { move(order, from: index, by: -1) } label: { Image(systemName: "chevron.up") }
+                        .disabled(index == 0)
+                        .accessibilityLabel("Move \(tab.title) up")
+                    Button { move(order, from: index, by: 1) } label: { Image(systemName: "chevron.down") }
+                        .disabled(index == order.count - 1)
+                        .accessibilityLabel("Move \(tab.title) down")
+                }
+                .buttonStyle(.borderless)
+                .opacity(enabled.contains(tab) ? 1 : 0.55)
+                .padding(.vertical, 2)
+            }
+            HStack {
+                CoveSettingsNote("This order sets the footer icons, swipes and the section menu.")
+                Spacer()
+                Button("Reset Order") { store.updatePreferences { $0.sectionOrder = "" } }
+                    .disabled(store.preferences.sectionOrder.isEmpty)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private func move(_ order: [CoveTab], from index: Int, by offset: Int) {
+        var next = order
+        let target = index + offset
+        guard next.indices.contains(target) else { return }
+        next.swapAt(index, target)
+        store.updatePreferences { $0.sectionOrder = CoveTab.normalizedOrder(next.map(\.rawValue).joined(separator: ",")) }
     }
 }

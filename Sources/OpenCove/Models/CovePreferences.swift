@@ -141,6 +141,7 @@ struct CovePreferences: Codable, Equatable {
         if !["automatic", "media", "calendar", "duo"].contains(expandedLayout) { expandedLayout = defaults.expandedLayout }
         if !["glass", "clear", "frosted"].contains(nowPlayingStyle) { nowPlayingStyle = defaults.nowPlayingStyle }
         if !["smooth", "fast", "instant"].contains(hudSpeed) { hudSpeed = defaults.hudSpeed }
+        sectionOrder = CoveTab.normalizedOrder(sectionOrder)
         pinnedShortcuts = Self.normalizedShortcutList(pinnedShortcuts.split(separator: "\n").map(String.init))
         if CoveHotKeyChoice(rawValue: toggleShortcut) == nil { toggleShortcut = defaults.toggleShortcut }
         if CoveHUDBarStyle(rawValue: hudProgressStyle) == nil { hudProgressStyle = defaults.hudProgressStyle }
@@ -212,6 +213,8 @@ struct CovePreferences: Codable, Equatable {
     var enableSystemStats = false
     var showWeatherSection = false
     var enableNotes = false
+    /// Section order as comma-separated names. Empty means the default order.
+    var sectionOrder = ""
     /// Pinned shortcut names, one per line, in tile order.
     var pinnedShortcuts = ""
     var enableFocus = true
@@ -342,6 +345,21 @@ enum CoveCompactActivity: String {
 enum CoveTab: String, Codable, CaseIterable, Identifiable {
     case media, calendar, weather, files, notes, timer, shortcuts, system
     var id: String { rawValue }
+
+    /// All sections in the saved order; unknown names are dropped and new sections join at the end.
+    static func ordered(_ saved: String) -> [CoveTab] {
+        var result: [CoveTab] = []
+        for name in saved.split(separator: ",") {
+            if let tab = CoveTab(rawValue: String(name)), !result.contains(tab) { result.append(tab) }
+        }
+        return result + allCases.filter { !result.contains($0) }
+    }
+
+    /// The canonical saved form: empty when the order matches the default.
+    static func normalizedOrder(_ saved: String) -> String {
+        let order = ordered(saved)
+        return order == allCases ? "" : order.map(\.rawValue).joined(separator: ",")
+    }
     var title: String { rawValue.capitalized }
     var symbol: String {
         switch self {

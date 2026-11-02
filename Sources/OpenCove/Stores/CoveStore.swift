@@ -65,7 +65,7 @@ final class CoveStore: ObservableObject {
     var onPreferencesChange: (() -> Void)?
 
     var enabledTabs: [CoveTab] {
-        CoveTab.allCases.filter { tab in
+        CoveTab.ordered(preferences.sectionOrder).filter { tab in
             switch tab {
             case .media: return preferences.enableMedia
             case .calendar: return preferences.enableCalendar
