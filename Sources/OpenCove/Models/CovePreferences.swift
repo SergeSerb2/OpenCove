@@ -133,6 +133,8 @@ struct CovePreferences: Codable, Equatable {
         animationSpeed = bounded(animationSpeed, 0.25...2, defaults.animationSpeed)
         pausedMediaDelay = bounded(pausedMediaDelay, 1...300, defaults.pausedMediaDelay)
         mediaPeekDuration = bounded(mediaPeekDuration, 1...10, defaults.mediaPeekDuration)
+        lowBatteryThreshold = (bounded(lowBatteryThreshold, 5...50, defaults.lowBatteryThreshold) / 5).rounded() * 5
+        soundVolume = bounded(soundVolume, 0.05...1, defaults.soundVolume)
         if !selectedDisplayUUID.isEmpty, UUID(uuidString: selectedDisplayUUID) == nil { selectedDisplayUUID = "" }
         if CoveWeatherStyle(rawValue: weatherStyle) == nil { weatherStyle = defaults.weatherStyle }
         if !["automatic", "media", "calendar", "timer"].contains(compactActivity) { compactActivity = defaults.compactActivity }
@@ -184,6 +186,16 @@ struct CovePreferences: Codable, Equatable {
     // Explicit native Settings consent on this Mac; outside CoveSyncedSettings.
     var enableBetterDisplayFeedback = false
     var enableBattery = true
+    var showBatteryPercentage = true
+    var warnOnLowBattery = true
+    var lowBatteryThreshold = 20.0
+    // Sounds use built-in macOS alert sounds. All are off by default.
+    var playSoundOnLowBattery = false
+    var playSoundOnLock = false
+    var playSoundOnUnlock = false
+    var playHourlyChime = false
+    var playSoundOnEventStart = false
+    var soundVolume = 0.6
     // Separate native, save-first consent on this Mac. Never synced or granted by widgets.
     var enableLowPowerModeAlerts = false
     var enableBluetooth = true
@@ -274,6 +286,11 @@ struct CovePreferences: Codable, Equatable {
 
     func showsLockWidget(_ widget: CoveLockWidget) -> Bool {
         lockWidgetsFollowActivities ? self[keyPath: widget.activityKey] : permitsExtraLockWidgetReader(widget)
+    }
+
+    /// The battery percentage that starts a low-battery warning, or nil when warnings are off.
+    var lowBatteryWarningThreshold: Int? {
+        enableBattery && warnOnLowBattery ? Int(lowBatteryThreshold) : nil
     }
 
     /// A saved waveform choice alone must not start system-audio capture.

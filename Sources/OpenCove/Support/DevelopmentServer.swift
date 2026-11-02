@@ -638,6 +638,13 @@ final class DevelopmentServer {
             guard let title = values["title"] as? String, title.count <= 200, let body = values["body"] as? String, body.count <= 2_000 else { throw ControlError.invalid("A short title and body are required.") }
             guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !body.isEmpty else { throw ControlError.invalid("Enter a notification title or message.") }
             try activity { store.activities.postNotification(title: title, body: body) }
+        case "sound.preview":
+            guard let name = values["event"] as? String, let event = CoveSoundEvent(rawValue: name) else {
+                throw ControlError.invalid("Choose a sound event: \(CoveSoundEvent.allCases.map(\.rawValue).joined(separator: ", ")).")
+            }
+            guard store.sounds.play(event, volume: store.preferences.soundVolume) else {
+                throw ControlError.failed("The sound could not start.")
+            }
         default: throw ControlError.invalid("Unknown command action.")
         }
     }
@@ -721,6 +728,9 @@ final class DevelopmentServer {
         result["compactDismissActivity"] = store.compactDismissActivity.map { $0.rawValue as Any } ?? NSNull()
         result["compactRestoreActivity"] = store.compactRestoreActivity.map { $0.rawValue as Any } ?? NSNull()
         result["mediaPeekVisible"] = store.showsMediaPeek
+        result["sounds"] = ["playCount": store.sounds.playCount,
+                            "lastEvent": store.sounds.lastPlayed?.event.rawValue ?? NSNull(),
+                            "hourlyChimeScheduled": store.hourlyChimeScheduled]
         result["mediaPeekRemaining"] = store.mediaPeekRemaining.map { $0 as Any } ?? NSNull()
         result["hudRemaining"] = store.hudRemaining.map { $0 as Any } ?? NSNull()
         result["playbackClock"] = ["receivedSamples": store.media.playback.receivedSamples,

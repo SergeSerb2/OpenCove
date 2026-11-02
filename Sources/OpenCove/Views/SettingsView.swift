@@ -438,6 +438,28 @@ struct SettingsView: View {
                 )
             }
 
+            Section("Battery") {
+                Toggle("Show battery percentage", isOn: preference(\.showBatteryPercentage))
+                    .disabled(!store.preferences.enableBattery)
+                Toggle("Warn on low battery", isOn: preference(\.warnOnLowBattery))
+                    .disabled(!store.preferences.enableBattery)
+                CovePreferenceSlider(title: "Low battery level", value: preference(\.lowBatteryThreshold),
+                                     range: 5...50, step: 5, format: "%.0f%%")
+                    .disabled(!store.preferences.enableBattery || !store.preferences.warnOnLowBattery)
+                CoveSettingsNote("A warning also appears at 5%. Warnings appear only on battery power.")
+            }
+
+            Section("Sounds") {
+                soundToggle("Lock", .lock)
+                soundToggle("Unlock", .unlock)
+                soundToggle("Low battery", .lowBattery)
+                soundToggle("Calendar event starts", .eventStart)
+                soundToggle("Hourly chime", .hourlyChime)
+                CovePreferenceSlider(title: "Sound volume", value: preference(\.soundVolume),
+                                     range: 0.05...1, step: 0.05, format: "%.0f%%", displayScale: 100)
+                CoveSettingsNote("Uses built-in macOS sounds and follows your output volume.")
+            }
+
             Section("Overlay timing") {
                 Picker("Category", selection: $selectedHUD) {
                     ForEach(HUDKind.allCases) { kind in Text(kind.title).tag(kind) }
@@ -669,6 +691,18 @@ struct SettingsView: View {
         return "Version \(version)"
     }
 
+    private func soundToggle(_ title: String, _ event: CoveSoundEvent) -> some View {
+        HStack {
+            Toggle(title, isOn: preference(event.writableKey))
+            Button {
+                store.sounds.play(event, volume: store.preferences.soundVolume)
+            } label: { Image(systemName: "play.circle") }
+            .buttonStyle(.borderless)
+            .help("Play the \(title.lowercased()) sound")
+            .accessibilityLabel("Play \(title) sound")
+        }
+    }
+
     private func preference<Value>(_ keyPath: WritableKeyPath<CovePreferences, Value>) -> Binding<Value> {
         Binding(
             get: { store.preferences[keyPath: keyPath] },
@@ -742,19 +776,20 @@ struct CovePreferenceSlider: View {
     let range: ClosedRange<Double>
     let step: Double
     let format: String
+    var displayScale: Double = 1
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(title)
                 Spacer()
-                Text(String(format: format, value))
+                Text(String(format: format, value * displayScale))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
             Slider(value: $value, in: range, step: step)
                 .accessibilityLabel(title)
-                .accessibilityValue(String(format: format, value))
+                .accessibilityValue(String(format: format, value * displayScale))
         }
         .padding(.vertical, 3)
     }

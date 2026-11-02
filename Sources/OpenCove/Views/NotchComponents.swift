@@ -437,6 +437,7 @@ struct CoveBatteryMark: View {
     var percent: Int
     var charging: Bool
     var showPercent = false
+    var warningLevel = 20
 
     private var symbol: String {
         if charging { return "battery.100percent.bolt" }
@@ -458,7 +459,7 @@ struct CoveBatteryMark: View {
             }
             Image(systemName: symbol).font(.system(size: 13))
         }
-        .foregroundStyle(charging ? Color.green : percent <= 20 ? Color.orange : CoveNotchStyle.secondary)
+        .foregroundStyle(charging ? Color.green : percent <= warningLevel ? Color.orange : CoveNotchStyle.secondary)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Battery \(percent) percent\(charging ? ", charging" : "")")
         .help("Battery: \(percent)%\(charging ? " · Charging" : "")")
@@ -487,7 +488,9 @@ struct CoveSystemIndicators: View {
                     .help(system.state.bluetoothDevices.joined(separator: ", "))
             }
             if preferences.enableBattery && system.state.hasBattery && system.state.batteryAvailable {
-                CoveBatteryMark(percent: system.state.batteryPercent, charging: system.state.isCharging)
+                CoveBatteryMark(percent: system.state.batteryPercent, charging: system.state.isCharging,
+                                showPercent: preferences.showBatteryPercentage,
+                                warningLevel: preferences.lowBatteryWarningThreshold ?? 20)
             }
         }
         .foregroundStyle(CoveNotchStyle.secondary)

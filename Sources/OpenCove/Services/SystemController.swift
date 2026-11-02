@@ -26,6 +26,12 @@ final class SystemController: NSObject, ObservableObject {
     @Published private(set) var isRequestingBluetoothAccess = false
     @Published private(set) var isRequestingFocusAccess = false
     var onHUD: ((CoveHUD) -> Void)?
+    /// Called for each lock or unlock notification that changes the known state.
+    var onLockTransition: ((Bool) -> Void)?
+    /// Called when the internal battery falls to a warning level while on battery power.
+    var onLowBattery: ((Int) -> Void)?
+    /// The configured warning level. A nil value turns low-battery warnings off.
+    var lowBatteryThreshold: Int? = 20
     var onLockChange: ((Bool) -> Void)?
     var onLowPowerModeInvalidation: (() -> Void)?
 
@@ -630,8 +636,10 @@ final class SystemController: NSObject, ObservableObject {
                 let title = new.isCharging ? "Charging" : (new.isOnACPower ? "Power connected" : "On battery")
                 emit(CoveHUD(kind: .battery, title: title, subtitle: "\(new.batteryPercent)%",
                              symbol: new.isOnACPower ? "battery.100percent.bolt" : "battery.100percent", value: Double(new.batteryPercent) / 100))
-            } else if !new.isOnACPower, [20, 10, 5].contains(where: { old.batteryPercent > $0 && new.batteryPercent <= $0 }) {
+            } else if !new.isOnACPower, let threshold = lowBatteryThreshold,
+                      Set([threshold, min(threshold, 5)]).contains(where: { old.batteryPercent > $0 && new.batteryPercent <= $0 }) {
                 emit(CoveHUD(kind: .battery, title: "Low battery", subtitle: "\(new.batteryPercent)% remaining", symbol: "battery.25percent", value: Double(new.batteryPercent) / 100))
+                onLowBattery?(new.batteryPercent)
             } else if old.batteryPercent < 100, new.batteryPercent == 100, new.isOnACPower {
                 emit(CoveHUD(kind: .battery, title: "Battery full", subtitle: "100%", symbol: "battery.100percent", value: 1))
             }
@@ -1417,7 +1425,10 @@ final class SystemController: NSObject, ObservableObject {
                     next.lockStateKnown = true
                     next.capabilityMessages["lock"] = nil
                     self.state = next
-                    if previous.isLocked != locked || !previous.lockStateKnown { self.onLockChange?(locked) }
+                    if previous.isLocked != locked || !previous.lockStateKnown {
+                        self.onLockChange?(locked)
+                        self.onLockTransition?(locked)
+                    }
                     self.emitChanges(from: previous, to: next, previousBluetooth: self.connectedBluetooth)
                     if !previous.lockStateKnown {
                         self.emit(CoveHUD(kind: .lock, title: locked ? "Locked" : "Unlocked", symbol: locked ? "lock.fill" : "lock.open.fill"))

@@ -47,6 +47,9 @@ final class CoveStore: ObservableObject {
     let notificationMirror = NotificationMirror()
     let settingsSync = CoveSettingsSyncController()
     private let betterDisplayFeedback = BetterDisplayFeedbackController()
+    let sounds = CoveSoundPlayer()
+    private var hourlyChimeTask: Task<Void, Never>?
+    var hourlyChimeScheduled: Bool { hourlyChimeTask != nil }
     private var betterDisplaySnapshotCurrent = false
     private var systemAwake = true
     private var screensAwake = true
@@ -461,7 +464,18 @@ final class CoveStore: ObservableObject {
         }
         activities.onHUD = { [weak self] value in
             guard let self, value.origin != "calendar" || self.preferences.enableCalendar else { return }
+            if value.origin == "calendar", self.sessionActive {
+                self.sounds.play(.eventStart, preferences: self.preferences)
+            }
             self.showHUD(value)
+        }
+        system.onLockTransition = { [weak self] locked in
+            guard let self, self.started, self.sessionActive else { return }
+            self.sounds.play(locked ? .lock : .unlock, preferences: self.preferences)
+        }
+        system.onLowBattery = { [weak self] _ in
+            guard let self, self.started, self.sessionActive, !self.system.state.isLocked else { return }
+            self.sounds.play(.lowBattery, preferences: self.preferences)
         }
         travel.onHUD = { [weak self] value in
             guard let self, self.preferences.enableCalendar else { return }
@@ -589,6 +603,29 @@ final class CoveStore: ObservableObject {
         appliedPreferences = preferences
         reconcileCompactMedia()
         settingsSync.startIfEnabled(preferences)
+        system.lowBatteryThreshold = preferences.lowBatteryWarningThreshold
+        reconcileHourlyChime()
+    }
+
+    /// Plays one chime at the start of each hour while the preference is on,
+    /// the session is active and the screen is unlocked.
+    private func reconcileHourlyChime() {
+        let wanted = started && preferences.playHourlyChime
+        if !wanted { hourlyChimeTask?.cancel(); hourlyChimeTask = nil; return }
+        guard hourlyChimeTask == nil else { return }
+        hourlyChimeTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                let calendar = Calendar.current
+                let now = Date()
+                guard let next = calendar.nextDate(after: now, matching: DateComponents(minute: 0, second: 0),
+                                                   matchingPolicy: .nextTime) else { return }
+                do { try await Task.sleep(for: .seconds(max(1, next.timeIntervalSince(now)))) } catch { return }
+                guard let self, !Task.isCancelled else { return }
+                // A late wake (for example after sleep) does not chime for a missed hour.
+                guard abs(Date().timeIntervalSince(next)) < 60, self.sessionActive, !self.system.state.isLocked else { continue }
+                self.sounds.play(.hourlyChime, preferences: self.preferences)
+            }
+        }
     }
 
     func stop() {
@@ -606,6 +643,7 @@ final class CoveStore: ObservableObject {
         hudDismiss?.cancel()
         activeReaderPolicy = nil
         media.stop(); system.stop(); activities.stop(); weather.stop()
+        reconcileHourlyChime()
         waveform.setEnabled(false); travel.stop(); hardwareKeys.stop()
         reconcileMirroring()
         hud = nil
@@ -1074,6 +1112,8 @@ final class CoveStore: ObservableObject {
         reconcileLowPowerModeAlerts()
         reconcileBetterDisplayFeedback()
         if !preferences.syncSettingsWithiCloud { settingsSync.stop() }
+        system.lowBatteryThreshold = preferences.lowBatteryWarningThreshold
+        reconcileHourlyChime()
         if started {
             refreshSessionActivity()
             reconcileReaders()
