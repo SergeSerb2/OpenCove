@@ -597,7 +597,22 @@ struct NotchView: View {
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Color.clear.frame(width: compactGap)
+                    // The clock refreshes every 30 seconds, which also picks up new weather readings.
+                    let weather = store.preferences.enableWeather ? store.weather.state : nil
+                    let showsWeather = weather.map { $0.available && !$0.isStale } ?? false
                     HStack(spacing: 5) {
+                        if showsWeather, let weather {
+                            HStack(spacing: 3) {
+                                Image(systemName: weather.symbol).symbolRenderingMode(.multicolor)
+                                Text(weather.temperature.formatted(.number.precision(.fractionLength(0))) + "°")
+                                    .monospacedDigit()
+                            }
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(CoveNotchStyle.secondary)
+                            .fixedSize()
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("\(weather.condition), \(weather.temperatureText)")
+                        }
                         Text(context.date, format: .dateTime.weekday(.abbreviated).day())
                             .font(.system(size: 9, weight: .medium))
                             .foregroundStyle(CoveNotchStyle.secondary)
@@ -606,7 +621,9 @@ struct NotchView: View {
                             Image(systemName: "moon.fill")
                                 .font(.system(size: 9))
                                 .foregroundStyle(.indigo)
-                        } else if store.preferences.enableBattery && system.state.hasBattery && system.state.batteryAvailable {
+                        } else if store.preferences.enableBattery && system.state.hasBattery && system.state.batteryAvailable
+                                    // With weather shown, a plugged-in battery that is not charging adds nothing.
+                                    && !(showsWeather && system.state.isOnACPower && !system.state.isCharging) {
                             // The compact clock has no room for a percentage beside the date.
                             CoveBatteryMark(percent: system.state.batteryPercent, charging: system.state.isCharging,
                                             warningLevel: store.preferences.lowBatteryWarningThreshold ?? 20,
