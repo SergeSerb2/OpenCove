@@ -248,6 +248,7 @@ struct CovePreferences: Codable, Equatable {
     var showMediaSourceBadge = true
     var showCompactProgress = false
     var showLockScreenVolume = false
+    var showCompactPlaybackIndicator = true
     var preferredMusicApp = "system"
     var preferredCalendarApp = "calendar"
     // Local layout only; never changes Calendar reader demand or cloud settings.

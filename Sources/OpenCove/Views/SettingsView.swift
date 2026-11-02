@@ -420,6 +420,8 @@ struct SettingsView: View {
                     Text("Decorative bars").tag("decorative")
                     Text("System audio levels").tag("live")
                 }
+                Toggle("Show indicator in compact view", isOn: preference(\.showCompactPlaybackIndicator))
+                    .disabled(!store.preferences.showPlaybackIndicator)
                 if store.preferences.usesLiveWaveform {
                     Text(waveform.status).font(.caption).foregroundStyle(.secondary)
                     Button("Allow System Audio Levels") { store.requestWaveformAccess() }

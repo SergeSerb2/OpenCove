@@ -537,7 +537,7 @@ struct NotchView: View {
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.indigo.opacity(0.9))
                 }
-                if store.preferences.showPlaybackIndicator {
+                if store.preferences.showPlaybackIndicator && store.preferences.showCompactPlaybackIndicator {
                     if store.preferences.showLiveWaveform {
                         LiveWaveformView(controller: waveform, isPlaying: media.state.isPlaying,
                                          color: mediaAccent(artwork: artwork))
