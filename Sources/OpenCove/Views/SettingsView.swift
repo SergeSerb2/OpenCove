@@ -166,6 +166,10 @@ struct SettingsView: View {
                     .help("Applies only to this Mac. Changing this clears independent widget choices.")
                 Toggle("Show event details while locked", isOn: preference(\.showLockScreenPrivateContent))
                     .disabled(!store.preferences.showOnLockScreen)
+                CovePreferenceSlider(title: "Widget position", value: preference(\.lockWidgetPosition),
+                                     range: -1...1, step: 0.1, format: "%+.0f", displayScale: 10)
+                    .disabled(!store.preferences.showOnLockScreen)
+                    .help("Moves the widgets up or down, always clear of the clock and the password field.")
                 LabeledContent("Keep Awake") {
                     Text(keepAwakeStatus.projection.handleState == "active" ? keepAwakeStatus.projection.message : "Start from the lock screen")
                         .foregroundStyle(.secondary)

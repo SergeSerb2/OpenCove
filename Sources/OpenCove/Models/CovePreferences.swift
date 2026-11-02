@@ -136,6 +136,7 @@ struct CovePreferences: Codable, Equatable {
         lowBatteryThreshold = (bounded(lowBatteryThreshold, 5...50, defaults.lowBatteryThreshold) / 5).rounded() * 5
         soundVolume = bounded(soundVolume, 0.05...1, defaults.soundVolume)
         breakMinutes = bounded(breakMinutes, 1...30, defaults.breakMinutes).rounded()
+        lockWidgetPosition = (bounded(lockWidgetPosition, -1...1, 0) * 10).rounded() / 10
         if !selectedDisplayUUID.isEmpty, UUID(uuidString: selectedDisplayUUID) == nil { selectedDisplayUUID = "" }
         if CoveWeatherStyle(rawValue: weatherStyle) == nil { weatherStyle = defaults.weatherStyle }
         if !["automatic", "media", "calendar", "timer"].contains(compactActivity) { compactActivity = defaults.compactActivity }
@@ -249,6 +250,8 @@ struct CovePreferences: Codable, Equatable {
     var showCompactProgress = false
     var showLockScreenVolume = false
     var showCompactPlaybackIndicator = true
+    /// -1 (lower) to 1 (higher); moves lock widgets within their safe band.
+    var lockWidgetPosition = 0.0
     var preferredMusicApp = "system"
     var preferredCalendarApp = "calendar"
     // Local layout only; never changes Calendar reader demand or cloud settings.
