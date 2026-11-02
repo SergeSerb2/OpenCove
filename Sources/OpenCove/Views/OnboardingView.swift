@@ -134,7 +134,7 @@ struct OnboardingView: View {
             )
             CoveOnboardingFeature(
                 symbol: "hand.draw", title: "Hover, click or swipe",
-                detail: "Swipe down on the panel to open it and up to close it. Swipe sideways to change sections. Press Esc to close."
+                detail: "Swipe down on the panel to open it and up to close it. Swipe sideways or press ← → to change sections. Space plays or pauses. Esc closes."
             )
             Divider()
             CoveSettingsNote("An independent app under the MIT license. Not affiliated with or endorsed by Alcove.")

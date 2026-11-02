@@ -1116,6 +1116,19 @@ final class NotchPanelController: NSObject {
             surface.panel.resignKey()
             return true
         }
+        // Arrow keys switch sections and Space plays or pauses media, unless a
+        // text field or other editor has focus, or a modifier key is held.
+        if event.type == .keyDown, store.isExpanded,
+           event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+           !(surface.panel.firstResponder is NSText) {
+            switch event.keyCode {
+            case 123: changeTab(forward: false); return true   // left arrow
+            case 124: changeTab(forward: true); return true    // right arrow
+            case 49 where store.visibleTab == .media && canPerformStatusMediaAction(.playPause):
+                performStatusMediaAction(.playPause); return true  // space
+            default: break
+            }
+        }
         if event.type == .scrollWheel, store.preferences.swipeToSkip || surface.mediaScroll.ownsMediaGesture,
            let handled = handleMediaScroll(event, surface: surface) { return handled }
         // Controls keep scrolling even when their bounds overlap the expanded
