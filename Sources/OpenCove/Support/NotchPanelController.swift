@@ -1240,6 +1240,21 @@ final class NotchPanelController: NSObject {
             }
         }
         menu.addItem(.separator())
+        let awake = menu.addItem(withTitle: store.stayAwake.isActive ? "Stay Awake (\(store.stayAwake.statusText.replacingOccurrences(of: "On ", with: "")))" : "Stay Awake",
+                                 action: nil, keyEquivalent: "")
+        let awakeMenu = NSMenu(title: "Stay Awake")
+        for choice in CoveStayAwake.choices {
+            let item = awakeMenu.addItem(withTitle: choice.title, action: #selector(stayAwakeFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = choice.minutes ?? 0
+        }
+        if store.stayAwake.isActive {
+            awakeMenu.addItem(.separator())
+            let off = awakeMenu.addItem(withTitle: "Turn Off", action: #selector(stayAwakeFromMenu(_:)), keyEquivalent: "")
+            off.target = self
+            off.tag = -1
+        }
+        awake.submenu = awakeMenu
         let settings = menu.addItem(withTitle: "Settings…", action: #selector(settingsFromMenu), keyEquivalent: "")
         settings.target = self
         // With the menu bar icon hidden, this is the quickest way to quit.
@@ -1286,6 +1301,11 @@ final class NotchPanelController: NSObject {
         guard mayHandleMenuAction else { return }
         store.toggleExpanded()
     }
+    @objc private func stayAwakeFromMenu(_ sender: NSMenuItem) {
+        guard mayHandleMenuAction else { return }
+        if sender.tag < 0 { store.stayAwake.stop() } else { store.stayAwake.start(minutes: sender.tag == 0 ? nil : sender.tag) }
+    }
+
     @objc private func mediaFromMenu(_ sender: NSMenuItem) {
         guard mayHandleMenuAction else { return }
         switch sender.representedObject as? String {
