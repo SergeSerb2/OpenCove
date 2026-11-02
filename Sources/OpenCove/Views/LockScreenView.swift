@@ -221,7 +221,10 @@ private struct CoveLockSystemSection: View {
     private var batteryText: String {
         guard controller.state.batteryAvailable else { return "Battery unavailable" }
         guard controller.state.hasBattery else { return controller.state.isOnACPower ? "AC power" : "No battery" }
-        return "\(min(100, max(0, controller.state.batteryPercent)))%\(controller.state.isCharging ? " charging" : "")"
+        let percent = "\(min(100, max(0, controller.state.batteryPercent)))%"
+        guard controller.state.isCharging else { return percent }
+        guard let minutes = controller.state.batteryTimeToFullMinutes else { return percent + " charging" }
+        return percent + " · full in " + (minutes >= 60 ? "\(minutes / 60) h \(minutes % 60) min" : "\(minutes) min")
     }
 
     private var batterySymbol: String {

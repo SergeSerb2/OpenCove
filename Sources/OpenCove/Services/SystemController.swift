@@ -185,6 +185,7 @@ final class SystemController: NSObject, ObservableObject {
         generation += 1
         configureLowPowerModeAlerts(enabled: false, admitted: false)
         state.batteryTimeToEmptyMinutes = nil
+        state.batteryTimeToFullMinutes = nil
         refreshWork?.cancel()
         refreshWork = nil
         pendingParts = []
@@ -1077,6 +1078,7 @@ final class SystemController: NSObject, ObservableObject {
         defer { finishReadEvidence("battery", since: start) }
         // Never retain an estimate across an unknown, unavailable or AC snapshot.
         next.batteryTimeToEmptyMinutes = nil
+        next.batteryTimeToFullMinutes = nil
         guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let list = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] else {
             next.batteryAvailable = false
@@ -1117,6 +1119,12 @@ final class SystemController: NSObject, ObservableObject {
                remaining.doubleValue.isFinite,
                let minutes = Int32(exactly: remaining.doubleValue), minutes >= 0 {
                 next.batteryTimeToEmptyMinutes = Int(minutes)
+            }
+            // Valid only while charging; -1 means macOS is still calculating.
+            if next.batteryAvailable, next.isCharging,
+               let full = description[kIOPSTimeToFullChargeKey] as? NSNumber,
+               full.doubleValue.isFinite, let minutes = Int32(exactly: full.doubleValue), minutes > 0 {
+                next.batteryTimeToFullMinutes = Int(minutes)
             }
             break
         }

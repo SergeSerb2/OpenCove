@@ -502,6 +502,14 @@ struct CoveBatteryMark: View {
     var charging: Bool
     var showPercent = false
     var warningLevel = 20
+    var minutesToFull: Int? = nil
+
+    private var detail: String {
+        guard charging else { return "Battery: \(percent)%" }
+        guard let minutesToFull else { return "Battery: \(percent)% · Charging" }
+        let time = minutesToFull >= 60 ? "\(minutesToFull / 60) h \(minutesToFull % 60) min" : "\(minutesToFull) min"
+        return "Battery: \(percent)% · \(time) until full"
+    }
 
     private var symbol: String {
         if charging { return "battery.100percent.bolt" }
@@ -526,7 +534,7 @@ struct CoveBatteryMark: View {
         .foregroundStyle(charging ? Color.green : percent <= warningLevel ? Color.orange : CoveNotchStyle.secondary)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Battery \(percent) percent\(charging ? ", charging" : "")")
-        .help("Battery: \(percent)%\(charging ? " · Charging" : "")")
+        .help(detail)
     }
 }
 
@@ -556,7 +564,8 @@ struct CoveSystemIndicators: View {
             if preferences.enableBattery && system.state.hasBattery && system.state.batteryAvailable {
                 CoveBatteryMark(percent: system.state.batteryPercent, charging: system.state.isCharging,
                                 showPercent: preferences.showBatteryPercentage,
-                                warningLevel: preferences.lowBatteryWarningThreshold ?? 20)
+                                warningLevel: preferences.lowBatteryWarningThreshold ?? 20,
+                                minutesToFull: system.state.batteryTimeToFullMinutes)
             }
         }
         .foregroundStyle(CoveNotchStyle.secondary)
