@@ -334,6 +334,61 @@ struct CoveArtwork: View {
     }
 }
 
+enum CoveHUDBarStyle: String, CaseIterable, Identifiable {
+    case accent, white, segmented, gradient
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+/// The level bar of a compact overlay. Value changes animate unless motion is reduced.
+struct CoveHUDBar: View {
+    let fraction: Double
+    let accent: Color
+    var style: CoveHUDBarStyle = .accent
+    var reduceMotion = false
+    var height: Double = 4
+
+    private static let segments = 16
+
+    var body: some View {
+        let value = CoveNotchStyle.fraction(fraction)
+        Group {
+            if style == .segmented {
+                HStack(spacing: 2) {
+                    ForEach(0..<Self.segments, id: \.self) { index in
+                        let lit = Double(index) < (value * Double(Self.segments)).rounded()
+                        RoundedRectangle(cornerRadius: 1.2)
+                            .fill(lit ? AnyShapeStyle(accent) : AnyShapeStyle(.white.opacity(0.14)))
+                    }
+                }
+                .frame(height: height + 2)
+            } else {
+                GeometryReader { geometry in
+                    Capsule().fill(.white.opacity(0.14))
+                        .overlay(alignment: .leading) {
+                            Capsule().fill(fill)
+                                .frame(width: max(height, geometry.size.width * value))
+                                .opacity(value > 0 ? 1 : 0)
+                                .shadow(color: style == .gradient ? accent.opacity(0.55) : .clear, radius: 3)
+                        }
+                }
+                .frame(height: height)
+            }
+        }
+        .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: value)
+        .accessibilityHidden(true)
+    }
+
+    private var fill: AnyShapeStyle {
+        switch style {
+        case .accent, .segmented: return AnyShapeStyle(accent)
+        case .white: return AnyShapeStyle(Color.white.opacity(0.92))
+        case .gradient: return AnyShapeStyle(LinearGradient(colors: [accent.opacity(0.55), accent, .white.opacity(0.9)],
+                                                              startPoint: .leading, endPoint: .trailing))
+        }
+    }
+}
+
 struct CoveCompactHUD: View {
     let hud: CoveHUD
     let accent: Color
@@ -341,21 +396,39 @@ struct CoveCompactHUD: View {
     var showLabels = true
     var showPercentage = true
     var brightnessHUDGlow = false
+    var barStyle: CoveHUDBarStyle = .accent
+    var reduceMotion = false
 
     private var percentage: String? {
         guard showPercentage, let value = hud.value, value.isFinite else { return nil }
         return "\(Int((CoveNotchStyle.fraction(value) * 100).rounded()))%"
     }
 
+    /// Volume and brightness symbols fill with the level, like the system controls.
+    private var symbolImage: Image {
+        if let value = hud.value, value.isFinite {
+            let level = CoveNotchStyle.fraction(value)
+            if hud.kind == .volume, hud.symbol == "speaker.wave.2.fill", level > 0 {
+                return Image(systemName: "speaker.wave.3.fill", variableValue: level)
+            }
+            if hud.kind == .brightness, hud.symbol == "sun.max.fill" {
+                return Image(systemName: level < 0.5 ? "sun.min.fill" : "sun.max.fill")
+            }
+        }
+        return Image(systemName: hud.symbol)
+    }
+
     @ViewBuilder private var hudSymbol: some View {
         if hud.kind == .brightness && brightnessHUDGlow {
             // OpenCove's static symbol glow stays inside the existing surface clip.
-            Image(systemName: hud.symbol)
+            symbolImage
                 .shadow(color: accent.opacity(0.65), radius: 2, x: 0, y: 0)
         } else {
-            Image(systemName: hud.symbol)
+            symbolImage
         }
     }
+
+    private var barAccent: Color { hud.kind == .battery ? .green : accent }
 
     var body: some View {
         if centerGap > 0 {
@@ -374,9 +447,8 @@ struct CoveCompactHUD: View {
                             Text(percentage)
                                 .font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit()
                         }
-                        ProgressView(value: CoveNotchStyle.fraction(value)).tint(accent)
-                            .progressViewStyle(.linear).frame(width: 70)
-                            .accessibilityHidden(true)
+                        CoveHUDBar(fraction: value, accent: barAccent, style: barStyle, reduceMotion: reduceMotion, height: 3)
+                            .frame(width: 70)
                     } else if showLabels {
                         Text(hud.subtitle.isEmpty ? hud.title : hud.subtitle)
                             .font(.system(size: 10, weight: .medium))
@@ -412,15 +484,7 @@ struct CoveCompactHUD: View {
                     }
                 }
                 if let value = hud.value {
-                    GeometryReader { geometry in
-                        Capsule().fill(.white.opacity(0.14))
-                            .overlay(alignment: .leading) {
-                                Capsule().fill(accent)
-                                    .frame(width: geometry.size.width * CoveNotchStyle.fraction(value))
-                            }
-                    }
-                    .frame(height: 3)
-                    .accessibilityHidden(true)
+                    CoveHUDBar(fraction: value, accent: barAccent, style: barStyle, reduceMotion: reduceMotion, height: 3)
                 } else if showLabels && !hud.subtitle.isEmpty {
                     Text(hud.subtitle)
                         .font(.system(size: 10))

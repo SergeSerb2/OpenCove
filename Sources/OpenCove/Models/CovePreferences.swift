@@ -141,6 +141,7 @@ struct CovePreferences: Codable, Equatable {
         if !["automatic", "media", "calendar", "duo"].contains(expandedLayout) { expandedLayout = defaults.expandedLayout }
         if !["glass", "clear", "frosted"].contains(nowPlayingStyle) { nowPlayingStyle = defaults.nowPlayingStyle }
         if !["smooth", "fast", "instant"].contains(hudSpeed) { hudSpeed = defaults.hudSpeed }
+        if CoveHUDBarStyle(rawValue: hudProgressStyle) == nil { hudProgressStyle = defaults.hudProgressStyle }
         if !["system", "music", "spotify"].contains(preferredMusicApp) { preferredMusicApp = defaults.preferredMusicApp }
         if !["calendar", "fantastical", "notionCalendar"].contains(preferredCalendarApp) { preferredCalendarApp = defaults.preferredCalendarApp }
         if !["mint", "blue", "purple", "pink", "orange"].contains(accent) { accent = defaults.accent }
@@ -217,6 +218,7 @@ struct CovePreferences: Codable, Equatable {
     var showHUDLabels = true
     var showHUDPercentage = true
     var brightnessHUDGlow = false
+    var hudProgressStyle = "accent"
     var showPlaybackIndicator = true
     var showLiveWaveform = false
     var musicColorAccent = true

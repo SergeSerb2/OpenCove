@@ -423,6 +423,9 @@ struct SettingsView: View {
                 Button("Preview BetterDisplay feedback") { hudPreviewMessage = store.previewBetterDisplayFeedback() }
                     .disabled(store.isExpanded || !store.preferences.enableBetterDisplayFeedback)
                 CoveSettingsNote("This separate preview uses only the last eligible cached report. A 5-second receipt limit is an OpenCove policy, not a physical freshness guarantee. Missing data stays unavailable. The ordinary overlay preview keeps its native source.")
+                Picker("Level bar style", selection: preference(\.hudProgressStyle)) {
+                    ForEach(CoveHUDBarStyle.allCases) { style in Text(style.title).tag(style.rawValue) }
+                }
                 Toggle("Brightness symbol glow", isOn: preference(\.brightnessHUDGlow))
                     .disabled(!store.preferences.enableBrightnessHUD)
                     .help("Add a soft glow to the sun symbol on display brightness overlays.")

@@ -501,7 +501,9 @@ struct NotchView: View {
         } else if case .hud(let kind) = mode, let hud = store.hud, hud.kind == kind {
             CoveCompactHUD(hud: hud, accent: CoveNotchStyle.accent(store.preferences.accent), centerGap: compactGap,
                            showLabels: store.preferences.showHUDLabels, showPercentage: store.preferences.showHUDPercentage,
-                           brightnessHUDGlow: store.preferences.brightnessHUDGlow)
+                           brightnessHUDGlow: store.preferences.brightnessHUDGlow,
+                           barStyle: CoveHUDBarStyle(rawValue: store.preferences.hudProgressStyle) ?? .accent,
+                           reduceMotion: store.preferences.reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
                 .padding(.horizontal, 18)
         } else if mode == .peek && store.preferences.enableMedia && media.state.available {
             mediaPeek(artwork: artwork)
