@@ -923,7 +923,11 @@ final class DevelopmentServer {
         }
         // An unordered window supplies native AppKit rendering context. It never
         // becomes visible/key, reads the desktop, or receives user input.
-        let hosting = NSHostingView(rootView: content.frame(width: size.width, height: size.height)
+        // Settings and onboarding are ordinary windows; draw their window background,
+        // which an offscreen borderless window otherwise leaves blank.
+        let windowed = surface.hasPrefix("settings") || surface == "onboarding"
+        let backed = windowed ? AnyView(content.background(Color(nsColor: .windowBackgroundColor))) : content
+        let hosting = NSHostingView(rootView: backed.frame(width: size.width, height: size.height)
             .transaction { transaction in
                 transaction.disablesAnimations = true
                 transaction.animation = nil
