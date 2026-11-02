@@ -145,17 +145,20 @@ struct SettingsView: View {
             }
 
             Section("Lock-screen widgets") {
-                Text("Keep Awake").font(.headline)
-                CoveSettingsNote(keepAwakeStatus.projection.message)
-                if let outcome = keepAwakeStatus.projection.lastOutcome {
-                    LabeledContent("Last Keep Awake outcome", value: outcome.resultCode)
-                }
-                CoveSettingsNote("Keeps the display awake for 1–120 minutes (5 by default). Start it from the lock-screen card. Closing the lid or choosing Sleep still works.")
                 Toggle("Show widgets on the lock screen", isOn: preference(\.showOnLockScreen))
                 Toggle("Use the same widgets as activities", isOn: preference(\.lockWidgetsFollowActivities))
-                CoveSettingsNote("These choices apply only to this Mac. Changing mode clears independent choices.")
+                    .help("Applies only to this Mac. Changing this clears independent widget choices.")
                 Toggle("Show event details while locked", isOn: preference(\.showLockScreenPrivateContent))
                     .disabled(!store.preferences.showOnLockScreen)
+                LabeledContent("Keep Awake") {
+                    Text(keepAwakeStatus.projection.handleState == "active" ? keepAwakeStatus.projection.message : "Start from the lock screen")
+                        .foregroundStyle(.secondary)
+                }
+                .help("Keeps the display awake for 1–120 minutes while locked. Closing the lid or choosing Sleep still works.")
+                if let outcome = keepAwakeStatus.projection.lastOutcome,
+                   !["PREPARED", "STARTED", "REPLACED", "RETIRED", "STOPPED", "IDLE"].contains(outcome.resultCode) {
+                    LabeledContent("Last Keep Awake result", value: outcome.resultCode)
+                }
                 CoveSettingsNote("Widgets appear while your Mac is locked and the display is on. macOS can limit what shows.")
                 if !store.preferences.enablePrivateAPIs {
                     CoveSettingsNote("Turn on private macOS integrations in Permissions to use lock-screen widgets.")
