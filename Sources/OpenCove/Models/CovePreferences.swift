@@ -201,6 +201,7 @@ struct CovePreferences: Codable, Equatable {
     var playSoundOnLock = false
     var playSoundOnUnlock = false
     var playHourlyChime = false
+    var hourlyChimeDaytimeOnly = true
     var playSoundOnEventStart = false
     var playSoundOnPowerConnected = false
     var playSoundOnTimerFinished = true

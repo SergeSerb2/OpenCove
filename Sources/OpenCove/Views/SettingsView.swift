@@ -542,6 +542,9 @@ struct SettingsView: View {
                 soundToggle("Low battery", .lowBattery)
                 soundToggle("Calendar event starts", .eventStart)
                 soundToggle("Hourly chime", .hourlyChime)
+                if store.preferences.playHourlyChime {
+                    Toggle("Only between 8 AM and 10 PM", isOn: preference(\.hourlyChimeDaytimeOnly))
+                }
                 CovePreferenceSlider(title: "Sound volume", value: preference(\.soundVolume),
                                      range: 0.05...1, step: 0.05, format: "%.0f%%", displayScale: 100)
                 CoveSettingsNote("Uses built-in macOS sounds and follows your output volume.")

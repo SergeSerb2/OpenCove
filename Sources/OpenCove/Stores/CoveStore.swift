@@ -668,6 +668,8 @@ final class CoveStore: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 // A late wake (for example after sleep) does not chime for a missed hour.
                 guard abs(Date().timeIntervalSince(next)) < 60, self.sessionActive, !self.system.state.isLocked else { continue }
+                let hour = Calendar.current.component(.hour, from: Date())
+                guard !self.preferences.hourlyChimeDaytimeOnly || (8..<22).contains(hour) else { continue }
                 self.sounds.play(.hourlyChime, preferences: self.preferences)
             }
         }
