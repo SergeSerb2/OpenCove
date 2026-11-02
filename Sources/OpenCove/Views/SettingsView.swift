@@ -497,13 +497,13 @@ struct SettingsView: View {
 
             Section("Connected devices") {
                 AudioOutputPicker(system: system)
-                LabeledContent("Bluetooth access", value: system.state.bluetoothAuthorization)
+                LabeledContent("Bluetooth access", value: Self.readableAccess(system.state.bluetoothAuthorization))
                 Button("Allow Bluetooth Access") {
                     guard store.preferences.enableBluetooth else { return }
                     system.requestBluetoothAccess()
                 }
                     .disabled(!store.preferences.enableBluetooth || system.isRequestingBluetoothAccess)
-                LabeledContent("Focus access", value: system.state.focusAuthorization)
+                LabeledContent("Focus access", value: Self.readableAccess(system.state.focusAuthorization))
                 Button("Allow Focus Status") {
                     guard store.preferences.enableFocus else { return }
                     system.requestFocusAccess()
@@ -774,6 +774,19 @@ struct SettingsView: View {
             return "Version \(version) (\(build))"
         }
         return "Version \(version)"
+    }
+
+    /// Turns internal access states such as "notDetermined" into plain words.
+    static func readableAccess(_ value: String) -> String {
+        switch value {
+        case "notDetermined": return "Not requested"
+        case "authorized": return "Allowed"
+        case "denied": return "Denied"
+        case "restricted": return "Restricted"
+        case "disabled": return "Off"
+        case "unavailable": return "Unavailable"
+        default: return value.prefix(1).uppercased() + value.dropFirst()
+        }
     }
 
     private func soundToggle(_ title: String, _ event: CoveSoundEvent) -> some View {
