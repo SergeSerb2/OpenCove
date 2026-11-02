@@ -916,7 +916,7 @@ final class DevelopmentServer {
             size = CGSize(width: 760, height: 550)
             content = AnyView(SettingsView(store: store, initialPage: .appearance))
         case "settings-media":
-            size = CGSize(width: 760, height: 550)
+            size = CGSize(width: 760, height: 1500)
             content = AnyView(SettingsView(store: store, initialPage: .media))
         case "settings-activities":
             size = CGSize(width: 760, height: 900)
