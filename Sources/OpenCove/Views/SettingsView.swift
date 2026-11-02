@@ -267,15 +267,26 @@ struct SettingsView: View {
     private var appearanceSettings: some View {
         Group {
             Section("Style") {
-                Picker("Accent color", selection: preference(\.accent)) {
-                    ForEach(CovePreferenceAccent.allCases) { accent in
-                        Text(accent.rawValue.capitalized).tag(accent.rawValue)
-                    }
-                    if !CovePreferenceAccent.allCases.contains(where: { $0.rawValue == store.preferences.accent }) {
-                        Text("Custom (\(store.preferences.accent))").tag(store.preferences.accent)
+                CoveAppearancePreview(preferences: store.preferences)
+                    .listRowInsets(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10))
+                LabeledContent("Accent color") {
+                    HStack(spacing: 10) {
+                        ForEach(CovePreferenceAccent.allCases) { accent in
+                            let selected = store.preferences.accent == accent.rawValue
+                            Button { store.updatePreferences { $0.accent = accent.rawValue } } label: {
+                                Circle().fill(CovePreferenceAccent.color(for: accent.rawValue))
+                                    .frame(width: 18, height: 18)
+                                    .overlay(Circle().strokeBorder(.white.opacity(selected ? 0.9 : 0), lineWidth: 2))
+                                    .padding(2)
+                                    .overlay(Circle().strokeBorder(CovePreferenceAccent.color(for: accent.rawValue).opacity(selected ? 0.8 : 0), lineWidth: 1.5))
+                            }
+                            .buttonStyle(.plain)
+                            .help(accent.rawValue.capitalized)
+                            .accessibilityLabel(accent.rawValue.capitalized)
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                        }
                     }
                 }
-                CoveSettingsNote("OpenCove follows your Mac’s light or dark appearance.")
             }
 
             Section("Panel shape") {
@@ -941,5 +952,52 @@ final class CovePermissionAccess: ObservableObject {
     static func openSettings(_ address: String) {
         guard let url = URL(string: address) else { return }
         NSWorkspace.shared.open(url)
+    }
+}
+
+/// A true-size sketch of the compact panel under a menu bar. It follows the
+/// accent, outline, size and corner choices as you change them.
+struct CoveAppearancePreview: View {
+    let preferences: CovePreferences
+
+    var body: some View {
+        let accent = CovePreferenceAccent.color(for: preferences.accent)
+        let width = preferences.notchWidth + 70
+        let height = preferences.notchHeight
+        let radius = min(preferences.cornerRadius, height / 2)
+        ZStack(alignment: .top) {
+            LinearGradient(colors: [Color(red: 0.16, green: 0.2, blue: 0.42), Color(red: 0.45, green: 0.27, blue: 0.5),
+                                    Color(red: 0.86, green: 0.5, blue: 0.42)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            Rectangle().fill(.black.opacity(0.25)).frame(height: 22)
+                .frame(maxHeight: .infinity, alignment: .top)
+            UnevenRoundedRectangle(bottomLeadingRadius: radius, bottomTrailingRadius: radius, style: .continuous)
+                .fill(.black)
+                .overlay {
+                    if preferences.showContrastOutline {
+                        UnevenRoundedRectangle(bottomLeadingRadius: radius, bottomTrailingRadius: radius, style: .continuous)
+                            .strokeBorder(preferences.useAccentOutline ? accent : .white.opacity(0.35), lineWidth: 1)
+                    }
+                }
+                .overlay {
+                    HStack {
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(LinearGradient(colors: [accent, accent.opacity(0.4)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .frame(width: min(23, height - 9), height: min(23, height - 9))
+                        Spacer()
+                        HStack(spacing: 2) {
+                            ForEach([0.5, 0.9, 0.65, 1.0, 0.4], id: \.self) { level in
+                                Capsule().fill(accent).frame(width: 2.5, height: max(3, (height - 16) * level))
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                }
+                .frame(width: width, height: height)
+        }
+        .frame(height: max(96, height + 40))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Panel preview")
     }
 }
