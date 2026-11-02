@@ -217,7 +217,8 @@ struct CovePreferences: Codable, Equatable {
     var enableShortcuts = false
     var enableSystemStats = false
     var showWeatherSection = false
-    var temperatureUnit = "celsius"
+    // Follows the region until chosen: Fahrenheit for the US measurement system.
+    var temperatureUnit = Locale.current.measurementSystem == .us ? "fahrenheit" : "celsius"
     var enableNotes = false
     var enableClipboard = false
     /// Section order as comma-separated names. Empty means the default order.
