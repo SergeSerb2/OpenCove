@@ -53,6 +53,8 @@ final class CoveStore: ObservableObject {
     let systemStats = SystemStatsController()
     let notes = CoveNotesStore()
     private var hourlyChimeTask: Task<Void, Never>?
+    /// The identity of a break timer that OpenCove started, so a finished break does not start another.
+    private(set) var breakTimerIdentifier: UUID?
     var hourlyChimeScheduled: Bool { hourlyChimeTask != nil }
     private var betterDisplaySnapshotCurrent = false
     private var systemAwake = true
@@ -491,6 +493,14 @@ final class CoveStore: ObservableObject {
         activities.onTimerFinished = { [weak self] in
             guard let self, self.started, self.sessionActive, self.preferences.enableTimer else { return }
             self.sounds.play(.timerFinished, preferences: self.preferences)
+            let finishedBreak = self.breakTimerIdentifier == self.activities.timerActivityIdentifier
+            self.breakTimerIdentifier = nil
+            guard self.preferences.startBreakAfterTimer, !finishedBreak else { return }
+            let minutes = Int(self.preferences.breakMinutes)
+            self.activities.startTimer(seconds: Double(minutes) * 60)
+            self.breakTimerIdentifier = self.activities.timerActivityIdentifier
+            self.showHUD(CoveHUD(kind: .notification, title: "Break time", subtitle: "\(minutes)-minute break started",
+                                 symbol: "cup.and.saucer.fill", origin: "timerBreak"))
         }
         system.onPowerConnected = { [weak self] in
             guard let self, self.started, self.sessionActive, !self.system.state.isLocked else { return }

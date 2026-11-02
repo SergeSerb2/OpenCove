@@ -135,6 +135,7 @@ struct CovePreferences: Codable, Equatable {
         mediaPeekDuration = bounded(mediaPeekDuration, 1...10, defaults.mediaPeekDuration)
         lowBatteryThreshold = (bounded(lowBatteryThreshold, 5...50, defaults.lowBatteryThreshold) / 5).rounded() * 5
         soundVolume = bounded(soundVolume, 0.05...1, defaults.soundVolume)
+        breakMinutes = bounded(breakMinutes, 1...30, defaults.breakMinutes).rounded()
         if !selectedDisplayUUID.isEmpty, UUID(uuidString: selectedDisplayUUID) == nil { selectedDisplayUUID = "" }
         if CoveWeatherStyle(rawValue: weatherStyle) == nil { weatherStyle = defaults.weatherStyle }
         if !["automatic", "media", "calendar", "timer"].contains(compactActivity) { compactActivity = defaults.compactActivity }
@@ -201,6 +202,8 @@ struct CovePreferences: Codable, Equatable {
     var playSoundOnEventStart = false
     var playSoundOnPowerConnected = false
     var playSoundOnTimerFinished = true
+    var startBreakAfterTimer = false
+    var breakMinutes = 5.0
     var soundVolume = 0.6
     // Separate native, save-first consent on this Mac. Never synced or granted by widgets.
     var enableLowPowerModeAlerts = false

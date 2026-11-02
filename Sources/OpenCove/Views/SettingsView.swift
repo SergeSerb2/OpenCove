@@ -435,6 +435,12 @@ struct SettingsView: View {
             Section("Activities") {
                 Toggle("Timer", isOn: preference(\.enableTimer))
                 Toggle("File tray", isOn: preference(\.enableFileTray))
+                Toggle("Start a break when a timer ends", isOn: preference(\.startBreakAfterTimer))
+                    .disabled(!store.preferences.enableTimer)
+                if store.preferences.startBreakAfterTimer {
+                    CovePreferenceSlider(title: "Break length", value: preference(\.breakMinutes),
+                                         range: 1...30, step: 1, format: "%.0f min")
+                }
                 Toggle("Notes", isOn: preference(\.enableNotes))
                     .help("A small scratchpad, saved on this Mac.")
                 Toggle("System stats", isOn: preference(\.enableSystemStats))

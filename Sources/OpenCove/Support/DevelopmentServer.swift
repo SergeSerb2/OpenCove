@@ -757,6 +757,7 @@ final class DevelopmentServer {
                             "lastEvent": store.sounds.lastPlayed?.event.rawValue ?? NSNull(),
                             "hourlyChimeScheduled": store.hourlyChimeScheduled]
         result["toggleShortcut"] = store.hotKey.status.description
+        result["timerBreak"] = store.breakTimerIdentifier != nil
         result["notes"] = ["length": store.notes.text.count, "unsaved": store.notes.hasUnsavedChanges,
                            "error": store.notes.lastError ?? NSNull()] as [String: Any]
         let stats = store.systemStats.snapshot
