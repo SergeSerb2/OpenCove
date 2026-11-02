@@ -769,7 +769,8 @@ final class DevelopmentServer {
         result["systemStats"] = ["sampling": store.systemStats.isSampling,
                                  "cpu": stats.cpu ?? NSNull(), "memoryUsed": stats.memoryUsed ?? NSNull(),
                                  "memoryTotal": stats.memoryTotal, "downloadRate": stats.downloadRate ?? NSNull(),
-                                 "uploadRate": stats.uploadRate ?? NSNull(), "diskFree": stats.diskFree ?? NSNull()] as [String: Any]
+                                 "uploadRate": stats.uploadRate ?? NSNull(), "diskFree": stats.diskFree ?? NSNull(),
+                                 "batteryHealth": stats.batteryHealth ?? NSNull(), "batteryCycles": stats.batteryCycles ?? NSNull()] as [String: Any]
         result["shortcuts"] = ["availableCount": store.shortcuts.available.count,
                                "listing": store.shortcuts.isListing,
                                "listError": store.shortcuts.listError ?? NSNull(),

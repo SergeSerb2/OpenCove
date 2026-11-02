@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import IOKit
 
 /// CPU, memory, network and disk readings for the System section. Sampling
 /// runs only while a view holds a lease, every two seconds, and needs no permission.
@@ -13,6 +14,8 @@ final class SystemStatsController: ObservableObject {
         var uploadRate: Double?
         var diskFree: Double?       // bytes available for important use
         var diskTotal: Double?
+        var batteryHealth: Double?  // full-charge capacity relative to design capacity
+        var batteryCycles: Int?
     }
 
     @Published private(set) var snapshot = Snapshot(memoryTotal: Double(ProcessInfo.processInfo.physicalMemory))
@@ -26,6 +29,9 @@ final class SystemStatsController: ObservableObject {
     func acquire() {
         leases += 1
         guard task == nil else { return }
+        let battery = Self.readBatteryHealth()
+        snapshot.batteryHealth = battery.health
+        snapshot.batteryCycles = battery.cycles
         task = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 self?.sample()
@@ -110,5 +116,23 @@ final class SystemStatsController: ObservableObject {
         let seconds = now.timeIntervalSince(previous.date)
         guard seconds > 0.2 else { return (snapshot.downloadRate, snapshot.uploadRate) }
         return (Double(received - previous.received) / seconds, Double(sent - previous.sent) / seconds)
+    }
+
+    /// Reads the internal battery's cycle count and capacity once. Returns nils on Macs without one.
+    private static func readBatteryHealth() -> (health: Double?, cycles: Int?) {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
+        guard service != 0 else { return (nil, nil) }
+        defer { IOObjectRelease(service) }
+        var unmanaged: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(service, &unmanaged, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+              let properties = unmanaged?.takeRetainedValue() as? [String: Any] else { return (nil, nil) }
+        let nested = properties["BatteryData"] as? [String: Any] ?? [:]
+        func number(_ key: String) -> Double? {
+            ((properties[key] ?? nested[key]) as? NSNumber).map(\.doubleValue)
+        }
+        let cycles = number("CycleCount").map(Int.init)
+        guard let design = number("DesignCapacity"), design > 0,
+              let full = number("NominalChargeCapacity") ?? number("AppleRawMaxCapacity"), full > 0 else { return (nil, cycles) }
+        return (min(1, full / design), cycles)
     }
 }

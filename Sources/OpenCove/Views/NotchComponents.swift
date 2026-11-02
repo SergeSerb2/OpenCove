@@ -1524,7 +1524,11 @@ struct CoveSystemStatsSurface: View {
 
     private static func bytes(_ value: Double?, style: ByteCountFormatter.CountStyle = .memory) -> String {
         guard let value, value.isFinite, value >= 0 else { return "—" }
-        return ByteCountFormatter.string(fromByteCount: Int64(value), countStyle: style)
+        // Non-adaptive output keeps tiles short: "133 GB" rather than "132.99 GB".
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = style
+        formatter.isAdaptive = false
+        return formatter.string(fromByteCount: Int64(value))
     }
 
     private static func rate(_ value: Double?) -> String {
@@ -1546,9 +1550,24 @@ struct CoveSystemStatsSurface: View {
                 Label(Self.rate(stats.uploadRate), systemImage: "arrow.up")
             }
             .font(.system(size: 11, weight: .medium, design: .rounded)).monospacedDigit()
+            .lineLimit(1).minimumScaleFactor(0.75)
+            .padding(.horizontal, 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             ring("Disk", value: disk, detail: Self.bytes(stats.diskFree, style: .file) + " free", symbol: "internaldrive")
+            if let health = stats.batteryHealth {
+                VStack(spacing: 6) {
+                    Image(systemName: "battery.100percent").font(.system(size: 18)).foregroundStyle(health < 0.8 ? Color.orange : accent)
+                        .frame(height: 44)
+                    Text("\(Int((health * 100).rounded()))% health").font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .monospacedDigit().lineLimit(1)
+                    Text(stats.batteryCycles.map { "\($0) cycles" } ?? "Battery").font(.system(size: 9))
+                        .foregroundStyle(CoveNotchStyle.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(CoveNotchStyle.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .accessibilityElement(children: .combine)
+            }
         }
         .frame(maxHeight: 112)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
